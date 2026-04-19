@@ -1,0 +1,82 @@
+services:
+  api:
+    image: ${CLIMAX_IMAGE:-climax-backend:latest}
+    container_name: climax-api
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      LOG_LEVEL: INFO
+
+      DATABASE_URL: postgresql+asyncpg://climax:${POSTGRES_PASSWORD}@postgres:5432/climax
+      REDIS_URL: redis://redis:6379/0
+
+      GOOGLE_STREETVIEW_API_KEY: ${GOOGLE_STREETVIEW_API_KEY}
+      GOOGLE_STREETVIEW_SIGNING_SECRET: ${GOOGLE_STREETVIEW_SIGNING_SECRET:-}
+      NCP_MAPS_CLIENT_ID: ${NCP_MAPS_CLIENT_ID}
+      NCP_MAPS_CLIENT_SECRET: ${NCP_MAPS_CLIENT_SECRET}
+      KMA_API_KEY: ${KMA_API_KEY}
+
+      NCP_OBJECT_ACCESS_KEY: ${NCP_OBJECT_ACCESS_KEY:-}
+      NCP_OBJECT_SECRET_KEY: ${NCP_OBJECT_SECRET_KEY:-}
+      NCP_OBJECT_BUCKET: ${NCP_OBJECT_BUCKET:-climax-mvp}
+
+      SEGFORMER_MODEL_NAME: ${SEGFORMER_MODEL_NAME:-nvidia/segformer-b0-finetuned-ade-512-512}
+      SEGFORMER_DEVICE: ${SEGFORMER_DEVICE:-cpu}
+
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+    volumes:
+      # 모델 가중치 영구 보존 (컨테이너 재시작해도 재다운로드 안 함)
+      - hf_cache:/app/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    container_name: climax-redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: climax-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: climax
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: climax
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U climax"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:
+  postgres_data:
+  hf_cache:
+
+networks:
+  default:
+    name: climax-net
