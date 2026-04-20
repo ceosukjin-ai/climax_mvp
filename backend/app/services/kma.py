@@ -1,17 +1,13 @@
 """
 기상청 API Hub 클라이언트.
 
-공식 문서: https://apihub.kma.go.kr/
+세 가지 API 지원:
+1. 초단기실황 (getUltraSrtNcst) — 현재 이 순간 실측값
+2. 초단기예보 (getUltraSrtFcst) — 앞으로 6시간 이내 (1시간 단위)
+3. 단기예보   (getVilageFcst)   — 앞으로 3일 이내 (3시간 단위)
 
-MVP에서는 두 가지 엔드포인트만 사용:
-- 초단기실황(getUltraSrtNcst) — 현재 관측값 (10분 주기 갱신)
-- 초단기예보(getUltraSrtFcst) — 6시간 이내 예보 (미래 경로 예측용)
-
-기상청은 격자 좌표계(NX, NY)를 쓰므로 위경도 → 격자 변환 함수 포함.
-
-캐싱 전략:
-- 실황은 10분 TTL (기상청 갱신 주기와 일치)
-- 격자당 캐싱하여 같은 동네 여러 사용자 요청 병합
+세 API 모두 위경도 → 격자(NX, NY) 변환 후 조회.
+인증키는 공통.
 """
 from __future__ import annotations
 
@@ -28,31 +24,25 @@ from tenacity import (
     wait_exponential,
 )
 
-# 한국 표준시 (KST)
 KST = timezone(timedelta(hours=9))
 
 
 @dataclass(frozen=True, slots=True)
 class KMAGrid:
-    """기상청 격자 좌표."""
-
     nx: int
     ny: int
 
 
 def latlon_to_grid(lat: float, lon: float) -> KMAGrid:
-    """위경도 → 기상청 격자 (Lambert Conformal Conic 투영).
-
-    기상청 공식 변환 공식. 정확도 검증 완료.
-    """
-    RE = 6371.00877  # 지구 반경
-    GRID = 5.0  # 격자 간격 (km)
-    SLAT1 = 30.0  # 표준 위도 1
-    SLAT2 = 60.0  # 표준 위도 2
-    OLON = 126.0  # 기준점 경도
-    OLAT = 38.0  # 기준점 위도
-    XO = 43  # 기준점 X
-    YO = 136  # 기준점 Y
+    """위경도 → 기상청 격자 (Lambert Conformal Conic 투영)."""
+    RE = 6371.00877
+    GRID = 5.0
+    SLAT1 = 30.0
+    SLAT2 = 60.0
+    OLON = 126.0
+    OLAT = 38.0
+    XO = 43
+    YO = 136
 
     DEGRAD = math.pi / 180.0
 
@@ -87,18 +77,48 @@ def latlon_to_grid(lat: float, lon: float) -> KMAGrid:
 
 @dataclass(frozen=True, slots=True)
 class KMAObservation:
-    """기상청 초단기실황 관측값."""
+    """초단기실황 — 현재 실측 관측값."""
 
-    temperature_c: float  # T1H — 기온
-    humidity_pct: float  # REH — 상대습도
-    wind_speed_ms: float  # WSD — 풍속
-    wind_direction_deg: float  # VEC — 풍향
-    precipitation_mm: float  # RN1 — 1시간 강수량
-    observed_at: datetime  # 관측 시각
+    temperature_c: float
+    humidity_pct: float
+    wind_speed_ms: float
+    wind_direction_deg: float
+    precipitation_mm: float
+    observed_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class KMAForecast:
+    """초단기예보 또는 단기예보 한 시점의 값."""
+
+    forecast_for: datetime           # 예보 대상 시각
+    temperature_c: float | None
+    humidity_pct: float | None
+    wind_speed_ms: float | None
+    wind_direction_deg: float | None
+    precipitation_mm: float | None
+    sky_condition: str | None        # 맑음/구름많음/흐림
+    precipitation_type: str | None   # 없음/비/비눈/눈/소나기
 
 
 class KMAError(Exception):
-    """기상청 API 요청 실패."""
+    pass
+
+
+def _parse_float(val: str | None, default: float | None = None) -> float | None:
+    if val is None or val in ("강수없음", "-", "", "적설없음"):
+        return 0.0 if default is None else default
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+SKY_CODE = {"1": "맑음", "3": "구름많음", "4": "흐림"}
+PTY_CODE = {
+    "0": "없음", "1": "비", "2": "비/눈", "3": "눈",
+    "4": "소나기", "5": "빗방울", "6": "빗방울눈날림", "7": "눈날림",
+}
 
 
 class KMAClient:
@@ -107,7 +127,7 @@ class KMAClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://apihub.kma.go.kr/api/typ02",
+        base_url: str = "https://apihub.kma.go.kr/api/typ02/openApi",
         timeout_sec: float = 10.0,
     ) -> None:
         if not api_key:
@@ -125,12 +145,10 @@ class KMAClient:
     async def close(self) -> None:
         await self._client.aclose()
 
-    def _get_latest_base_time(self) -> tuple[str, str]:
-        """초단기실황 기준시각 계산.
+    # ===== 초단기실황 =====
 
-        초단기실황은 매시 40분에 발표 → 현재시각 40분 이후면 현재 시,
-        이전이면 이전 시.
-        """
+    def _get_ncst_base_time(self) -> tuple[str, str]:
+        """초단기실황 기준시각 — 매시 40분 후 현재 시, 전이면 이전 시."""
         now = datetime.now(KST)
         if now.minute < 40:
             now -= timedelta(hours=1)
@@ -142,23 +160,10 @@ class KMAClient:
         retry=retry_if_exception_type(httpx.RequestError),
     )
     async def get_current_observation(
-        self,
-        lat: float,
-        lon: float,
+        self, lat: float, lon: float
     ) -> KMAObservation:
-        """초단기실황 — 현재 가장 가까운 관측 시간의 값 조회.
-
-        Args:
-            lat, lon: 조회 위치.
-
-        Returns:
-            KMAObservation. 관측값이 누락된 경우 해당 필드는 0.0.
-
-        Raises:
-            KMAError: API 오류 또는 파싱 실패.
-        """
         grid = latlon_to_grid(lat, lon)
-        base_date, base_time = self._get_latest_base_time()
+        base_date, base_time = self._get_ncst_base_time()
 
         params = {
             "authKey": self.api_key,
@@ -180,27 +185,210 @@ class KMAClient:
             items = data["response"]["body"]["items"]["item"]
         except (KeyError, ValueError) as e:
             raise KMAError(
-                f"KMA response parse failed: {response.text[:200]}"
+                f"KMA ncst parse failed: {response.text[:200]}"
             ) from e
 
-        # items는 [{"category": "T1H", "obsrValue": "..."}, ...]
         values = {item["category"]: item["obsrValue"] for item in items}
-
-        def _parse(key: str, default: float = 0.0) -> float:
-            try:
-                return float(values.get(key, default))
-            except (TypeError, ValueError):
-                return default
 
         observed_at = datetime.strptime(
             f"{base_date}{base_time}", "%Y%m%d%H%M"
         ).replace(tzinfo=KST)
 
         return KMAObservation(
-            temperature_c=_parse("T1H"),
-            humidity_pct=_parse("REH"),
-            wind_speed_ms=_parse("WSD"),
-            wind_direction_deg=_parse("VEC") % 360.0,
-            precipitation_mm=_parse("RN1", 0.0),
+            temperature_c=_parse_float(values.get("T1H"), 0.0) or 0.0,
+            humidity_pct=_parse_float(values.get("REH"), 0.0) or 0.0,
+            wind_speed_ms=_parse_float(values.get("WSD"), 0.0) or 0.0,
+            wind_direction_deg=(_parse_float(values.get("VEC"), 0.0) or 0.0) % 360.0,
+            precipitation_mm=_parse_float(values.get("RN1"), 0.0) or 0.0,
             observed_at=observed_at,
+        )
+
+    # ===== 초단기예보 (앞으로 6시간, 1시간 단위) =====
+
+    def _get_usrt_fcst_base_time(self) -> tuple[str, str]:
+        """초단기예보 기준시각 — 매시 30분 발표, 45분 후 사용 가능."""
+        now = datetime.now(KST)
+        if now.minute < 45:
+            now -= timedelta(hours=1)
+        return now.strftime("%Y%m%d"), now.strftime("%H30")
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=5),
+        retry=retry_if_exception_type(httpx.RequestError),
+    )
+    async def get_ultra_short_forecast(
+        self, lat: float, lon: float
+    ) -> list[KMAForecast]:
+        """앞으로 6시간 이내 예보 (1시간 단위)."""
+        grid = latlon_to_grid(lat, lon)
+        base_date, base_time = self._get_usrt_fcst_base_time()
+
+        params = {
+            "authKey": self.api_key,
+            "numOfRows": "200",
+            "pageNo": "1",
+            "dataType": "JSON",
+            "base_date": base_date,
+            "base_time": base_time,
+            "nx": str(grid.nx),
+            "ny": str(grid.ny),
+        }
+
+        url = f"{self.base_url}/VilageFcstInfoService_2.0/getUltraSrtFcst"
+        response = await self._client.get(url, params=params)
+        response.raise_for_status()
+
+        try:
+            data = response.json()
+            items = data["response"]["body"]["items"]["item"]
+        except (KeyError, ValueError) as e:
+            raise KMAError(
+                f"KMA ultraSrtFcst parse failed: {response.text[:200]}"
+            ) from e
+
+        # fcstDate + fcstTime 으로 그룹핑
+        grouped: dict[tuple[str, str], dict[str, str]] = {}
+        for item in items:
+            key = (item["fcstDate"], item["fcstTime"])
+            grouped.setdefault(key, {})[item["category"]] = item["fcstValue"]
+
+        forecasts: list[KMAForecast] = []
+        for (fcst_date, fcst_time), cats in sorted(grouped.items()):
+            forecast_for = datetime.strptime(
+                f"{fcst_date}{fcst_time}", "%Y%m%d%H%M"
+            ).replace(tzinfo=KST)
+            forecasts.append(
+                KMAForecast(
+                    forecast_for=forecast_for,
+                    temperature_c=_parse_float(cats.get("T1H")),
+                    humidity_pct=_parse_float(cats.get("REH")),
+                    wind_speed_ms=_parse_float(cats.get("WSD")),
+                    wind_direction_deg=(
+                        (_parse_float(cats.get("VEC")) or 0.0) % 360.0
+                        if cats.get("VEC") else None
+                    ),
+                    precipitation_mm=_parse_float(cats.get("RN1")),
+                    sky_condition=SKY_CODE.get(cats.get("SKY", "")),
+                    precipitation_type=PTY_CODE.get(cats.get("PTY", "")),
+                )
+            )
+        return forecasts
+
+    # ===== 단기예보 (앞으로 3일, 3시간 단위) =====
+
+    def _get_vilage_fcst_base_time(self) -> tuple[str, str]:
+        """단기예보 기준시각 — 하루 8번 발표 (02,05,08,11,14,17,20,23시)."""
+        now = datetime.now(KST)
+        # 발표시각 10분 이전이면 이전 발표 사용
+        hours_available = [2, 5, 8, 11, 14, 17, 20, 23]
+        current_hour = now.hour
+
+        # 오늘 발표된 것 중 "현재 시각 - 10분" 이전에 발표된 가장 최근 것
+        check_time = now - timedelta(minutes=10)
+        target_hour = None
+        for h in reversed(hours_available):
+            if h <= check_time.hour:
+                target_hour = h
+                break
+
+        if target_hour is None:
+            # 오늘 아직 발표 안 됨 → 어제 23시
+            base_dt = (now - timedelta(days=1)).replace(hour=23)
+        else:
+            base_dt = now.replace(hour=target_hour)
+
+        return base_dt.strftime("%Y%m%d"), f"{base_dt.hour:02d}00"
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=5),
+        retry=retry_if_exception_type(httpx.RequestError),
+    )
+    async def get_short_term_forecast(
+        self, lat: float, lon: float
+    ) -> list[KMAForecast]:
+        """앞으로 3일 이내 예보 (3시간 단위, 최대 72시간)."""
+        grid = latlon_to_grid(lat, lon)
+        base_date, base_time = self._get_vilage_fcst_base_time()
+
+        params = {
+            "authKey": self.api_key,
+            "numOfRows": "1000",  # 3일치 전체
+            "pageNo": "1",
+            "dataType": "JSON",
+            "base_date": base_date,
+            "base_time": base_time,
+            "nx": str(grid.nx),
+            "ny": str(grid.ny),
+        }
+
+        url = f"{self.base_url}/VilageFcstInfoService_2.0/getVilageFcst"
+        response = await self._client.get(url, params=params)
+        response.raise_for_status()
+
+        try:
+            data = response.json()
+            items = data["response"]["body"]["items"]["item"]
+        except (KeyError, ValueError) as e:
+            raise KMAError(
+                f"KMA vilageFcst parse failed: {response.text[:200]}"
+            ) from e
+
+        grouped: dict[tuple[str, str], dict[str, str]] = {}
+        for item in items:
+            key = (item["fcstDate"], item["fcstTime"])
+            grouped.setdefault(key, {})[item["category"]] = item["fcstValue"]
+
+        forecasts: list[KMAForecast] = []
+        for (fcst_date, fcst_time), cats in sorted(grouped.items()):
+            forecast_for = datetime.strptime(
+                f"{fcst_date}{fcst_time}", "%Y%m%d%H%M"
+            ).replace(tzinfo=KST)
+            # 단기예보는 TMP가 기온 (T1H 아님)
+            temp = cats.get("TMP")
+            forecasts.append(
+                KMAForecast(
+                    forecast_for=forecast_for,
+                    temperature_c=_parse_float(temp),
+                    humidity_pct=_parse_float(cats.get("REH")),
+                    wind_speed_ms=_parse_float(cats.get("WSD")),
+                    wind_direction_deg=(
+                        (_parse_float(cats.get("VEC")) or 0.0) % 360.0
+                        if cats.get("VEC") else None
+                    ),
+                    precipitation_mm=_parse_float(cats.get("PCP")),
+                    sky_condition=SKY_CODE.get(cats.get("SKY", "")),
+                    precipitation_type=PTY_CODE.get(cats.get("PTY", "")),
+                )
+            )
+        return forecasts
+
+    # ===== 편의 메서드: 특정 미래 시각의 예보 찾기 =====
+
+    async def get_forecast_at(
+        self, lat: float, lon: float, target_time: datetime
+    ) -> KMAForecast | None:
+        """지정 시각에 가장 가까운 예보 반환.
+
+        6시간 이내면 초단기예보, 그 이후면 단기예보 사용.
+        """
+        now = datetime.now(KST)
+        if target_time.tzinfo is None:
+            target_time = target_time.replace(tzinfo=KST)
+
+        delta_hours = (target_time - now).total_seconds() / 3600
+
+        if delta_hours <= 6:
+            forecasts = await self.get_ultra_short_forecast(lat, lon)
+        else:
+            forecasts = await self.get_short_term_forecast(lat, lon)
+
+        if not forecasts:
+            return None
+
+        # 가장 가까운 시각 찾기
+        return min(
+            forecasts,
+            key=lambda f: abs((f.forecast_for - target_time).total_seconds()),
         )

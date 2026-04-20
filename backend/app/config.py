@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     ncp_maps_client_id: str = ""
     ncp_maps_client_secret: str = ""
     kma_api_key: str = ""
-    kma_base_url: str = "https://apihub.kma.go.kr/api/typ02"
+    kma_base_url: str = "https://apihub.kma.go.kr/api/typ02/openApi"
 
     # NCP Object Storage
     ncp_object_access_key: str = ""

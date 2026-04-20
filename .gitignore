@@ -82,3 +82,5 @@ mobile/dist/
 mobile/web-build/
 mobile/ios/
 mobile/android/
+api.txt
+*.code-workspace
