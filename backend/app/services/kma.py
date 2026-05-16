@@ -127,7 +127,7 @@ class KMAClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://apihub.kma.go.kr/api/typ02/openApi",
+        base_url: str = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0",
         timeout_sec: float = 10.0,
     ) -> None:
         if not api_key:
@@ -166,7 +166,7 @@ class KMAClient:
         base_date, base_time = self._get_ncst_base_time()
 
         params = {
-            "authKey": self.api_key,
+            "serviceKey": self.api_key,
             "numOfRows": "100",
             "pageNo": "1",
             "dataType": "JSON",
@@ -176,7 +176,7 @@ class KMAClient:
             "ny": str(grid.ny),
         }
 
-        url = f"{self.base_url}/VilageFcstInfoService_2.0/getUltraSrtNcst"
+        url = f"{self.base_url}/getUltraSrtNcst"
         response = await self._client.get(url, params=params)
         response.raise_for_status()
 
@@ -225,7 +225,7 @@ class KMAClient:
         base_date, base_time = self._get_usrt_fcst_base_time()
 
         params = {
-            "authKey": self.api_key,
+            "serviceKey": self.api_key,
             "numOfRows": "200",
             "pageNo": "1",
             "dataType": "JSON",
@@ -235,7 +235,7 @@ class KMAClient:
             "ny": str(grid.ny),
         }
 
-        url = f"{self.base_url}/VilageFcstInfoService_2.0/getUltraSrtFcst"
+        url = f"{self.base_url}/getUltraSrtFcst"
         response = await self._client.get(url, params=params)
         response.raise_for_status()
 
@@ -313,7 +313,7 @@ class KMAClient:
         base_date, base_time = self._get_vilage_fcst_base_time()
 
         params = {
-            "authKey": self.api_key,
+            "serviceKey": self.api_key,
             "numOfRows": "1000",  # 3일치 전체
             "pageNo": "1",
             "dataType": "JSON",
@@ -323,7 +323,7 @@ class KMAClient:
             "ny": str(grid.ny),
         }
 
-        url = f"{self.base_url}/VilageFcstInfoService_2.0/getVilageFcst"
+        url = f"{self.base_url}/getVilageFcst"
         response = await self._client.get(url, params=params)
         response.raise_for_status()
 
