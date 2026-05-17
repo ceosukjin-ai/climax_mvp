@@ -113,10 +113,33 @@ class GoogleStreetViewClient:
         if not api_key:
             raise ValueError("Google Street View API key is required")
         self.api_key = api_key
-        self.signing_secret = signing_secret
+        self.signing_secret = self._sanitize_signing_secret(signing_secret)
         self.image_size = image_size
         self.fov = fov
         self._client = httpx.AsyncClient(timeout=timeout_sec)
+
+    @staticmethod
+    def _sanitize_signing_secret(secret: str) -> str:
+        """signing_secret 유효성 검증.
+
+        Google URL signing secret은 base64-URL-safe 문자열이다.
+        .env에 placeholder 주석이 그대로 남거나 비ASCII가 섞이는 실수가 흔해서,
+        invalid 값이면 경고 후 빈 값으로 폴백한다. 서명은 선택적 보안 강화이므로
+        invalid라고 앱을 죽일 가치가 없다.
+        """
+        candidate = (secret or "").strip()
+        if not candidate:
+            return ""
+        try:
+            base64.urlsafe_b64decode(candidate)
+        except (ValueError, Exception) as e:
+            logger.warning(
+                "GOOGLE_STREETVIEW_SIGNING_SECRET is not valid base64-URL-safe; "
+                "skipping URL signing. ({}: {})",
+                type(e).__name__, e,
+            )
+            return ""
+        return candidate
 
     async def __aenter__(self) -> "GoogleStreetViewClient":
         return self
