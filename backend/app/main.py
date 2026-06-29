@@ -11,15 +11,19 @@ OpenAPI 문서:
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from app.api.routes import router as api_router
 from app.api.websocket import router as ws_router
 from app.config import get_settings
+
+WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
 
 @asynccontextmanager
@@ -133,13 +137,12 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     app.include_router(ws_router)
 
-    @app.get("/", include_in_schema=False)
-    async def root() -> dict:
-        return {
-            "name": "ClimaX VPTI Core Engine",
-            "version": "0.1.0",
-            "docs": "/docs",
-        }
+    if WEB_DIR.is_dir():
+        # 야외 검증용 단일 HTML 페이지를 같은 origin에서 서빙. /api/v1 라우터가
+        # 먼저 매칭되므로 mount는 그 외 경로(/, /index.html 등)만 가져간다.
+        app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+    else:
+        logger.warning("WEB_DIR not found, skipping static mount: {}", WEB_DIR)
 
     return app
 
