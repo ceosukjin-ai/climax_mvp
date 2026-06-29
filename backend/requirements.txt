@@ -25,13 +25,14 @@ redis==5.1.1
 torch==2.5.0
 transformers==4.45.2
 pillow==10.4.0
-numpy==2.1.2
+numpy==2.2.6           # pythermalcomfort→numba 호환 상한(<2.3)에 맞춤
 opencv-python-headless==4.10.0.84
 
 # Scientific
 pandas==2.2.3
 scipy==1.14.1
-pvlib==0.11.1          # 태양 위치 계산 (SMTI용)
+pvlib==0.11.1          # 태양 위치·청천일사 (SMTI 일사 + MRT 일사추정)
+pythermalcomfort==4.0.2  # UTCI(Bröde 2012)·PET(VDI 3787) 검증 구현 — vpti_core MRT+UTCI 경로
 
 # Utilities
 python-dotenv==1.0.1
