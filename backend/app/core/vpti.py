@@ -18,6 +18,7 @@ VPTI (Visual Physical Thermal Index) 통합 엔진.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -79,6 +80,7 @@ class VPTIResult:
     contribution_space: float  # VSI 기여 Δ°C
     contribution_material: float  # SMTI 기여 Δ°C
     contribution_wind: float  # PWI 기여 Δ°C (여름 음수, 겨울 양수)
+    contribution_humidity: float  # 습도 기여 Δ°C (후덥지근함, 여름 양수)
 
     # 행동 가이드
     action_guide: str
@@ -97,6 +99,7 @@ class VPTIResult:
                 "space": round(self.contribution_space, 2),
                 "material": round(self.contribution_material, 2),
                 "wind": round(self.contribution_wind, 2),
+                "humidity": round(self.contribution_humidity, 2),
             },
             "action_guide": self.action_guide,
             "timestamp": self.timestamp,
@@ -119,6 +122,45 @@ SMTI_WINTER_MAX_DELTA = 1.5
 # 이상기온(환절기): 영향 작음
 PWI_SUMMER_MAX_DELTA = -3.0  # 쾌적
 PWI_WINTER_MAX_DELTA = -8.0  # 위험
+
+# 습도(후덥지근함) 기여 — 잠열. 높은 습도 → 땀 증발 억제 → 체감 상승.
+# Steadman 체감온도(Apparent Temperature)의 습도항 0.33·e 를 차용:
+#   e      = (RH/100)·es(T)      수증기압 [hPa]  (es: Tetens 포화수증기압)
+#   Δ습도  = 0.33·(e − e_ref)    건조기준 대비 초과분만 °C로 환산
+# 일사·바람은 SMTI/VSI·PWI 가 이미 처리하므로 습도 '잠열'만 더해 이중계산 회피.
+HUMIDITY_REF_RH = 40.0            # 건조 기준 상대습도 [%]        # [VERIFY]
+HUMIDITY_SUMMER_FACTOR = 1.0      # 여름 가중 (후덥지근함 최대)   # [VERIFY]
+HUMIDITY_TRANSITION_FACTOR = 0.5  # 환절기 가중                  # [VERIFY]
+HUMIDITY_WINTER_FACTOR = 0.0      # 겨울(후덥지근함 미적용)      # [VERIFY]
+
+
+def _saturation_vapor_pressure(temp_c: float) -> float:
+    """포화수증기압 es(T) [hPa] — Tetens 근사식."""
+    return 6.105 * math.exp(17.27 * temp_c / (237.7 + temp_c))
+
+
+def _humidity_contribution(
+    temperature_c: float, humidity_pct: float, season: Season
+) -> float:
+    """습도로 인한 체감 Δ°C 기여 (후덥지근함).
+
+    건조기준(RH=HUMIDITY_REF_RH) 대비 초과 수증기압만 반영하므로,
+    습도가 낮으면 0, 높을수록 양(+)의 체감 상승. 계절 가중 적용.
+    """
+    es = _saturation_vapor_pressure(temperature_c)
+    e = (humidity_pct / 100.0) * es
+    e_ref = (HUMIDITY_REF_RH / 100.0) * es
+    excess = max(0.0, e - e_ref)          # 초과 수증기압 [hPa]
+    base_delta = 0.33 * excess            # Steadman 습도항 [°C]
+
+    if season == "summer":
+        factor = HUMIDITY_SUMMER_FACTOR
+    elif season == "winter":
+        factor = HUMIDITY_WINTER_FACTOR
+    else:
+        factor = HUMIDITY_TRANSITION_FACTOR
+
+    return factor * base_delta
 
 
 def _vsi_contribution(vsi_val: float, season: Season) -> float:
@@ -209,6 +251,7 @@ def _generate_action_guide(
     contribution_space: float,
     contribution_material: float,
     contribution_wind: float,
+    contribution_humidity: float,
 ) -> str:
     """위험도·원인 기반 행동 가이드 생성.
 
@@ -222,6 +265,7 @@ def _generate_action_guide(
         "공간 구조": abs(contribution_space),
         "표면 재질": abs(contribution_material),
         "바람": abs(contribution_wind),
+        "습도": abs(contribution_humidity),
     }
     dominant = max(contributions, key=contributions.get)
 
@@ -236,6 +280,7 @@ def _generate_action_guide(
             "공간 구조": "하늘이 열려 복사열이 강합니다.",
             "표면 재질": "발 밑 표면이 축적한 열이 체감을 크게 높이고 있습니다.",
             "바람": "바람이 약해 열이 빠지지 않고 있습니다.",
+            "습도": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다.",
         }
         return f"{cause_msgs[dominant]} {base_msgs[risk]}"
 
@@ -250,6 +295,7 @@ def _generate_action_guide(
             "공간 구조": "공간이 개방되어 열이 빠르게 소실됩니다.",
             "표면 재질": "차가운 지표면이 체감 온도를 낮추고 있습니다.",
             "바람": "바람이 강해 체감 한파 위험이 높습니다.",
+            "습도": "공기가 눅눅해 체감이 더 차갑게 느껴집니다.",
         }
         return f"{cause_msgs[dominant]} {base_msgs[risk]}"
 
@@ -323,17 +369,22 @@ def compute_vpti(
     delta_wind = _pwi_contribution(
         pwi_result.pwi, season, weather.temperature_c
     )
+    delta_humidity = _humidity_contribution(
+        weather.temperature_c, weather.humidity_pct, season
+    )
 
     # Base: 기상청 기온을 단순히 그대로 출발값으로 사용
     # (향후 PET 공식으로 정교화 가능)
     base_temp = weather.temperature_c
 
-    vpti_value = base_temp + delta_space + delta_material + delta_wind
+    vpti_value = (
+        base_temp + delta_space + delta_material + delta_wind + delta_humidity
+    )
 
     # 7. 위험도 + 가이드
     risk = _classify_risk(vpti_value, season)
     guide = _generate_action_guide(
-        risk, season, delta_space, delta_material, delta_wind
+        risk, season, delta_space, delta_material, delta_wind, delta_humidity
     )
 
     return VPTIResult(
@@ -346,6 +397,7 @@ def compute_vpti(
         contribution_space=delta_space,
         contribution_material=delta_material,
         contribution_wind=delta_wind,
+        contribution_humidity=delta_humidity,
         action_guide=guide,
         timestamp=dt.isoformat(),
     )

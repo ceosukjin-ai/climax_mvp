@@ -131,6 +131,28 @@ class VPTIContributions(BaseModel):
     space: float
     material: float
     wind: float
+    humidity: float = 0.0  # 습도(후덥지근함) 기여 Δ°C
+
+
+class PrecipitationHour(BaseModel):
+    time: str
+    in_hours: int
+    pty: str | None = None      # 강수형태 (없음/비/비눈/눈/소나기…)
+    sky: str | None = None      # 하늘상태 (맑음/구름많음/흐림)
+    precip_mm: float = 0.0
+
+
+class PrecipitationOut(BaseModel):
+    """강수 컨텍스트 — VPTI와 분리된 외부 예보 레이어(확률/현재상태)."""
+
+    raining_now: bool = False
+    current_precip_mm: float = 0.0
+    rain_expected_6h: bool = False
+    onset_in_hours: int | None = None
+    max_precip_mm: float = 0.0
+    umbrella_recommended: bool = False
+    advice: str = ""
+    hourly: list[PrecipitationHour] = Field(default_factory=list)
 
 
 class VPTIResponse(BaseModel):
@@ -147,6 +169,8 @@ class VPTIResponse(BaseModel):
     contributions: VPTIContributions
     action_guide: str
     timestamp: str
+    # 강수는 VPTI 숫자에 섞지 않고 별도 컨텍스트로만 노출
+    precipitation: PrecipitationOut | None = None
 
 
 # ===== Health =====

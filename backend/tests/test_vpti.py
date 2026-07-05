@@ -121,6 +121,35 @@ class TestVPTISummer:
         assert max(contribs) > 0.5
 
 
+class TestVPTIHumidity:
+    def test_muggy_raises_vpti_vs_dry(self, summer_heat_scenario) -> None:
+        """같은 조건에서 습도만 높이면 체감(VPTI)이 올라가야 함 (후덥지근함)."""
+        dry = dict(summer_heat_scenario)
+        dry["weather"] = WeatherContext(
+            temperature_c=33.0, humidity_pct=35.0,
+            wind_speed_ms=1.0, wind_direction_deg=180.0,
+        )
+        humid = dict(summer_heat_scenario)
+        humid["weather"] = WeatherContext(
+            temperature_c=33.0, humidity_pct=85.0,
+            wind_speed_ms=1.0, wind_direction_deg=180.0,
+        )
+        r_dry = compute_vpti(**dry)
+        r_humid = compute_vpti(**humid)
+        assert r_humid.vpti > r_dry.vpti
+        assert r_humid.contribution_humidity > 0.0
+
+    def test_dry_humidity_contribution_zero(self, summer_heat_scenario) -> None:
+        """건조(기준 습도 이하)면 습도 기여는 0."""
+        dry = dict(summer_heat_scenario)
+        dry["weather"] = WeatherContext(
+            temperature_c=33.0, humidity_pct=30.0,
+            wind_speed_ms=1.0, wind_direction_deg=180.0,
+        )
+        r = compute_vpti(**dry)
+        assert r.contribution_humidity == 0.0
+
+
 class TestVPTIWinter:
     def test_winter_wind_chill_detected(self, winter_cold_scenario) -> None:
         result = compute_vpti(**winter_cold_scenario)
@@ -154,7 +183,9 @@ class TestVPTIResponseStructure:
         assert "pwi" in d and "pwi" in d["pwi"]
 
         # 원인 분해
-        assert set(d["contributions"].keys()) == {"space", "material", "wind"}
+        assert set(d["contributions"].keys()) == {
+            "space", "material", "wind", "humidity"
+        }
 
     def test_timestamp_iso_format(self, summer_heat_scenario) -> None:
         result = compute_vpti(**summer_heat_scenario)

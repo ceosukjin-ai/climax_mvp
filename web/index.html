@@ -109,6 +109,17 @@
     font-size: 0.95rem; line-height: 1.55;
   }
 
+  /* 강수 배너 — VPTI와 분리된 외부 예보 레이어 */
+  .rain {
+    display: flex; align-items: center; gap: 12px;
+    margin-top: 12px; padding: 12px; border-radius: 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+  }
+  .rain.umbrella { background: rgba(56, 189, 248, 0.14); border-color: var(--accent); }
+  .rain .rain-ico { font-size: 1.7rem; line-height: 1; }
+  .rain .rain-main { font-weight: 700; font-size: 0.98rem; }
+  .rain .rain-sub { font-size: 0.82rem; color: var(--text-dim); margin-top: 2px; }
+
   details { margin-top: 8px; }
   summary {
     cursor: pointer; color: var(--text-dim); font-size: 0.9rem;
@@ -167,11 +178,20 @@
 
     <div class="action-guide" id="r-action">—</div>
 
+    <div class="rain hidden" id="r-rain">
+      <span class="rain-ico" id="r-rain-ico">☂</span>
+      <div>
+        <div class="rain-main" id="r-rain-main">—</div>
+        <div class="rain-sub" id="r-rain-sub"></div>
+      </div>
+    </div>
+
     <h3 style="margin: 16px 0 8px; font-size: 1rem;">원인 분해 (Δ°C)</h3>
     <div class="contrib">
       <span class="label">공간 (VSI)</span> <span id="r-c-space" class="value">--</span>
       <span class="label">재질 (SMTI)</span><span id="r-c-mat"   class="value">--</span>
       <span class="label">바람 (PWI)</span> <span id="r-c-wind"  class="value">--</span>
+      <span class="label">습도 (후덥지근)</span><span id="r-c-humid" class="value">--</span>
     </div>
 
     <details>
@@ -234,6 +254,11 @@
     rCSpace: $("r-c-space"),
     rCMat: $("r-c-mat"),
     rCWind: $("r-c-wind"),
+    rCHumid: $("r-c-humid"),
+    rRain: $("r-rain"),
+    rRainIco: $("r-rain-ico"),
+    rRainMain: $("r-rain-main"),
+    rRainSub: $("r-rain-sub"),
     rRaw: $("r-raw"),
     mTemp: $("m-temp"),
     mWind: $("m-wind"),
@@ -327,11 +352,31 @@
     setDeltaCell(els.rCSpace, c.space);
     setDeltaCell(els.rCMat, c.material);
     setDeltaCell(els.rCWind, c.wind);
+    setDeltaCell(els.rCHumid, c.humidity);
+
+    renderRain(data.precipitation);
 
     els.rRaw.textContent = JSON.stringify(data, null, 2);
 
     els.result.classList.remove("hidden");
     els.memo.classList.remove("hidden");
+  }
+
+  // 강수 배너 — 비는 VPTI에 안 섞고 별도 컨텍스트로 표시(확률/현재상태)
+  function renderRain(p) {
+    if (!p) { els.rRain.classList.add("hidden"); return; }
+    els.rRain.classList.remove("hidden");
+    const umb = !!p.umbrella_recommended;
+    els.rRain.classList.toggle("umbrella", umb);
+    els.rRainIco.textContent = p.raining_now ? "🌧" : (umb ? "☂" : "☀");
+    els.rRainMain.textContent = p.advice || (umb ? "우산 권장" : "비 예보 없음");
+    const rainHrs = (p.hourly || []).filter((h) => h.pty && h.pty !== "없음");
+    const parts = [];
+    if (rainHrs.length) {
+      parts.push("0~6h: " + rainHrs.map((h) => `${h.time} ${h.pty}`).join(", "));
+    }
+    if (p.max_precip_mm) parts.push(`최대 ${p.max_precip_mm}㎜`);
+    els.rRainSub.textContent = parts.join(" · ");
   }
 
   async function onMeasure() {

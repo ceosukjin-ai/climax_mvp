@@ -33,7 +33,7 @@ from app.services.cache import (
     PanoAnalysisCache,
     WeatherCache,
 )
-from app.services.kma import KMAClient, KMAObservation, latlon_to_grid
+from app.services.kma import KMAClient, KMAObservation, KST, latlon_to_grid
 from app.services.street_view import (
     GoogleStreetViewClient,
     StreetViewFetchResult,
@@ -311,6 +311,68 @@ class VPTIOrchestrator:
         )
 
         return vpti_result, telemetry
+
+    # ===== 강수 컨텍스트 (VPTI와 분리된 외부 예보 레이어) =====
+
+    async def get_precipitation_outlook(self, lat: float, lon: float) -> dict:
+        """현재 강수 + 0~6시간 강수 전망.
+
+        비는 거리 기하로 예측 불가 → 순수 KMA 외부 데이터로만 다루고, VPTI 숫자에는
+        섞지 않는다(별도 컨텍스트 레이어). 정확도를 위해 단기예보 POP 대신 초단기예보
+        (0~6h)를 사용한다.
+        """
+        # 현재 강수량은 이미 캐시된 실황에서 재사용
+        weather, _, _ = await self._get_weather(lat, lon)
+        now_precip = weather.precipitation_mm
+
+        try:
+            forecasts = await self.kma.get_ultra_short_forecast(lat, lon)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("강수 전망 조회 실패: {}", e)
+            forecasts = []
+
+        now = datetime.now(KST)
+        hourly: list[dict] = []
+        onset_hours: int | None = None
+        max_precip = now_precip
+        for f in forecasts[:6]:
+            pty = f.precipitation_type or "없음"
+            pmm = f.precipitation_mm or 0.0
+            is_rain = pty not in ("없음", None) or pmm > 0.0
+            hrs = max(0, round((f.forecast_for - now).total_seconds() / 3600))
+            hourly.append({
+                "time": f.forecast_for.strftime("%H:%M"),
+                "in_hours": hrs,
+                "pty": pty,
+                "sky": f.sky_condition,
+                "precip_mm": round(pmm, 1),
+            })
+            if is_rain:
+                max_precip = max(max_precip, pmm)
+                if onset_hours is None:
+                    onset_hours = hrs
+
+        raining_now = now_precip > 0.0
+        rain_expected = raining_now or onset_hours is not None
+        umbrella = rain_expected
+
+        if raining_now:
+            advice = "현재 비가 내리고 있습니다 — 우산 필요"
+        elif onset_hours is not None:
+            advice = f"약 {onset_hours}시간 후 비 예보 — 우산 챙기세요"
+        else:
+            advice = "6시간 내 비 예보 없음"
+
+        return {
+            "raining_now": raining_now,
+            "current_precip_mm": round(now_precip, 1),
+            "rain_expected_6h": rain_expected,
+            "onset_in_hours": onset_hours,
+            "max_precip_mm": round(max_precip, 1),
+            "umbrella_recommended": umbrella,
+            "advice": advice,
+            "hourly": hourly,
+        }
 
     @staticmethod
     def _build_synthetic_views(

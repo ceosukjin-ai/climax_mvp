@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from loguru import logger
 
 from app.config import get_settings
 from app.core.smti import MaterialFraction
@@ -211,7 +212,14 @@ async def vpti_at_location(
             detail=f"Pipeline error: {e}",
         ) from e
 
-    response = VPTIResponse(**result.as_dict())
+    # 강수 컨텍스트(별도 레이어, VPTI 무관). 실패해도 본 응답은 유지.
+    precipitation = None
+    try:
+        precipitation = await orchestrator.get_precipitation_outlook(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("강수 전망 부착 실패(무시): {}", e)
+
+    response = VPTIResponse(**result.as_dict(), precipitation=precipitation)
     return response
 
 
