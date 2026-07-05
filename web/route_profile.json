@@ -1,0 +1,799 @@
+{
+ "meta": {
+  "origin": {
+   "lat": 35.1846,
+   "lon": 129.079,
+   "name": "연산LG아파트"
+  },
+  "dest": {
+   "lat": 35.2333,
+   "lon": 129.0793,
+   "name": "부산대학교"
+  },
+  "n_points": 47,
+  "sample": true,
+  "note": "샘플 프로파일 — 실제 app/core/vpti 엔진 산출(공간지수 합성). 실측 아님.",
+  "weather": {
+   "temperature_c": 27.0,
+   "humidity_pct": 65.0,
+   "wind_speed_ms": 2.5,
+   "season": "summer"
+  },
+  "precipitation": {
+   "raining_now": false,
+   "rain_expected_6h": true,
+   "onset_in_hours": 1,
+   "umbrella_recommended": true,
+   "max_precip_mm": 1.5,
+   "advice": "약 1시간 후 비 예보 — 우산 챙기세요",
+   "hourly": [
+    {
+     "time": "11:00",
+     "in_hours": 1,
+     "pty": "빗방울",
+     "sky": "흐림",
+     "precip_mm": 1.0
+    }
+   ]
+  }
+ },
+ "summary": {
+  "vpti_min": 32.65,
+  "vpti_max": 36.06,
+  "vpti_avg": 34.1
+ },
+ "points": [
+  {
+   "lat": 35.185,
+   "lon": 129.079,
+   "vpti": 33.3,
+   "risk_level": "warning",
+   "svf": 0.443,
+   "gvi": 0.248,
+   "bvi": 0.248,
+   "contributions": {
+    "space": 2.48,
+    "material": 1.14,
+    "wind": -0.26,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.18607,
+   "lon": 129.07919,
+   "vpti": 34.45,
+   "risk_level": "warning",
+   "svf": 0.643,
+   "gvi": 0.202,
+   "bvi": 0.331,
+   "contributions": {
+    "space": 3.14,
+    "material": 1.68,
+    "wind": -0.3,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.18714,
+   "lon": 129.07937,
+   "vpti": 34.16,
+   "risk_level": "warning",
+   "svf": 0.613,
+   "gvi": 0.353,
+   "bvi": 0.484,
+   "contributions": {
+    "space": 2.99,
+    "material": 1.52,
+    "wind": -0.27,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.18821,
+   "lon": 129.07954,
+   "vpti": 34.32,
+   "risk_level": "warning",
+   "svf": 0.727,
+   "gvi": 0.366,
+   "bvi": 0.173,
+   "contributions": {
+    "space": 2.94,
+    "material": 1.79,
+    "wind": -0.34,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.18928,
+   "lon": 129.07969,
+   "vpti": 32.97,
+   "risk_level": "warning",
+   "svf": 0.307,
+   "gvi": 0.075,
+   "bvi": 0.257,
+   "contributions": {
+    "space": 2.41,
+    "material": 0.84,
+    "wind": -0.21,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19035,
+   "lon": 129.0798,
+   "vpti": 34.72,
+   "risk_level": "warning",
+   "svf": 0.684,
+   "gvi": 0.202,
+   "bvi": 0.39,
+   "contributions": {
+    "space": 3.3,
+    "material": 1.79,
+    "wind": -0.3,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19143,
+   "lon": 129.07989,
+   "vpti": 33.31,
+   "risk_level": "warning",
+   "svf": 0.463,
+   "gvi": 0.225,
+   "bvi": 0.133,
+   "contributions": {
+    "space": 2.45,
+    "material": 1.2,
+    "wind": -0.28,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19251,
+   "lon": 129.07993,
+   "vpti": 36.06,
+   "risk_level": "danger",
+   "svf": 0.887,
+   "gvi": 0.052,
+   "bvi": 0.39,
+   "contributions": {
+    "space": 4.03,
+    "material": 2.44,
+    "wind": -0.34,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.19359,
+   "lon": 129.07993,
+   "vpti": 33.22,
+   "risk_level": "warning",
+   "svf": 0.435,
+   "gvi": 0.403,
+   "bvi": 0.478,
+   "contributions": {
+    "space": 2.46,
+    "material": 1.06,
+    "wind": -0.23,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19467,
+   "lon": 129.0799,
+   "vpti": 32.84,
+   "risk_level": "warning",
+   "svf": 0.342,
+   "gvi": 0.204,
+   "bvi": 0.198,
+   "contributions": {
+    "space": 2.25,
+    "material": 0.89,
+    "wind": -0.23,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19574,
+   "lon": 129.07981,
+   "vpti": 33.53,
+   "risk_level": "warning",
+   "svf": 0.468,
+   "gvi": 0.231,
+   "bvi": 0.326,
+   "contributions": {
+    "space": 2.65,
+    "material": 1.21,
+    "wind": -0.26,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19682,
+   "lon": 129.0797,
+   "vpti": 33.54,
+   "risk_level": "warning",
+   "svf": 0.463,
+   "gvi": 0.247,
+   "bvi": 0.383,
+   "contributions": {
+    "space": 2.67,
+    "material": 1.19,
+    "wind": -0.25,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19789,
+   "lon": 129.07955,
+   "vpti": 33.5,
+   "risk_level": "warning",
+   "svf": 0.388,
+   "gvi": 0.106,
+   "bvi": 0.436,
+   "contributions": {
+    "space": 2.75,
+    "material": 1.05,
+    "wind": -0.22,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.19896,
+   "lon": 129.07939,
+   "vpti": 34.49,
+   "risk_level": "warning",
+   "svf": 0.628,
+   "gvi": 0.08,
+   "bvi": 0.212,
+   "contributions": {
+    "space": 3.16,
+    "material": 1.71,
+    "wind": -0.31,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20003,
+   "lon": 129.0792,
+   "vpti": 34.85,
+   "risk_level": "warning",
+   "svf": 0.649,
+   "gvi": 0.108,
+   "bvi": 0.486,
+   "contributions": {
+    "space": 3.45,
+    "material": 1.75,
+    "wind": -0.28,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.2011,
+   "lon": 129.07902,
+   "vpti": 33.01,
+   "risk_level": "warning",
+   "svf": 0.378,
+   "gvi": 0.356,
+   "bvi": 0.452,
+   "contributions": {
+    "space": 2.36,
+    "material": 0.93,
+    "wind": -0.22,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20217,
+   "lon": 129.07884,
+   "vpti": 35.4,
+   "risk_level": "danger",
+   "svf": 0.838,
+   "gvi": 0.109,
+   "bvi": 0.145,
+   "contributions": {
+    "space": 3.58,
+    "material": 2.26,
+    "wind": -0.37,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.20324,
+   "lon": 129.07867,
+   "vpti": 34.0,
+   "risk_level": "warning",
+   "svf": 0.606,
+   "gvi": 0.269,
+   "bvi": 0.221,
+   "contributions": {
+    "space": 2.83,
+    "material": 1.55,
+    "wind": -0.31,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20431,
+   "lon": 129.07852,
+   "vpti": 34.06,
+   "risk_level": "warning",
+   "svf": 0.652,
+   "gvi": 0.343,
+   "bvi": 0.209,
+   "contributions": {
+    "space": 2.82,
+    "material": 1.62,
+    "wind": -0.32,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20539,
+   "lon": 129.07841,
+   "vpti": 34.31,
+   "risk_level": "warning",
+   "svf": 0.645,
+   "gvi": 0.241,
+   "bvi": 0.273,
+   "contributions": {
+    "space": 3.02,
+    "material": 1.66,
+    "wind": -0.31,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20646,
+   "lon": 129.07831,
+   "vpti": 34.8,
+   "risk_level": "warning",
+   "svf": 0.844,
+   "gvi": 0.371,
+   "bvi": 0.118,
+   "contributions": {
+    "space": 3.17,
+    "material": 2.07,
+    "wind": -0.37,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20754,
+   "lon": 129.07828,
+   "vpti": 34.6,
+   "risk_level": "warning",
+   "svf": 0.794,
+   "gvi": 0.388,
+   "bvi": 0.175,
+   "contributions": {
+    "space": 3.08,
+    "material": 1.94,
+    "wind": -0.36,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.20862,
+   "lon": 129.07825,
+   "vpti": 34.48,
+   "risk_level": "warning",
+   "svf": 0.667,
+   "gvi": 0.12,
+   "bvi": 0.107,
+   "contributions": {
+    "space": 3.09,
+    "material": 1.79,
+    "wind": -0.33,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.2097,
+   "lon": 129.0783,
+   "vpti": 33.32,
+   "risk_level": "warning",
+   "svf": 0.357,
+   "gvi": 0.15,
+   "bvi": 0.477,
+   "contributions": {
+    "space": 2.64,
+    "material": 0.95,
+    "wind": -0.21,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.21078,
+   "lon": 129.07835,
+   "vpti": 35.13,
+   "risk_level": "danger",
+   "svf": 0.769,
+   "gvi": 0.255,
+   "bvi": 0.493,
+   "contributions": {
+    "space": 3.53,
+    "material": 1.97,
+    "wind": -0.3,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.21185,
+   "lon": 129.07846,
+   "vpti": 35.21,
+   "risk_level": "danger",
+   "svf": 0.869,
+   "gvi": 0.413,
+   "bvi": 0.457,
+   "contributions": {
+    "space": 3.51,
+    "material": 2.1,
+    "wind": -0.33,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.21293,
+   "lon": 129.07858,
+   "vpti": 34.87,
+   "risk_level": "warning",
+   "svf": 0.84,
+   "gvi": 0.352,
+   "bvi": 0.161,
+   "contributions": {
+    "space": 3.23,
+    "material": 2.08,
+    "wind": -0.37,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.214,
+   "lon": 129.07873,
+   "vpti": 33.92,
+   "risk_level": "warning",
+   "svf": 0.524,
+   "gvi": 0.15,
+   "bvi": 0.287,
+   "contributions": {
+    "space": 2.87,
+    "material": 1.39,
+    "wind": -0.28,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.21507,
+   "lon": 129.0789,
+   "vpti": 33.68,
+   "risk_level": "warning",
+   "svf": 0.507,
+   "gvi": 0.187,
+   "bvi": 0.211,
+   "contributions": {
+    "space": 2.7,
+    "material": 1.33,
+    "wind": -0.28,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.21614,
+   "lon": 129.07908,
+   "vpti": 32.97,
+   "risk_level": "warning",
+   "svf": 0.305,
+   "gvi": 0.152,
+   "bvi": 0.394,
+   "contributions": {
+    "space": 2.43,
+    "material": 0.81,
+    "wind": -0.2,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.21721,
+   "lon": 129.07926,
+   "vpti": 33.14,
+   "risk_level": "warning",
+   "svf": 0.391,
+   "gvi": 0.118,
+   "bvi": 0.108,
+   "contributions": {
+    "space": 2.41,
+    "material": 1.05,
+    "wind": -0.26,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.21828,
+   "lon": 129.07944,
+   "vpti": 34.99,
+   "risk_level": "warning",
+   "svf": 0.749,
+   "gvi": 0.123,
+   "bvi": 0.2,
+   "contributions": {
+    "space": 3.39,
+    "material": 2.01,
+    "wind": -0.34,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.21935,
+   "lon": 129.07961,
+   "vpti": 33.68,
+   "risk_level": "warning",
+   "svf": 0.539,
+   "gvi": 0.356,
+   "bvi": 0.375,
+   "contributions": {
+    "space": 2.69,
+    "material": 1.33,
+    "wind": -0.27,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.22042,
+   "lon": 129.07976,
+   "vpti": 33.56,
+   "risk_level": "warning",
+   "svf": 0.505,
+   "gvi": 0.376,
+   "bvi": 0.443,
+   "contributions": {
+    "space": 2.64,
+    "material": 1.24,
+    "wind": -0.25,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.22149,
+   "lon": 129.0799,
+   "vpti": 34.41,
+   "risk_level": "warning",
+   "svf": 0.713,
+   "gvi": 0.331,
+   "bvi": 0.242,
+   "contributions": {
+    "space": 3.03,
+    "material": 1.78,
+    "wind": -0.33,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.22257,
+   "lon": 129.08,
+   "vpti": 35.06,
+   "risk_level": "danger",
+   "svf": 0.802,
+   "gvi": 0.32,
+   "bvi": 0.419,
+   "contributions": {
+    "space": 3.44,
+    "material": 2.01,
+    "wind": -0.32,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.22364,
+   "lon": 129.08008,
+   "vpti": 32.89,
+   "risk_level": "warning",
+   "svf": 0.333,
+   "gvi": 0.286,
+   "bvi": 0.418,
+   "contributions": {
+    "space": 2.32,
+    "material": 0.84,
+    "wind": -0.21,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.22472,
+   "lon": 129.08013,
+   "vpti": 33.56,
+   "risk_level": "warning",
+   "svf": 0.488,
+   "gvi": 0.244,
+   "bvi": 0.287,
+   "contributions": {
+    "space": 2.64,
+    "material": 1.26,
+    "wind": -0.27,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.2258,
+   "lon": 129.08014,
+   "vpti": 32.65,
+   "risk_level": "warning",
+   "svf": 0.324,
+   "gvi": 0.384,
+   "bvi": 0.4,
+   "contributions": {
+    "space": 2.13,
+    "material": 0.79,
+    "wind": -0.21,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.22688,
+   "lon": 129.08011,
+   "vpti": 34.14,
+   "risk_level": "warning",
+   "svf": 0.524,
+   "gvi": 0.109,
+   "bvi": 0.406,
+   "contributions": {
+    "space": 3.05,
+    "material": 1.41,
+    "wind": -0.26,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.22796,
+   "lon": 129.08005,
+   "vpti": 35.13,
+   "risk_level": "danger",
+   "svf": 0.735,
+   "gvi": 0.085,
+   "bvi": 0.311,
+   "contributions": {
+    "space": 3.52,
+    "material": 2.0,
+    "wind": -0.32,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.22904,
+   "lon": 129.07996,
+   "vpti": 34.4,
+   "risk_level": "warning",
+   "svf": 0.626,
+   "gvi": 0.165,
+   "bvi": 0.296,
+   "contributions": {
+    "space": 3.11,
+    "material": 1.66,
+    "wind": -0.3,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.23011,
+   "lon": 129.07984,
+   "vpti": 34.23,
+   "risk_level": "warning",
+   "svf": 0.615,
+   "gvi": 0.329,
+   "bvi": 0.493,
+   "contributions": {
+    "space": 3.04,
+    "material": 1.53,
+    "wind": -0.27,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.23118,
+   "lon": 129.0797,
+   "vpti": 33.3,
+   "risk_level": "warning",
+   "svf": 0.38,
+   "gvi": 0.201,
+   "bvi": 0.441,
+   "contributions": {
+    "space": 2.59,
+    "material": 0.99,
+    "wind": -0.22,
+    "humidity": 2.93
+   },
+   "action_guide": "습도가 높아 땀이 잘 마르지 않아 후덥지근합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  },
+  {
+   "lat": 35.23225,
+   "lon": 129.07953,
+   "vpti": 35.1,
+   "risk_level": "danger",
+   "svf": 0.792,
+   "gvi": 0.133,
+   "bvi": 0.128,
+   "contributions": {
+    "space": 3.41,
+    "material": 2.12,
+    "wind": -0.36,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.23332,
+   "lon": 129.07936,
+   "vpti": 35.07,
+   "risk_level": "danger",
+   "svf": 0.719,
+   "gvi": 0.049,
+   "bvi": 0.26,
+   "contributions": {
+    "space": 3.48,
+    "material": 1.98,
+    "wind": -0.33,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 즉시 실내 또는 쿨링 쉼터로 대피하세요."
+  },
+  {
+   "lat": 35.2337,
+   "lon": 129.0793,
+   "vpti": 34.43,
+   "risk_level": "warning",
+   "svf": 0.63,
+   "gvi": 0.08,
+   "bvi": 0.149,
+   "contributions": {
+    "space": 3.1,
+    "material": 1.72,
+    "wind": -0.32,
+    "humidity": 2.93
+   },
+   "action_guide": "하늘이 열려 복사열이 강합니다. 그늘로 이동하고 10분 내 휴식을 취하세요."
+  }
+ ]
+}

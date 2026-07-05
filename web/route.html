@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>ClimaX · 경로 체감기후(VPTI)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#0f172a; --surface:#1e293b; --surface-2:#334155; --text:#f1f5f9;
+    --text-dim:#94a3b8; --border:#475569; --accent:#38bdf8;
+    --safe:#16a34a; --caution:#eab308; --warning:#f97316; --danger:#dc2626; --severe:#7c2d12;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR","Apple SD Gothic Neo",sans-serif;
+    font-size:16px;line-height:1.5;}
+  main{max-width:480px;margin:0 auto;padding:16px;}
+  h1{font-size:1.25rem;margin:8px 0 12px;display:flex;align-items:center;gap:8px;}
+  h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);}
+  .sub{font-size:0.82rem;color:var(--text-dim);margin:-6px 0 12px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px;}
+  #map{height:46vh;min-height:300px;border-radius:12px;border:1px solid var(--border);margin-bottom:12px;}
+  .legend{display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text-dim);margin-bottom:12px;}
+  .legend .grad{height:8px;flex:1;border-radius:4px;background:linear-gradient(90deg,#16a34a,#eab308,#f97316,#dc2626);}
+  .row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+  .stat{background:var(--surface-2);border-radius:8px;padding:10px;text-align:center;}
+  .stat .k{font-size:0.72rem;color:var(--text-dim);}
+  .stat .v{font-size:1.15rem;font-weight:700;font-variant-numeric:tabular-nums;}
+  .rain{display:flex;align-items:center;gap:12px;margin-top:12px;padding:12px;border-radius:10px;
+    background:var(--surface-2);border:1px solid var(--border);}
+  .rain.umbrella{background:rgba(56,189,248,0.14);border-color:var(--accent);}
+  .rain .ico{font-size:1.6rem;}
+  .rain .main{font-weight:700;font-size:0.95rem;}
+  .rain .sub2{font-size:0.8rem;color:var(--text-dim);}
+  .detail .meta{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:0.85rem;color:var(--text-dim);}
+  .detail .meta b{color:var(--text);font-weight:600;}
+  .vptibig{display:flex;align-items:baseline;gap:8px;justify-content:center;padding:8px 0;}
+  .vptibig .n{font-size:2.6rem;font-weight:800;letter-spacing:-0.03em;}
+  .vptibig .u{font-size:1.1rem;color:var(--text-dim);}
+  .chip{display:inline-block;padding:4px 12px;border-radius:999px;font-weight:700;font-size:0.8rem;color:#fff;}
+  .risk-safe{background:var(--safe);} .risk-caution{background:var(--caution);color:#1c1917;}
+  .risk-warning{background:var(--warning);} .risk-danger{background:var(--danger);} .risk-severe{background:var(--severe);}
+  .contrib{display:grid;grid-template-columns:1fr auto;gap:5px 12px;margin-top:10px;}
+  .contrib .label{color:var(--text-dim);font-size:0.88rem;}
+  .contrib .value{font-variant-numeric:tabular-nums;font-weight:600;}
+  .contrib .value.pos{color:#fca5a5;} .contrib .value.neg{color:#86efac;}
+  .guide{background:rgba(56,189,248,0.08);border-left:3px solid var(--accent);padding:10px;border-radius:4px;
+    font-size:0.9rem;margin-top:12px;line-height:1.5;}
+  .hint{font-size:0.8rem;color:var(--text-dim);text-align:center;}
+  .leaflet-popup-content{margin:8px 10px;font-size:0.82rem;}
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="dot"></span>ClimaX · 경로 체감기후(VPTI)</h1>
+  <div class="sub" id="route-sub">경로 로딩 중…</div>
+
+  <div id="map"></div>
+  <div class="legend"><span>쾌적</span><div class="grad"></div><span>더움</span></div>
+
+  <div class="card">
+    <div class="row">
+      <div class="stat"><div class="k">평균</div><div class="v" id="s-avg">–</div></div>
+      <div class="stat"><div class="k">최저</div><div class="v" id="s-min">–</div></div>
+      <div class="stat"><div class="k">최고</div><div class="v" id="s-max">–</div></div>
+    </div>
+    <div class="rain hidden" id="rain">
+      <span class="ico" id="rain-ico">☂</span>
+      <div><div class="main" id="rain-main">–</div><div class="sub2" id="rain-sub"></div></div>
+    </div>
+  </div>
+
+  <div class="card detail">
+    <div class="meta">
+      <b>지점</b><span id="d-coord">지도의 점을 눌러보세요</span>
+      <b>계절/기상</b><span id="d-weather">–</span>
+    </div>
+    <div class="vptibig"><span class="n" id="d-vpti">–</span><span class="u">°C</span></div>
+    <div style="text-align:center;"><span class="chip" id="d-risk">–</span></div>
+    <div class="guide" id="d-guide">–</div>
+    <div style="font-size:0.92rem;font-weight:600;margin-top:14px;">원인 분해 (Δ°C)</div>
+    <div class="contrib">
+      <span class="label">공간 (VSI)</span><span class="value" id="c-space">–</span>
+      <span class="label">재질 (SMTI)</span><span class="value" id="c-mat">–</span>
+      <span class="label">바람 (PWI)</span><span class="value" id="c-wind">–</span>
+      <span class="label">습도 (후덥지근)</span><span class="value" id="c-humid">–</span>
+    </div>
+  </div>
+
+  <div class="sub" id="note"></div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const RISK_KO={safe:"안전",caution:"주의",warning:"경계",danger:"위험",severe:"심각"};
+  const SEASON_KO={summer:"여름",winter:"겨울",transition:"환절기"};
+  const $=(id)=>document.getElementById(id);
+
+  function vptiColor(v,lo,hi){
+    const t=hi>lo?Math.min(1,Math.max(0,(v-lo)/(hi-lo))):0.5;
+    return `hsl(${120*(1-t)},70%,48%)`;   // green→red
+  }
+  function fmtDelta(v){const n=+v;return (n>=0?"+":"")+n.toFixed(2);}
+  function setDelta(el,v){el.textContent=fmtDelta(v);el.classList.toggle("pos",v>0);el.classList.toggle("neg",v<0);}
+
+  let map, layer;
+
+  function showDetail(p, meta){
+    $("d-coord").textContent=`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
+    const w=meta.weather||{};
+    $("d-weather").textContent=`${SEASON_KO[w.season]||"–"} · ${w.temperature_c??"–"}°C · 습도 ${w.humidity_pct??"–"}%`;
+    $("d-vpti").textContent=(typeof p.vpti==="number"?p.vpti.toFixed(1):"–");
+    $("d-risk").className="chip risk-"+p.risk_level;
+    $("d-risk").textContent=RISK_KO[p.risk_level]||p.risk_level||"–";
+    $("d-guide").textContent=p.action_guide||"–";
+    const c=p.contributions||{};
+    setDelta($("c-space"),c.space); setDelta($("c-mat"),c.material);
+    setDelta($("c-wind"),c.wind); setDelta($("c-humid"),c.humidity);
+  }
+
+  function renderRain(pr){
+    const box=$("rain");
+    if(!pr){box.classList.add("hidden");return;}
+    box.classList.remove("hidden");
+    const umb=!!pr.umbrella_recommended;
+    box.classList.toggle("umbrella",umb);
+    $("rain-ico").textContent=pr.raining_now?"🌧":(umb?"☂":"☀");
+    $("rain-main").textContent=pr.advice||(umb?"우산 권장":"비 예보 없음");
+    const hrs=(pr.hourly||[]).filter(h=>h.pty&&h.pty!=="없음");
+    $("rain-sub").textContent=hrs.length?("0~6h: "+hrs.map(h=>`${h.time} ${h.pty}`).join(", ")):"";
+  }
+
+  function render(profile){
+    const {meta,summary,points}=profile;
+    $("route-sub").textContent=`${meta.origin.name} → ${meta.dest.name} · ${meta.n_points}개 지점`
+      + (meta.sample?" · 샘플":"");
+    $("s-avg").textContent=summary.vpti_avg.toFixed(1);
+    $("s-min").textContent=summary.vpti_min.toFixed(1);
+    $("s-max").textContent=summary.vpti_max.toFixed(1);
+    renderRain(meta.precipitation);
+    $("note").textContent=meta.note||"";
+
+    const lo=summary.vpti_min, hi=summary.vpti_max;
+    const latlngs=points.map(p=>[p.lat,p.lon]);
+    if(layer) layer.remove();
+    layer=L.layerGroup().addTo(map);
+    for(let i=0;i<points.length-1;i++){
+      const v=(points[i].vpti+points[i+1].vpti)/2;
+      L.polyline([latlngs[i],latlngs[i+1]],{color:vptiColor(v,lo,hi),weight:8,opacity:0.9}).addTo(layer);
+    }
+    points.forEach(p=>{
+      L.circleMarker([p.lat,p.lon],{radius:6,color:"#0f172a",weight:1.5,
+        fillColor:vptiColor(p.vpti,lo,hi),fillOpacity:1})
+        .on("click",()=>showDetail(p,meta))
+        .bindPopup(`VPTI ${p.vpti.toFixed(1)}°C · ${RISK_KO[p.risk_level]||""}`)
+        .addTo(layer);
+    });
+    L.marker([meta.origin.lat,meta.origin.lon]).addTo(layer).bindPopup("출발 · "+meta.origin.name);
+    L.marker([meta.dest.lat,meta.dest.lon]).addTo(layer).bindPopup("도착 · "+meta.dest.name);
+    map.fitBounds(L.latLngBounds(latlngs).pad(0.15));
+
+    // 최고(가장 더운) 지점을 기본 표시
+    const worst=points.reduce((a,b)=>b.vpti>a.vpti?b:a,points[0]);
+    showDetail(worst,meta);
+  }
+
+  map=L.map("map",{zoomControl:true}).setView([35.21,129.079],13);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+    {attribution:"© OpenStreetMap, © CARTO",maxZoom:19}).addTo(map);
+
+  fetch("./route_profile.json",{headers:{accept:"application/json"}})
+    .then(r=>{if(!r.ok)throw new Error(r.status);return r.json();})
+    .then(render)
+    .catch(e=>{$("route-sub").textContent="route_profile.json 로드 실패: "+e.message;});
+})();
+</script>
+</body>
+</html>
