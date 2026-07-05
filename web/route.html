@@ -57,6 +57,9 @@
     font-size:0.9rem;margin-top:12px;line-height:1.5;}
   .hint{font-size:0.8rem;color:var(--text-dim);text-align:center;}
   .leaflet-popup-content{margin:8px 10px;font-size:0.82rem;}
+  .leaflet-tooltip.lbl{background:#0f172a;color:#f1f5f9;border:1px solid var(--accent);
+    border-radius:6px;font-size:11px;font-weight:700;padding:1px 7px;box-shadow:none;}
+  .leaflet-tooltip.lbl::before{display:none;}
 </style>
 </head>
 <body>
@@ -86,7 +89,8 @@
 
   <div class="card detail">
     <div class="meta">
-      <b>지점</b><span id="d-coord">지도의 점을 눌러보세요</span>
+      <b>구간</b><span id="d-role">지도의 점을 눌러보세요</span>
+      <b>지점</b><span id="d-coord">–</span>
       <b>계절/기상</b><span id="d-weather">–</span>
     </div>
     <div class="vptibig"><span class="n" id="d-vpti">–</span><span class="u">°C</span></div>
@@ -118,7 +122,7 @@
   function fmtDelta(v){const n=+v;return (n>=0?"+":"")+n.toFixed(2);}
   function setDelta(el,v){el.textContent=fmtDelta(v);el.classList.toggle("pos",v>0);el.classList.toggle("neg",v<0);}
 
-  let map, layer, pickLayer=null, myPos=null, myMarker=null;
+  let map, layer, pickLayer=null, myPos=null, myMarker=null, profileData=null, worstIdx=0;
 
   function getPosition(){
     return new Promise((resolve,reject)=>{
@@ -140,7 +144,17 @@
     });
   }
 
-  function showDetail(p, meta){
+  function showDetail(idx){
+    if(!profileData) return;
+    const {meta,points}=profileData;
+    const n=points.length;
+    if(idx<0||idx>=n) return;
+    const p=points[idx];
+    const roleParts=[`경로 ${idx+1}/${n}번째`];
+    if(idx===0) roleParts.push("· 🔵 출발");
+    else if(idx===n-1) roleParts.push("· 🔴 도착");
+    if(idx===worstIdx) roleParts.push("· ⭐ 최고(가장 더운)");
+    $("d-role").textContent=roleParts.join(" ");
     $("d-coord").textContent=`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
     const w=meta.weather||{};
     $("d-weather").textContent=`${SEASON_KO[w.season]||"–"} · ${w.temperature_c??"–"}°C · 습도 ${w.humidity_pct??"–"}%`;
@@ -167,8 +181,11 @@
 
   function render(profile){
     const {meta,summary,points}=profile;
-    $("route-sub").textContent=`${meta.origin.name} → ${meta.dest.name} · ${meta.n_points}개 지점`
-      + (meta.sample?" · 샘플":"");
+    profileData=profile;
+    worstIdx=0;
+    for(let i=1;i<points.length;i++){ if(points[i].vpti>points[worstIdx].vpti) worstIdx=i; }
+
+    $("route-sub").textContent=`${meta.origin.name} → ${meta.dest.name} · ${meta.n_points}개 지점`;
     $("s-avg").textContent=summary.vpti_avg.toFixed(1);
     $("s-min").textContent=summary.vpti_min.toFixed(1);
     $("s-max").textContent=summary.vpti_max.toFixed(1);
@@ -185,20 +202,26 @@
       const v=(points[i].vpti+points[i+1].vpti)/2;
       L.polyline([latlngs[i],latlngs[i+1]],{color:vptiColor(v,lo,hi),weight:8,opacity:0.9}).addTo(layer);
     }
-    points.forEach(p=>{
+    points.forEach((p,i)=>{
       L.circleMarker([p.lat,p.lon],{radius:6,color:"#0f172a",weight:1.5,
         fillColor:vptiColor(p.vpti,lo,hi),fillOpacity:1})
-        .on("click",()=>showDetail(p,meta))
-        .bindPopup(`VPTI ${p.vpti.toFixed(1)}°C · ${RISK_KO[p.risk_level]||""}`)
+        .on("click",()=>showDetail(i))
+        .bindPopup(`${i+1}/${points.length} · VPTI ${p.vpti.toFixed(1)}°C · ${RISK_KO[p.risk_level]||""}`)
         .addTo(layer);
     });
-    L.marker([meta.origin.lat,meta.origin.lon]).addTo(layer).bindPopup("출발 · "+meta.origin.name);
-    L.marker([meta.dest.lat,meta.dest.lon]).addTo(layer).bindPopup("도착 · "+meta.dest.name);
-    map.fitBounds(L.latLngBounds(latlngs).pad(0.15));
+    // 출발/도착 마커 — 상시 라벨 + 탭하면 해당 끝점 지점 표시
+    L.marker([meta.origin.lat,meta.origin.lon]).addTo(layer)
+      .bindTooltip("출발",{permanent:true,direction:"top",className:"lbl"})
+      .bindPopup("출발 · "+meta.origin.name)
+      .on("click",()=>showDetail(0));
+    L.marker([meta.dest.lat,meta.dest.lon]).addTo(layer)
+      .bindTooltip("도착",{permanent:true,direction:"top",className:"lbl"})
+      .bindPopup("도착 · "+meta.dest.name)
+      .on("click",()=>showDetail(points.length-1));
+    map.fitBounds(L.latLngBounds(latlngs).pad(0.2));
 
-    // 최고(가장 더운) 지점을 기본 표시
-    const worst=points.reduce((a,b)=>b.vpti>a.vpti?b:a,points[0]);
-    showDetail(worst,meta);
+    // 기본: 최고(가장 더운) 지점
+    showDetail(worstIdx);
   }
 
   async function geocodeDest(q){
