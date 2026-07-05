@@ -23,8 +23,40 @@ GEOCODE_URL = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode"
 LatLon = tuple[float, float]
 
 
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+
+
 class NCPDirectionsError(Exception):
     pass
+
+
+async def nominatim_geocode(query: str) -> tuple[float, float, str] | None:
+    """OpenStreetMap Nominatim 로 장소명/주소 → (lat, lon, 표시명).
+
+    NCP Geocoding 이 못 찾는 '장소명(부산대학교, 광안리해수욕장 등)'을 보완한다.
+    무료·키 불필요이나 이용정책상 User-Agent 필수, 과도한 호출 금지.
+    """
+    params = {
+        "q": query, "format": "jsonv2", "limit": "1",
+        "accept-language": "ko", "countrycodes": "kr",
+    }
+    headers = {"User-Agent": "ClimaX-MVP/1.0 (research validation)"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(NOMINATIM_URL, params=params, headers=headers)
+            resp.raise_for_status()
+            arr = resp.json()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Nominatim 검색 실패: {}", e)
+        return None
+    if not arr:
+        return None
+    item = arr[0]
+    try:
+        return (float(item["lat"]), float(item["lon"]),
+                item.get("display_name", query))
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def haversine_m(a: LatLon, b: LatLon) -> float:

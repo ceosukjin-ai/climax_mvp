@@ -224,30 +224,43 @@ async def vpti_at_location(
     return response
 
 
-@router.get("/geocode", summary="주소/장소 → 좌표 (NCP Geocoding)")
+@router.get("/geocode", summary="주소/장소 → 좌표 (NCP 주소 + OSM 장소명)")
 async def geocode(
     request: Request,
-    query: str = Query(..., min_length=1, description="검색할 주소/장소"),
+    query: str = Query(..., min_length=1, description="검색할 주소 또는 장소명"),
 ) -> JSONResponse:
-    """목적지 주소 문자열을 좌표로 변환한다."""
+    """목적지 문자열 → 좌표.
+
+    1순위 NCP Geocoding(주소 정밀), 없으면 2순위 Nominatim(장소명: 부산대학교 등).
+    """
+    from app.services.ncp_directions import nominatim_geocode
+
     directions = getattr(request.app.state, "directions", None)
-    if directions is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Geocoding 비활성 — NCP Maps 키(.env)를 설정하세요.",
-        )
-    try:
-        result = await directions.geocode(query)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail=f"주소 검색 오류: {e}") from e
+    result = None
+    source = None
+
+    # 1) NCP 주소 검색 (있을 때)
+    if directions is not None:
+        try:
+            result = await directions.geocode(query)
+            if result is not None:
+                source = "ncp"
+        except Exception as e:  # noqa: BLE001
+            logger.warning("NCP geocode 실패(무시): {}", e)
+
+    # 2) 장소명 폴백 (OSM Nominatim)
+    if result is None:
+        result = await nominatim_geocode(query)
+        if result is not None:
+            source = "osm"
+
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="주소를 찾을 수 없습니다. 도로명·지번 주소로 입력해 보세요.",
+            detail="위치를 찾을 수 없습니다. 장소명이나 주소를 조금 더 구체적으로 입력해 보세요.",
         )
     lat, lon, label = result
-    return JSONResponse({"lat": lat, "lon": lon, "address": label})
+    return JSONResponse({"lat": lat, "lon": lon, "address": label, "source": source})
 
 
 @router.get(

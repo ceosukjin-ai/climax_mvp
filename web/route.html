@@ -65,7 +65,7 @@
   <div class="sub" id="route-sub">경로 로딩 중…</div>
 
   <div class="dest-row">
-    <input id="dest-input" type="text" placeholder="목적지 주소 입력 (예: 부산 금정구 부산대학로 63)" />
+    <input id="dest-input" type="text" placeholder="목적지 입력 (예: 부산대학교, 광안리해수욕장, 또는 주소)" />
     <button id="btn-go" class="go">경로 보기</button>
   </div>
 
@@ -118,7 +118,7 @@
   function fmtDelta(v){const n=+v;return (n>=0?"+":"")+n.toFixed(2);}
   function setDelta(el,v){el.textContent=fmtDelta(v);el.classList.toggle("pos",v>0);el.classList.toggle("neg",v<0);}
 
-  let map, layer, pickLayer=null, mode="sample", origin=null;
+  let map, layer, pickLayer=null, myPos=null, myMarker=null;
 
   function getPosition(){
     return new Promise((resolve,reject)=>{
@@ -178,6 +178,7 @@
     const lo=summary.vpti_min, hi=summary.vpti_max;
     const latlngs=points.map(p=>[p.lat,p.lon]);
     if(pickLayer){pickLayer.remove();pickLayer=null;}
+    if(myMarker){myMarker.remove();myMarker=null;}
     if(layer) layer.remove();
     layer=L.layerGroup().addTo(map);
     for(let i=0;i<points.length-1;i++){
@@ -221,17 +222,36 @@
     }
   }
 
+  async function locateMe(){
+    $("route-sub").textContent="현재 위치 확인 중…";
+    try{
+      const c=await getPosition();
+      myPos={lat:c.latitude, lon:c.longitude};
+      if(myMarker) myMarker.remove();
+      myMarker=L.circleMarker([myPos.lat,myPos.lon],
+        {radius:8,color:"#fff",weight:2,fillColor:"#38bdf8",fillOpacity:1})
+        .addTo(map).bindPopup("📍 현재 위치").openPopup();
+      map.setView([myPos.lat,myPos.lon],15);
+      $("route-sub").textContent="현재 위치 표시됨 · 목적지를 입력하고 ‘경로 보기’";
+    }catch(e){
+      $("route-sub").textContent="현재 위치 확인 실패: "+e.message;
+    }
+  }
+
   async function onGoRoute(){
     const q=$("dest-input").value.trim();
-    if(!q){ $("route-sub").textContent="목적지 주소를 입력하세요."; return; }
+    if(!q){ $("route-sub").textContent="목적지를 입력하세요 (예: 부산대학교)"; return; }
     const btn=$("btn-go"); btn.disabled=true;
     try{
-      $("route-sub").textContent="현재 위치(GPS) 확인 중…";
-      const c=await getPosition();
-      const origin={lat:c.latitude, lon:c.longitude};
-      $("route-sub").textContent="목적지 주소 검색 중…";
+      let o=myPos;
+      if(!o){
+        $("route-sub").textContent="현재 위치 확인 중…";
+        const c=await getPosition();
+        o={lat:c.latitude, lon:c.longitude}; myPos=o;
+      }
+      $("route-sub").textContent=`목적지 검색 중… (${q})`;
       const d=await geocodeDest(q);
-      await fetchRoute(origin,{lat:d.lat,lon:d.lon},d.address||q);
+      await fetchRoute(o,{lat:d.lat,lon:d.lon},d.address||q);
     }catch(e){
       $("route-sub").textContent="실패: "+e.message;
     }finally{ btn.disabled=false; }
@@ -242,7 +262,7 @@
     {attribution:"© OpenStreetMap, © CARTO",maxZoom:19}).addTo(map);
   $("btn-go").addEventListener("click", onGoRoute);
   $("dest-input").addEventListener("keydown",(e)=>{if(e.key==="Enter")onGoRoute();});
-  $("route-sub").textContent="목적지 주소를 입력하고 ‘경로 보기’를 누르면 현재 위치에서의 경로 체감기후를 계산합니다.";
+  locateMe();
 })();
 </script>
 </body>
