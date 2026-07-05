@@ -18,6 +18,7 @@ import httpx
 from loguru import logger
 
 DIRECTIONS_URL = "https://maps.apigw.ntruss.com/map-direction/v1/driving"
+GEOCODE_URL = "https://maps.apigw.ntruss.com/map-geocode/v2/geocode"
 
 LatLon = tuple[float, float]
 
@@ -87,6 +88,33 @@ class NCPDirectionsClient:
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    async def geocode(self, query: str) -> tuple[float, float, str] | None:
+        """주소/장소 문자열 → (lat, lon, 표시주소). 결과 없으면 None.
+
+        NCP Geocoding 은 주소 기반(도로명/지번). 건물·주소면 잘 찾고,
+        순수 상호(POI)는 못 찾을 수 있다.
+        """
+        headers = {
+            "x-ncp-apigw-api-key-id": self.client_id,
+            "x-ncp-apigw-api-key": self.client_secret,
+        }
+        resp = await self._client.get(
+            GEOCODE_URL, params={"query": query}, headers=headers
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        addresses = data.get("addresses") or []
+        if not addresses:
+            return None
+        a = addresses[0]
+        try:
+            lat = float(a["y"])  # y = 위도
+            lon = float(a["x"])  # x = 경도
+        except (KeyError, TypeError, ValueError):
+            return None
+        label = a.get("roadAddress") or a.get("jibunAddress") or query
+        return (lat, lon, label)
 
     async def get_path(
         self,

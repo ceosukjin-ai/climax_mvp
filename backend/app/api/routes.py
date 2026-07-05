@@ -224,6 +224,32 @@ async def vpti_at_location(
     return response
 
 
+@router.get("/geocode", summary="주소/장소 → 좌표 (NCP Geocoding)")
+async def geocode(
+    request: Request,
+    query: str = Query(..., min_length=1, description="검색할 주소/장소"),
+) -> JSONResponse:
+    """목적지 주소 문자열을 좌표로 변환한다."""
+    directions = getattr(request.app.state, "directions", None)
+    if directions is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Geocoding 비활성 — NCP Maps 키(.env)를 설정하세요.",
+        )
+    try:
+        result = await directions.geocode(query)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"주소 검색 오류: {e}") from e
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="주소를 찾을 수 없습니다. 도로명·지번 주소로 입력해 보세요.",
+        )
+    lat, lon, label = result
+    return JSONResponse({"lat": lat, "lon": lon, "address": label})
+
+
 @router.get(
     "/route",
     summary="출발→도착 경로를 지점별 VPTI로 산출 (NCP 길찾기)",
