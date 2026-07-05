@@ -135,7 +135,7 @@
           }
           reject(new Error(m));
         },
-        {enableHighAccuracy:true,timeout:15000,maximumAge:0}
+        {enableHighAccuracy:true,timeout:20000,maximumAge:0}
       );
     });
   }
@@ -223,16 +223,20 @@
   }
 
   async function locateMe(){
-    $("route-sub").textContent="현재 위치 확인 중…";
+    $("route-sub").textContent="현재 위치 확인 중… (GPS 잡는 중, 최대 20초)";
     try{
       const c=await getPosition();
       myPos={lat:c.latitude, lon:c.longitude};
+      const acc=Math.round(c.accuracy||0);
       if(myMarker) myMarker.remove();
       myMarker=L.circleMarker([myPos.lat,myPos.lon],
         {radius:8,color:"#fff",weight:2,fillColor:"#38bdf8",fillOpacity:1})
-        .addTo(map).bindPopup("📍 현재 위치").openPopup();
-      map.setView([myPos.lat,myPos.lon],15);
-      $("route-sub").textContent="현재 위치 표시됨 · 목적지를 입력하고 ‘경로 보기’";
+        .addTo(map).bindPopup("📍 현재 위치 (±"+acc+"m)").openPopup();
+      map.setView([myPos.lat,myPos.lon], acc>2000?11:15);
+      const warn = acc>3000
+        ? " ⚠ 정확도 낮음(±"+(acc/1000).toFixed(1)+"km) — PC이거나 GPS 미사용일 수 있어요"
+        : "";
+      $("route-sub").textContent="현재 위치 표시됨 (±"+acc+"m)"+warn+" · 목적지 입력 후 ‘경로 보기’";
     }catch(e){
       $("route-sub").textContent="현재 위치 확인 실패: "+e.message;
     }
@@ -243,11 +247,12 @@
     if(!q){ $("route-sub").textContent="목적지를 입력하세요 (예: 부산대학교)"; return; }
     const btn=$("btn-go"); btn.disabled=true;
     try{
-      let o=myPos;
-      if(!o){
-        $("route-sub").textContent="현재 위치 확인 중…";
-        const c=await getPosition();
-        o={lat:c.latitude, lon:c.longitude}; myPos=o;
+      // 경로 계산 시 매번 최신 GPS를 새로 잡아 출발지로 사용
+      $("route-sub").textContent="현재 위치 확인 중…";
+      const c=await getPosition();
+      const o={lat:c.latitude, lon:c.longitude}; myPos=o;
+      if(c.accuracy>3000){
+        $("route-sub").textContent="⚠ 현재 위치 정확도 낮음(±"+(c.accuracy/1000).toFixed(1)+"km). 그대로 계산합니다…";
       }
       $("route-sub").textContent=`목적지 검색 중… (${q})`;
       const d=await geocodeDest(q);
