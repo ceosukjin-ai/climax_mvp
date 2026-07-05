@@ -97,9 +97,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "Only pure-computation endpoints available."
         )
 
+    # NCP Maps Directions (경로 탐색) — 키 있을 때만
+    directions = None
+    if settings.ncp_maps_client_id and settings.ncp_maps_client_secret:
+        from app.services.ncp_directions import NCPDirectionsClient
+        try:
+            directions = NCPDirectionsClient(
+                client_id=settings.ncp_maps_client_id,
+                client_secret=settings.ncp_maps_client_secret,
+            )
+            logger.info("NCP Directions client ready (경로 탐색 사용 가능)")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("NCP Directions init failed: {}", e)
+    else:
+        logger.info("NCP Maps keys missing → /route (경로) 비활성. 단일지점은 정상.")
+
     # 앱 state에 주입
     app.state.cache = cache
     app.state.orchestrator = orchestrator
+    app.state.directions = directions
 
     yield
 
@@ -109,6 +125,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await sv_client.close()
     if kma_client is not None:
         await kma_client.close()
+    if directions is not None:
+        await directions.close()
 
 
 def create_app() -> FastAPI:

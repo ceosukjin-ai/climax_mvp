@@ -25,6 +25,12 @@
   #map{height:46vh;min-height:300px;border-radius:12px;border:1px solid var(--border);margin-bottom:12px;}
   .legend{display:flex;align-items:center;gap:8px;font-size:0.78rem;color:var(--text-dim);margin-bottom:12px;}
   .legend .grad{height:8px;flex:1;border-radius:4px;background:linear-gradient(90deg,#16a34a,#eab308,#f97316,#dc2626);}
+  .controls{display:flex;gap:8px;margin-bottom:10px;}
+  .ctl{flex:1;background:var(--surface-2);color:var(--text);border:1px solid var(--border);
+    border-radius:10px;padding:11px;font:inherit;font-size:0.92rem;cursor:pointer;}
+  .ctl.active{background:var(--accent);color:#0f172a;font-weight:700;border-color:var(--accent);}
+  .pickbar{margin:-2px 0 10px;padding:10px;border-radius:8px;font-size:0.85rem;
+    background:rgba(56,189,248,0.12);border:1px solid var(--accent);color:var(--text);}
   .row{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
   .stat{background:var(--surface-2);border-radius:8px;padding:10px;text-align:center;}
   .stat .k{font-size:0.72rem;color:var(--text-dim);}
@@ -57,6 +63,12 @@
 <main>
   <h1><span class="dot"></span>ClimaX · 경로 체감기후(VPTI)</h1>
   <div class="sub" id="route-sub">경로 로딩 중…</div>
+
+  <div class="controls">
+    <button id="btn-sample" class="ctl active">샘플 경로</button>
+    <button id="btn-pick" class="ctl">📍 내 경로 만들기</button>
+  </div>
+  <div class="pickbar hidden" id="pickbar">지도를 눌러 <b>목적지</b>를 선택하세요 (출발 = 현재 위치)</div>
 
   <div id="map"></div>
   <div class="legend"><span>쾌적</span><div class="grad"></div><span>더움</span></div>
@@ -107,7 +119,27 @@
   function fmtDelta(v){const n=+v;return (n>=0?"+":"")+n.toFixed(2);}
   function setDelta(el,v){el.textContent=fmtDelta(v);el.classList.toggle("pos",v>0);el.classList.toggle("neg",v<0);}
 
-  let map, layer;
+  let map, layer, pickLayer=null, mode="sample", origin=null;
+
+  function getPosition(){
+    return new Promise((resolve,reject)=>{
+      if(!navigator.geolocation){reject(new Error("위치 정보 미지원"));return;}
+      navigator.geolocation.getCurrentPosition(
+        (pos)=>resolve(pos.coords),
+        (err)=>{
+          let m;
+          switch(err.code){
+            case 1: m="위치 권한이 거부됐어요 (HTTPS 필요)"; break;
+            case 2: m="현재 위치를 찾을 수 없어요"; break;
+            case 3: m="위치 조회 시간 초과"; break;
+            default: m="위치 조회 실패: "+err.message;
+          }
+          reject(new Error(m));
+        },
+        {enableHighAccuracy:true,timeout:15000,maximumAge:0}
+      );
+    });
+  }
 
   function showDetail(p, meta){
     $("d-coord").textContent=`${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`;
@@ -146,6 +178,7 @@
 
     const lo=summary.vpti_min, hi=summary.vpti_max;
     const latlngs=points.map(p=>[p.lat,p.lon]);
+    if(pickLayer){pickLayer.remove();pickLayer=null;}
     if(layer) layer.remove();
     layer=L.layerGroup().addTo(map);
     for(let i=0;i<points.length-1;i++){
@@ -168,14 +201,70 @@
     showDetail(worst,meta);
   }
 
+  function setMode(m){
+    mode=m;
+    $("btn-sample").classList.toggle("active",m==="sample");
+    $("btn-pick").classList.toggle("active",m==="pick");
+    $("pickbar").classList.toggle("hidden",m!=="pick");
+  }
+
+  function loadSample(){
+    setMode("sample");
+    $("route-sub").textContent="샘플 경로 로딩 중…";
+    fetch("./route_profile.json",{headers:{accept:"application/json"}})
+      .then(r=>{if(!r.ok)throw new Error(r.status);return r.json();})
+      .then(render)
+      .catch(e=>{$("route-sub").textContent="샘플 로드 실패: "+e.message;});
+  }
+
+  async function startPick(){
+    $("route-sub").textContent="현재 위치(GPS) 확인 중…";
+    try{
+      const c=await getPosition();
+      origin={lat:c.latitude, lon:c.longitude};
+      setMode("pick");
+      if(pickLayer) pickLayer.remove();
+      pickLayer=L.layerGroup().addTo(map);
+      L.marker([origin.lat,origin.lon]).addTo(pickLayer).bindPopup("출발 · 현재 위치").openPopup();
+      map.setView([origin.lat,origin.lon],15);
+      $("route-sub").textContent="출발 = 현재 위치 · 지도에서 목적지를 누르세요";
+    }catch(e){
+      $("route-sub").textContent="위치 확인 실패: "+e.message;
+      setMode("sample");
+    }
+  }
+
+  function onMapClick(e){
+    if(mode!=="pick"||!origin) return;
+    const dest={lat:e.latlng.lat, lon:e.latlng.lng};
+    if(pickLayer) pickLayer.remove();
+    pickLayer=L.layerGroup().addTo(map);
+    L.marker([origin.lat,origin.lon]).addTo(pickLayer).bindPopup("출발");
+    L.marker([dest.lat,dest.lon]).addTo(pickLayer).bindPopup("목적지");
+    fetchRoute(origin,dest);
+  }
+
+  async function fetchRoute(o,d){
+    $("route-sub").textContent="경로 계산 중… 지점마다 분석 (최대 1~2분, 잠시 기다려 주세요)";
+    try{
+      const url=`/api/v1/route?olat=${o.lat}&olon=${o.lon}&dlat=${d.lat}&dlon=${d.lon}&max_points=10`;
+      const r=await fetch(url,{headers:{accept:"application/json"}});
+      const t=await r.text(); let body; try{body=JSON.parse(t);}catch{body={detail:t};}
+      if(!r.ok) throw new Error((body&&body.detail)||("HTTP "+r.status));
+      render(body);
+    }catch(e){
+      $("route-sub").textContent="경로 계산 실패: "+e.message;
+    }
+  }
+
   map=L.map("map",{zoomControl:true}).setView([35.21,129.079],13);
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
     {attribution:"© OpenStreetMap, © CARTO",maxZoom:19}).addTo(map);
+  map.on("click", onMapClick);
+  $("btn-sample").addEventListener("click", loadSample);
+  $("btn-pick").addEventListener("click", startPick);
 
-  fetch("./route_profile.json",{headers:{accept:"application/json"}})
-    .then(r=>{if(!r.ok)throw new Error(r.status);return r.json();})
-    .then(render)
-    .catch(e=>{$("route-sub").textContent="route_profile.json 로드 실패: "+e.message;});
+  loadSample();
 })();
 </script>
 </body>

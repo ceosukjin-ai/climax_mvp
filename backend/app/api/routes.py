@@ -223,6 +223,103 @@ async def vpti_at_location(
     return response
 
 
+@router.get(
+    "/route",
+    summary="출발→도착 경로를 지점별 VPTI로 산출 (NCP 길찾기)",
+)
+async def route_vpti(
+    request: Request,
+    olat: float = Query(..., ge=-90.0, le=90.0, description="출발 위도"),
+    olon: float = Query(..., ge=-180.0, le=180.0, description="출발 경도"),
+    dlat: float = Query(..., ge=-90.0, le=90.0, description="도착 위도"),
+    dlon: float = Query(..., ge=-180.0, le=180.0, description="도착 경도"),
+    max_points: int = Query(10, ge=2, le=20, description="샘플 지점 수(성능 상한)"),
+) -> JSONResponse:
+    """NCP 길찾기로 도로 경로를 받아, 균등 샘플 지점마다 VPTI를 산출한다.
+
+    지점마다 Street View + 세그멘테이션이 필요해 첫 계산은 느릴 수 있다(캐시 후 빠름).
+    강수는 VPTI와 분리된 컨텍스트 레이어로 함께 반환한다.
+    """
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    directions = getattr(request.app.state, "directions", None)
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized.",
+        )
+    if directions is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="경로 탐색 비활성 — NCP Maps 키(.env)를 설정하세요.",
+        )
+
+    from app.services.ncp_directions import NCPDirectionsError, sample_path
+
+    try:
+        path = await directions.get_path(olat, olon, dlat, dlon)
+    except NCPDirectionsError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"길찾기 실패: {e}") from e
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=f"길찾기 오류: {e}") from e
+
+    samples = sample_path(path, max_points=max_points)
+
+    points: list[dict] = []
+    for (lat, lon) in samples:
+        try:
+            result, _ = await orchestrator.compute(lat=lat, lon=lon)
+        except StreetViewNotFound:
+            continue  # 거리뷰 없는 지점은 건너뜀
+        except Exception as e:  # noqa: BLE001
+            logger.warning("경로 지점 계산 실패({},{}): {}", lat, lon, e)
+            continue
+        d = result.as_dict()
+        points.append({
+            "lat": round(lat, 6), "lon": round(lon, 6),
+            "vpti": d["vpti"], "risk_level": d["risk_level"],
+            "contributions": d["contributions"], "action_guide": d["action_guide"],
+        })
+
+    if not points:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="경로 상에서 계산 가능한 지점이 없습니다(거리뷰 부재 등).",
+        )
+
+    # 기상(계절/기온/습도) + 강수 컨텍스트
+    weather_meta = {}
+    precipitation = None
+    try:
+        w, _, _ = await orchestrator._get_weather(olat, olon)
+        weather_meta = {
+            "temperature_c": w.temperature_c, "humidity_pct": w.humidity_pct,
+            "wind_speed_ms": w.wind_speed_ms, "season": w.season,
+        }
+        precipitation = await orchestrator.get_precipitation_outlook(olat, olon)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("경로 기상/강수 부착 실패: {}", e)
+
+    vs = [p["vpti"] for p in points]
+    profile = {
+        "meta": {
+            "origin": {"lat": olat, "lon": olon, "name": "현재 위치"},
+            "dest": {"lat": dlat, "lon": dlon, "name": "목적지"},
+            "n_points": len(points), "sample": False,
+            "note": "실시간 경로 — NCP 길찾기 + 지점별 VPTI",
+            "weather": weather_meta,
+            "precipitation": precipitation,
+        },
+        "summary": {
+            "vpti_min": round(min(vs), 2), "vpti_max": round(max(vs), 2),
+            "vpti_avg": round(sum(vs) / len(vs), 2),
+        },
+        "points": points,
+    }
+    return JSONResponse(profile)
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""
