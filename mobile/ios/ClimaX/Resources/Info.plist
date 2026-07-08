@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ClimaX iOS — Info.plist (핵심 키만).
+  Xcode 로 프로젝트 생성 시 자동 plist 를 쓴다면, 아래 두 키를 Target > Info 에 추가할 것.
+  · NSHealthShareUsageDescription : HealthKit 읽기 사유(필수, 없으면 크래시).
+  · NSAppTransportSecurity        : 개발 중 http(LAN) 접속 허용용(배포 전 제거/https 전환).
+-->
+<plist version="1.0">
+<dict>
+    <key>NSHealthShareUsageDescription</key>
+    <string>체감기후(pVPTI) 개인화를 위해 심박·활동·휴식심박 데이터를 읽습니다.</string>
+
+    <!-- 개발 편의: 로컬/LAN 백엔드(http) 접속 허용. 배포 시 반드시 제거하고 https 사용. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

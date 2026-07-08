@@ -24,6 +24,7 @@ import sys
 from datetime import datetime
 
 from .config import VPTICoreConfig
+from .phi import Biometrics, PhysiologyProfile, compute_pvpti
 from .pwi import build_horizontal_views, compute_pwi, road_axis_angle_diff
 from .smti import MaterialFraction
 from .vpti import WeatherContext, compute_vpti, compute_vpti_thermal
@@ -221,6 +222,47 @@ def _print_busan_comparison(scn: dict) -> None:
           f"(MRT={thermal.mrt.tmrt:.1f} °C)")
 
 
+def _print_pvpti_scenario(scn: dict) -> None:
+    """PHI 생리 개인화 — 동일 환경에서 생체신호(애플워치)만 바꿔 pVPTI 비교 (⑥).
+
+    activity → met 로 PET 개인화(base→pVPTI), 잔차 심박부하(strain)만 위험경계 앞당김.
+    activity 가 없으면 strain=0 으로 억제(환경 PET 만 반영).
+    """
+    thermal = {
+        "views_5": scn["views"],
+        "materials": scn["materials"],
+        "weather": scn["weather"],
+        "road_axis_deg": scn["road_axis_deg"],
+        "heading_deg": scn["heading_deg"],
+        "lat": scn["lat"],
+        "lon": scn["lon"],
+        "when": scn["when"],
+        "sky_code": scn["sky_code"],
+    }
+    profile = PhysiologyProfile(age=40, sex="male", height_cm=175, weight_kg=72)
+    cases = [
+        ("안정(앉음)",          Biometrics(hr=68, activity=1.4, hr_rest=60)),
+        ("활발한 걸음",          Biometrics(hr=118, activity=5.5, hr_rest=60)),
+        ("가벼운 활동+심박초과", Biometrics(hr=165, activity=3.0, hr_rest=60)),
+        ("activity 없음",       Biometrics(hr=150, activity=None, hr_rest=60)),
+    ]
+
+    w = scn["weather"]
+    print(f"\n{'=' * 64}\n■ [PHI] pVPTI 생리 개인화: {scn['name']}\n{'=' * 64}")
+    print(f"  환경/기온          : {w.temperature_c:.1f} °C  (같은 장소·시각, 생체신호만 변경)")
+    print("  프로필             : 40세 남 175cm 72kg  hr_rest=60")
+    print(f"  {'케이스':<18}{'met':>6}{'obsHRR':>8}{'expHRR':>8}"
+          f"{'strain':>8}{'base':>7}{'pVPTI':>8}  위험도")
+    print(f"  {'-' * 60}")
+    for name, bio in cases:
+        r = compute_pvpti(bio=bio, profile=profile, **thermal)
+        met = f"{r.metabolic_met:.2f}" if r.metabolic_met is not None else "  —"
+        obs = f"{r.observed_hrr:.2f}" if r.observed_hrr is not None else "  —"
+        exp = f"{r.expected_hrr:.2f}" if r.expected_hrr is not None else "  —"
+        print(f"  {name:<18}{met:>6}{obs:>8}{exp:>8}{r.strain_index:>8.2f}"
+              f"{r.base_vpti:>7.1f}{r.pvpti:>8.1f}  {r.base_risk_level}→{r.risk_level}")
+
+
 def _check(label: str, condition: bool) -> bool:
     mark = "✅" if condition else "❌"
     print(f"  {mark} {label}")
@@ -333,6 +375,9 @@ def main() -> int:
     _print_thermal_scenario(busan, pet_config)
     # 가산형 vs 물리기반 비교
     _print_busan_comparison(busan)
+
+    print(f"\n{'#' * 64}\n# PHI 생리 개인화 (애플워치 → pVPTI)\n{'#' * 64}")
+    _print_pvpti_scenario(busan)
 
     all_ok = run_consistency_checks()
     print(f"\n{'=' * 64}")

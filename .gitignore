@@ -80,7 +80,8 @@ docker-compose.override.yml
 mobile/.expo/
 mobile/dist/
 mobile/web-build/
-mobile/ios/
 mobile/android/
+# 참고: mobile/ios/ 는 네이티브 Swift 앱(ClimaX) 소스 위치 — 커밋 대상이라 무시하지 않는다.
+#       (RN 자동생성 iOS 프로젝트가 아니라 직접 작성한 앱 골격)
 api.txt
 *.code-workspace

@@ -33,7 +33,20 @@ from app.services.cache import (
     PanoAnalysisCache,
     WeatherCache,
 )
+
+# vpti_core PET+PHI 경로 — pVPTI 자동 산출용. app.core(휴리스틱)와 별개.
+from vpti_core import (
+    MATERIAL_DB as CORE_MATERIAL_DB,
+    Biometrics,
+    MaterialFraction as CoreMaterialFraction,
+    PersonalizedVPTIResult,
+    PhysiologyProfile,
+    ViewSegmentation as CoreViewSegmentation,
+    WeatherContext as CoreWeatherContext,
+    compute_pvpti,
+)
 from app.services.kma import KMAClient, KMAObservation, KST, latlon_to_grid
+from app.services.road_axis import get_road_axis
 from app.services.street_view import (
     GoogleStreetViewClient,
     StreetViewFetchResult,
@@ -147,16 +160,19 @@ class VPTIOrchestrator:
     async def _analyze_views(
         self, sv_result: StreetViewFetchResult
     ) -> PanoAnalysisCache:
-        """5-view → 세그멘테이션 → SVF/GVI/BVI/재질비율.
+        """5-view → 세그멘테이션 → SVF/GVI/BVI/재질비율 + 도로축.
 
         SegFormer 추론은 CPU-bound이므로 to_thread로 이벤트루프에서 분리.
+        도로축(get_road_axis, Overpass 네트워크)은 세그멘테이션과 **동시** 실행하고,
+        결과를 panoId 캐시에 함께 넣는다 → miss 때 1회만 계산, 재방문은 캐시 hit(네트워크 X).
         """
         # 5개 방향 병렬 추론 (단, CPU-bound이므로 실질적으로 순차에 가까움)
-        tasks = [
+        seg_tasks = [
             asyncio.to_thread(self.segformer.segment, img_bytes)
             for img_bytes in sv_result.images.values()
         ]
-        segmentations = await asyncio.gather(*tasks)
+        road_task = get_road_axis(sv_result.lat, sv_result.lon)
+        *segmentations, road = await asyncio.gather(*seg_tasks, road_task)
         direction_to_seg = dict(zip(sv_result.images.keys(), segmentations))
 
         # SVF — 상향 시야 하늘 비율
@@ -195,6 +211,8 @@ class VPTIOrchestrator:
             material_ratios=material_ratios,
             capture_date=sv_result.capture_date,
             computed_at=datetime.now(timezone.utc).isoformat() + "Z",
+            road_axis_deg=road.road_axis_deg,
+            road_axis_source=road.source,
         )
 
     # ===== 기상 조회 =====
@@ -311,6 +329,124 @@ class VPTIOrchestrator:
         )
 
         return vpti_result, telemetry
+
+    # ===== 자동 pVPTI 파이프라인 (생리 개인화, vpti_core PET 경로) =====
+
+    async def compute_personalized(
+        self,
+        lat: float,
+        lon: float,
+        bio: Biometrics,
+        profile: PhysiologyProfile | None = None,
+        timestamp: datetime | None = None,
+    ) -> tuple[PersonalizedVPTIResult, PipelineTelemetry]:
+        """좌표 + 애플워치 생체신호만으로 pVPTI 자동 산출.
+
+        B1(/vpti/personalized, 수동 입력)을 orchestrator 자동화로 대체한다:
+        좌표 → panoId 공간분석(영구 캐시) + 기상(10분 캐시) → vpti_core PET+PHI.
+
+        캐시 불변성 유지: compute()와 **같은** 분리 캐시(_get_or_compute_pano_analysis,
+        _get_weather)를 그대로 재사용한다. 공간·기상을 합치지 않으므로 "재방문 <100ms"가
+        유지된다. 새 캐시 키를 추가하지 않는다.
+
+        도로축(road_axis_deg)은 panoId 공간분석 캐시에 함께 저장된다(_analyze_views 에서
+        miss 시 1회 계산). 따라서 hot path(캐시 hit)는 Overpass 네트워크를 타지 않는다.
+        """
+        loop_start = asyncio.get_event_loop().time()
+
+        pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+
+        pano_task = self._get_or_compute_pano_analysis(pano_id, clat, clon)
+        weather_task = self._get_weather(clat, clon)
+        (pano_analysis, pano_hit, sv_ms, seg_ms), (
+            weather,
+            weather_hit,
+            weather_ms,
+        ) = await asyncio.gather(pano_task, weather_task)
+
+        # app.core 집계값 → vpti_core 입력 형태로 변환
+        views_5 = self._build_core_views(pano_analysis)
+        materials = self._build_core_materials(pano_analysis.material_ratios)
+        core_weather = CoreWeatherContext(
+            temperature_c=weather.temperature_c,
+            wind_speed_ms=weather.wind_speed_ms,
+            wind_direction_deg=weather.wind_direction_deg,
+            humidity_pct=weather.humidity_pct,
+        )
+        when = timestamp or datetime.now(timezone.utc)
+
+        result = compute_pvpti(
+            bio=bio,
+            profile=profile,
+            views_5=views_5,
+            materials=materials,
+            weather=core_weather,
+            road_axis_deg=pano_analysis.road_axis_deg,   # panoId 캐시의 도로축(OSM/GPS/가정)
+            lat=clat,
+            lon=clon,
+            when=when,
+            sky_code=None,       # KMA 실황엔 SKY 없음 → 청천 가정(추후 초단기예보 연계)
+        )
+
+        total_ms = (asyncio.get_event_loop().time() - loop_start) * 1000
+        telemetry = PipelineTelemetry(
+            pano_cache_hit=pano_hit,
+            weather_cache_hit=weather_hit,
+            total_ms=total_ms,
+            street_view_ms=sv_ms,
+            segmentation_ms=seg_ms,
+            weather_ms=weather_ms,
+        )
+        logger.info(
+            "pVPTI {} | pano_hit={} weather_hit={} road={} total={:.0f}ms",
+            "cached" if pano_hit and weather_hit else "computed",
+            pano_hit,
+            weather_hit,
+            pano_analysis.road_axis_source,
+            total_ms,
+        )
+        return result, telemetry
+
+    @staticmethod
+    def _build_core_views(
+        analysis: PanoAnalysisCache,
+    ) -> list[CoreViewSegmentation]:
+        """PanoAnalysisCache 집계값 → vpti_core ViewSegmentation 5개.
+
+        _build_synthetic_views 와 동일한 역산이나, vpti_core 타입으로 만든다
+        (vpti_core.ViewSegmentation 은 ground_ratio 를 받지 않음).
+        """
+        up = CoreViewSegmentation(
+            direction="up",
+            sky_ratio=analysis.svf,
+            vegetation_ratio=0.0,
+            building_ratio=0.0,
+        )
+        horizontals = [
+            CoreViewSegmentation(
+                direction=d,
+                sky_ratio=0.0,
+                vegetation_ratio=analysis.gvi,
+                building_ratio=analysis.bvi,
+            )
+            for d in ("front", "back", "left", "right")
+        ]
+        return [up] + horizontals
+
+    @staticmethod
+    def _build_core_materials(
+        material_ratios: dict[str, float],
+    ) -> list[CoreMaterialFraction]:
+        """재질 비율 dict → vpti_core MaterialFraction. 미등록 재질은 'unknown'."""
+        valid = set(CORE_MATERIAL_DB.keys())
+        fractions = [
+            CoreMaterialFraction(
+                material=name if name in valid else "unknown", fraction=ratio
+            )
+            for name, ratio in material_ratios.items()
+            if ratio > 0
+        ]
+        return fractions or [CoreMaterialFraction(material="unknown", fraction=1.0)]
 
     # ===== 강수 컨텍스트 (VPTI와 분리된 외부 예보 레이어) =====
 

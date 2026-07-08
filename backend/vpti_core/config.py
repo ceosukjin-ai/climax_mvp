@@ -281,6 +281,43 @@ class VPTIConfig:
     winter_temp_threshold: float = 10.0
 
 
+# =============================================================================
+# PHI — 생리 개인화  (애플워치 HealthKit → pVPTI, docs/PHI_HealthKit_통합계획.md)
+# =============================================================================
+@dataclass(frozen=True)
+class PHIConfig:
+    """생체신호 → 대사율/잔차 심박부하 개인화 계수.
+
+    ① 대사율 환산은 ✅ 표준 단위·검증모델 입력, ② 잔차→위험 결합만 ⚠️ UNCONFIRMED.
+    """
+
+    # ✅ 표준 단위환산
+    kcal_min_to_watt: float = 69.78         # 1 kcal/min = 69.78 W
+    met_watt_per_m2: float = 58.15          # 1 met = 58.15 W/m² (ASHRAE 55)
+    default_body_surface_area: float = 1.8  # DuBois 성인 근사 [m²]
+
+    # met 유효범위 클램프 (pet_steady 수치 안정성)
+    met_min: float = 0.8
+    met_max: float = 6.0
+
+    # ✅ 성별 hr_max 회귀식
+    #   남성/기본 : Tanaka et al.(2001)  HRmax = 208 − 0.7×age
+    #   여성       : Gulati et al.(2010)  HRmax = 206 − 0.88×age
+    hr_max_tanaka_intercept: float = 208.0
+    hr_max_tanaka_slope: float = 0.7
+    hr_max_gulati_intercept: float = 206.0
+    hr_max_gulati_slope: float = 0.88
+
+    # ⚠️ UNCONFIRMED — 유산소 능력 기본값 [MET]. %HRR≈%VO₂R(ACSM/Swain 1997)에서
+    #   "활동량으로 기대되는 심박"의 기준. 개인 체력 미상 시 성인 중간값. 교정 대상.
+    vo2max_met: float = 10.0
+
+    # ⚠️ UNCONFIRMED [VERIFY] — 잔차 심박부하=1(운동으로 설명 안 되는 최대 초과)일 때
+    #   위험경계 앞당김 폭 [°C]. 환경 체감이 같아도 몸이 부담받으면 위험을 더 심각히
+    #   분류. 실증(PHI 실증로깅)으로 교정 대상.
+    strain_shift_max: float = 3.0
+
+
 @dataclass(frozen=True)
 class VPTICoreConfig:
     """모든 하위 설정을 묶는 최상위 설정 객체."""
@@ -292,6 +329,7 @@ class VPTICoreConfig:
     solar: SolarConfig = field(default_factory=SolarConfig)
     mrt: MRTConfig = field(default_factory=MRTConfig)
     comfort: ComfortConfig = field(default_factory=ComfortConfig)
+    phi: PHIConfig = field(default_factory=PHIConfig)
 
 
 # 패키지 전역 기본 설정 (싱글톤처럼 import해서 사용)

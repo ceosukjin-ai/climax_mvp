@@ -27,7 +27,10 @@ from app.core.vsi import (
     compute_vsi_from_components,
 )
 from app.schemas.vpti import (
+    AutoPersonalizedVPTIRequest,
     HealthResponse,
+    PersonalizedVPTIRequest,
+    PersonalizedVPTIResponse,
     VPTIRequest,
     VPTIResponse,
     VSIComponentsIn,
@@ -35,6 +38,16 @@ from app.schemas.vpti import (
     ViewSegmentationIn,
 )
 from app.services.street_view import StreetViewNotFound
+
+# vpti_core PET 경로(특허 충실) — pVPTI 전용. app.core(휴리스틱)와 별개.
+from vpti_core import (
+    Biometrics,
+    MaterialFraction as CoreMaterialFraction,
+    PhysiologyProfile,
+    ViewSegmentation as CoreViewSegmentation,
+    WeatherContext as CoreWeatherContext,
+    compute_pvpti,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["vpti"])
 
@@ -222,6 +235,136 @@ async def vpti_at_location(
 
     response = VPTIResponse(**result.as_dict(), precipitation=precipitation)
     return response
+
+
+@router.post(
+    "/vpti/personalized",
+    response_model=PersonalizedVPTIResponse,
+    summary="생리 개인화 pVPTI 산출 (애플워치 생체신호 반영, vpti_core PET 경로)",
+)
+async def vpti_personalized(
+    payload: PersonalizedVPTIRequest,
+) -> PersonalizedVPTIResponse:
+    """생체신호(심박·활동·휴식심박) + 프로필 → pVPTI.
+
+    - app.core(휴리스틱)가 아닌 vpti_core PET 경로를 쓰는 첫 엔드포인트.
+    - activity → met 로 PET 개인화, 잔차 심박부하만 위험경계에 반영.
+    - ⚠️ 프라이버시: biometrics 는 계산에만 쓰고 저장·로깅하지 않는다(계산 후 폐기).
+    """
+    views_5 = [
+        CoreViewSegmentation(
+            direction=v.direction,
+            sky_ratio=v.sky_ratio,
+            vegetation_ratio=v.vegetation_ratio,
+            building_ratio=v.building_ratio,
+        )
+        for v in payload.views
+    ]
+    materials = [
+        CoreMaterialFraction(material=m.material, fraction=m.fraction)
+        for m in payload.materials
+    ]
+    weather = CoreWeatherContext(
+        temperature_c=payload.weather.temperature_c,
+        wind_speed_ms=payload.weather.wind_speed_ms,
+        wind_direction_deg=payload.weather.wind_direction_deg,
+        humidity_pct=payload.weather.humidity_pct,
+    )
+    bio = Biometrics(
+        hr=payload.biometrics.hr,
+        activity=payload.biometrics.activity,
+        hr_rest=payload.biometrics.hr_rest,
+        hr_max=payload.biometrics.hr_max,
+    )
+    profile = None
+    if payload.profile is not None:
+        profile = PhysiologyProfile(
+            age=payload.profile.age,
+            sex=payload.profile.sex,
+            height_cm=payload.profile.height_cm,
+            weight_kg=payload.profile.weight_kg,
+            observed_hr_max=payload.profile.observed_hr_max,
+        )
+    when = payload.timestamp or datetime.now(timezone.utc)
+
+    try:
+        result = compute_pvpti(
+            bio=bio,
+            profile=profile,
+            views_5=views_5,
+            materials=materials,
+            weather=weather,
+            road_axis_deg=payload.road_axis_deg,
+            lat=payload.location.lat,
+            lon=payload.location.lon,
+            when=when,
+            sky_code=payload.sky_code,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
+
+    # as_dict() 키가 응답 필드와 1:1 (biometrics 원본은 반환·로깅하지 않음)
+    return PersonalizedVPTIResponse(**result.as_dict())
+
+
+@router.post(
+    "/vpti/personalized/at",
+    response_model=PersonalizedVPTIResponse,
+    summary="자동 pVPTI (좌표+생체신호 → Street View·기상 자동, vpti_core PET 경로)",
+)
+async def vpti_personalized_at(
+    request: Request,
+    payload: AutoPersonalizedVPTIRequest,
+) -> PersonalizedVPTIResponse:
+    """좌표 + 애플워치 생체신호만으로 pVPTI 자동 산출(B2).
+
+    orchestrator 가 Street View+SegFormer(공간)·KMA(기상)를 자동 조회해 vpti_core
+    PET+PHI 로 pVPTI 를 낸다. 캐시 hit 시 빠름. biometrics 는 계산 후 폐기(미저장·미로깅).
+    """
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized. Backend may still be starting.",
+        )
+
+    bio = Biometrics(
+        hr=payload.biometrics.hr,
+        activity=payload.biometrics.activity,
+        hr_rest=payload.biometrics.hr_rest,
+        hr_max=payload.biometrics.hr_max,
+    )
+    profile = None
+    if payload.profile is not None:
+        profile = PhysiologyProfile(
+            age=payload.profile.age,
+            sex=payload.profile.sex,
+            height_cm=payload.profile.height_cm,
+            weight_kg=payload.profile.weight_kg,
+            observed_hr_max=payload.profile.observed_hr_max,
+        )
+
+    try:
+        result, _ = await orchestrator.compute_personalized(
+            lat=payload.location.lat,
+            lon=payload.location.lon,
+            bio=bio,
+            profile=profile,
+            timestamp=payload.timestamp,
+        )
+    except StreetViewNotFound as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(e)
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Pipeline error: {e}",
+        ) from e
+
+    return PersonalizedVPTIResponse(**result.as_dict())
 
 
 @router.get("/geocode", summary="주소/장소 → 좌표 (NCP 주소 + OSM 장소명)")

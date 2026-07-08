@@ -173,6 +173,70 @@ class VPTIResponse(BaseModel):
     precipitation: PrecipitationOut | None = None
 
 
+# ===== PHI (생리 개인화, pVPTI) =====
+
+class BiometricsIn(BaseModel):
+    """애플워치 스냅샷. 전부 Optional(부분 결측 허용). 서버 미저장(계산 후 폐기)."""
+
+    hr: float | None = Field(None, ge=20.0, le=250.0, description="심박 [bpm]")
+    activity: float | None = Field(
+        None, ge=0.0, le=50.0, description="활동에너지 소비율 [kcal/min]"
+    )
+    hr_rest: float | None = Field(None, ge=20.0, le=150.0, description="휴식심박 [bpm]")
+    hr_max: float | None = Field(None, ge=100.0, le=250.0, description="최대심박 [bpm]")
+
+
+class ProfileDerivedIn(BaseModel):
+    """개인화 파생값 — 민감정보 최소화(나이·성별·체격만, 기저질환 등 미전송)."""
+
+    age: int | None = Field(None, ge=0, le=120)
+    sex: Literal["male", "female"] | None = None
+    height_cm: float | None = Field(None, ge=50.0, le=250.0)
+    weight_kg: float | None = Field(None, ge=10.0, le=300.0)
+    observed_hr_max: float | None = Field(None, ge=100.0, le=250.0)
+
+
+class PersonalizedVPTIRequest(BaseModel):
+    """pVPTI 산출 요청(수동 입력 — B1). 좌표·시각으로 일사/MRT 계산."""
+
+    location: LatLon
+    views: list[ViewSegmentationIn] = Field(..., min_length=5, max_length=5)
+    materials: list[MaterialFractionIn] = Field(..., min_length=1)
+    weather: WeatherIn
+    road_axis_deg: float = Field(0.0, ge=0.0, lt=360.0, description="도로축 방향 [deg]")
+    timestamp: datetime | None = Field(None, description="평가 시각(None이면 현재)")
+    sky_code: int | None = Field(None, description="KMA SKY 코드(1/3/4)")
+    biometrics: BiometricsIn
+    profile: ProfileDerivedIn | None = None
+
+
+class AutoPersonalizedVPTIRequest(BaseModel):
+    """자동 pVPTI 요청(B2) — 좌표+생체신호만. scene/weather 는 서버가 자동 산출."""
+
+    location: LatLon
+    timestamp: datetime | None = Field(None, description="평가 시각(None이면 현재)")
+    biometrics: BiometricsIn
+    profile: ProfileDerivedIn | None = None
+
+
+class PersonalizedVPTIResponse(BaseModel):
+    """pVPTI 응답. base_* 는 개인화 전 참조값(둘 다 PET)."""
+
+    pvpti: float
+    base_vpti: float
+    delta_personalization: float
+    risk_level: Literal["safe", "caution", "warning", "danger", "severe"]
+    base_risk_level: Literal["safe", "caution", "warning", "danger", "severe"]
+    strain_index: float
+    observed_hrr: float | None
+    expected_hrr: float | None
+    metabolic_met: float | None
+    hr_max_used: float | None
+    season: Literal["summer", "winter", "transition"]
+    stress_category: str
+    comfort: dict
+
+
 # ===== Health =====
 
 class HealthResponse(BaseModel):

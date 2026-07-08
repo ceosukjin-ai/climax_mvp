@@ -142,3 +142,80 @@ class TestVPTIEndpoint:
         }
         r = client.post("/api/v1/vpti", json=payload)
         assert r.status_code == 501
+
+
+class TestPersonalizedVPTIEndpoint:
+    """POST /vpti/personalized — 애플워치 생체신호 → pVPTI (vpti_core PET 경로)."""
+
+    @staticmethod
+    def _views() -> list[dict]:
+        return [
+            {"direction": "up", "sky_ratio": 0.45,
+             "vegetation_ratio": 0.05, "building_ratio": 0.50},
+        ] + [
+            {"direction": d, "sky_ratio": 0.12,
+             "vegetation_ratio": 0.15, "building_ratio": 0.68}
+            for d in ("front", "back", "left", "right")
+        ]
+
+    def _payload(self, biometrics: dict) -> dict:
+        return {
+            "location": {"lat": 35.18901, "lon": 129.10069},
+            "views": self._views(),
+            "materials": [
+                {"material": "asphalt", "fraction": 0.55},
+                {"material": "concrete", "fraction": 0.30},
+                {"material": "vegetation", "fraction": 0.15},
+            ],
+            "weather": {
+                "temperature_c": 31.0, "humidity_pct": 65.0,
+                "wind_speed_ms": 2.5, "wind_direction_deg": 200.0,
+            },
+            "road_axis_deg": 30.0,
+            "timestamp": "2026-07-15T14:00:00",
+            "sky_code": 1,
+            "biometrics": biometrics,
+            "profile": {"age": 40, "sex": "male", "height_cm": 175, "weight_kg": 72},
+        }
+
+    def test_activity_personalizes(self, client: TestClient) -> None:
+        r = client.post(
+            "/api/v1/vpti/personalized",
+            json=self._payload({"hr": 118, "activity": 5.5, "hr_rest": 60}),
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert "pvpti" in d and "base_vpti" in d
+        assert d["metabolic_met"] is not None       # activity → met 적용
+        assert d["comfort"]["index"] == "pet"
+        assert d["season"] == "summer"
+
+    def test_missing_activity_suppresses_strain(self, client: TestClient) -> None:
+        r = client.post(
+            "/api/v1/vpti/personalized",
+            json=self._payload({"hr": 150, "activity": None, "hr_rest": 60}),
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert d["strain_index"] == 0.0            # activity 없으면 억제
+        assert d["metabolic_met"] is None
+        assert d["risk_level"] == d["base_risk_level"]
+
+    def test_invalid_hr_returns_422(self, client: TestClient) -> None:
+        r = client.post(
+            "/api/v1/vpti/personalized",
+            json=self._payload({"hr": 999, "activity": 4.0, "hr_rest": 60}),
+        )
+        assert r.status_code == 422
+
+    def test_auto_without_orchestrator_returns_503(self, client: TestClient) -> None:
+        """B2 자동 엔드포인트 — API 키 없는 테스트 환경은 orchestrator=None → 503."""
+        r = client.post(
+            "/api/v1/vpti/personalized/at",
+            json={
+                "location": {"lat": 35.18901, "lon": 129.10069},
+                "biometrics": {"hr": 118, "activity": 5.5, "hr_rest": 60},
+                "profile": {"age": 40, "sex": "male"},
+            },
+        )
+        assert r.status_code == 503

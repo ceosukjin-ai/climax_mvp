@@ -37,6 +37,10 @@ class PanoAnalysisCache:
     material_ratios: dict[str, float]
     capture_date: str | None
     computed_at: str  # ISO 8601
+    # 도로축 — panoId 단위로 miss 시 1회 계산해 영구 캐시(PWI Δθ용).
+    # 기존(구버전) 캐시 항목엔 없으므로 기본값을 둔다(from_bytes 하위호환).
+    road_axis_deg: float = 0.0
+    road_axis_source: str = "assumed"  # osm | gps | assumed
 
     def to_bytes(self) -> bytes:
         return orjson.dumps(asdict(self))

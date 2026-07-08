@@ -22,6 +22,7 @@ from .config import (
     ComfortConfig,
     DEFAULT_CONFIG,
     MRTConfig,
+    PHIConfig,
     PWIConfig,
     SMTIConfig,
     SolarConfig,
@@ -51,6 +52,19 @@ from .vsi import (
     extract_components,
     reconstruct_svf,
 )
+from .phi import (
+    Biometrics,
+    PersonalizedVPTIResult,
+    PhysiologyProfile,
+    body_surface_area,
+    compute_pvpti,
+    estimate_hr_max,
+    evaluate_personalized,
+    expected_hrr_from_met,
+    heart_rate_reserve,
+    metabolic_rate_from_activity,
+    residual_strain,
+)
 
 __all__ = [
     # config
@@ -63,6 +77,7 @@ __all__ = [
     "SolarConfig",
     "MRTConfig",
     "ComfortConfig",
+    "PHIConfig",
     # materials
     "MATERIAL_DB",
     "MaterialClass",
@@ -105,4 +120,16 @@ __all__ = [
     "ThermalVPTIResult",
     "compute_vpti_thermal",
     "compute_climate_index",
+    # phi (생리 개인화 — pVPTI)
+    "Biometrics",
+    "PhysiologyProfile",
+    "PersonalizedVPTIResult",
+    "evaluate_personalized",
+    "compute_pvpti",
+    "body_surface_area",
+    "metabolic_rate_from_activity",
+    "estimate_hr_max",
+    "heart_rate_reserve",
+    "expected_hrr_from_met",
+    "residual_strain",
 ]
