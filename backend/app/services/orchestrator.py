@@ -45,7 +45,7 @@ from vpti_core import (
     WeatherContext as CoreWeatherContext,
     compute_pvpti,
 )
-from app.services.kma import KMAClient, KMAObservation, KST, latlon_to_grid
+from app.services.kma import KMAClient, KST, latlon_to_grid
 from app.services.road_axis import get_road_axis
 from app.services.street_view import (
     GoogleStreetViewClient,

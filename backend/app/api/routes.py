@@ -21,7 +21,6 @@ from app.config import get_settings
 from app.core.smti import MaterialFraction
 from app.core.vpti import WeatherContext, compute_vpti
 from app.core.vsi import (
-    DEFAULT_WEIGHTS,
     ViewSegmentation,
     compute_vsi,
     compute_vsi_from_components,
