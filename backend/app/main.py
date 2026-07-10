@@ -86,6 +86,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 segformer=segformer,
             )
             logger.info("Orchestrator ready")
+
+            # 외부 API 콜드 연결 워밍업 — 첫 사용자 요청의 지연(KMA 첫 호출 ~5s 콜드
+            # TLS/커넥션 셋업)을 부팅 시 1회 지불한다. 이후 요청은 커넥션 재사용(~50ms).
+            try:
+                await kma_client.get_current_observation(35.1796, 129.0756)
+                logger.info("KMA 연결 워밍업 완료")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("KMA 워밍업 실패(무시): {}", e)
         else:
             logger.warning(
                 "Orchestrator disabled (SegFormer not loaded). "

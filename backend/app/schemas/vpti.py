@@ -169,6 +169,7 @@ class VPTIResponse(BaseModel):
     contributions: VPTIContributions
     action_guide: str
     timestamp: str
+    weather_source: str = "실측"   # 실측 | 캐시 | 추정 (KMA 타임아웃 폴백 구분)
     # 강수는 VPTI 숫자에 섞지 않고 별도 컨텍스트로만 노출
     precipitation: PrecipitationOut | None = None
 
@@ -235,6 +236,7 @@ class PersonalizedVPTIResponse(BaseModel):
     season: Literal["summer", "winter", "transition"]
     stress_category: str
     comfort: dict
+    weather_source: str = "실측"   # 실측 | 캐시 | 추정 (KMA 타임아웃 폴백 구분)
 
 
 # ===== Health =====

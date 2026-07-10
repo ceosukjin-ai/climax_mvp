@@ -166,6 +166,41 @@ class SegFormerService:
 
         return self._aggregate_ratios(pred)
 
+    def segment_batch(self, images_bytes: list[bytes]) -> list[SegmentationOutput]:
+        """여러 이미지를 한 번의 forward 로 배치 추론(개별 segment() N회 대체).
+
+        SegFormer 백본(MiT)은 LayerNorm 기반이라 배치와 무관하게 표본별 출력이
+        동일 → 결과(지수값) 정확도 불변. upsample/argmax 는 표본별 루프로 처리해
+        메모리 급증을 피한다([N,150,512,512] 를 한 번에 만들지 않고 [1,...] 씩).
+        """
+        if not self.is_loaded():
+            raise RuntimeError("SegFormer not loaded. Call load() first.")
+        if not images_bytes:
+            return []
+
+        import torch
+
+        images = [Image.open(io.BytesIO(b)).convert("RGB") for b in images_bytes]
+        # 리스트를 넘기면 pixel_values 가 [N,3,H,W] 로 묶여 나온다.
+        inputs = self._processor(images=images, return_tensors="pt")
+        inputs = {k: v.to(self._device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self._model(**inputs)
+        logits = outputs.logits  # [N, num_classes, h/4, w/4]
+
+        results: list[SegmentationOutput] = []
+        for i, image in enumerate(images):
+            upsampled = torch.nn.functional.interpolate(
+                logits[i : i + 1],
+                size=image.size[::-1],  # (h, w)
+                mode="bilinear",
+                align_corners=False,
+            )
+            pred = upsampled.argmax(dim=1)[0].cpu().numpy()
+            results.append(self._aggregate_ratios(pred))
+        return results
+
     def _aggregate_ratios(self, pred: np.ndarray) -> SegmentationOutput:
         """픽셀 클래스 분포 → 관심 클래스 비율."""
         total_pixels = pred.size

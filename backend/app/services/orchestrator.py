@@ -19,6 +19,7 @@ VPTI 실시간 파이프라인.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -57,6 +58,17 @@ if TYPE_CHECKING:
     from app.ml.segformer import SegFormerService
 
 
+# KMA 기상 조회 하드 타임아웃 [초]. Overpass 와 같은 패턴 — 초과 시 폴백(캐시→재시도→기본값).
+KMA_TIMEOUT_SEC = 1.5
+KMA_RETRY_TIMEOUT_SEC = 1.0
+
+# KMA 완전 실패 시 안전 기본값(추정). SMTI/PET 입력용 온화한 중립값.
+_DEFAULT_WEATHER = dict(
+    temperature_c=22.0, humidity_pct=60.0,
+    wind_speed_ms=1.5, wind_direction_deg=0.0, precipitation_mm=0.0,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineTelemetry:
     """요청별 성능 추적. WebSocket에서 frontend에 보내 모니터링."""
@@ -67,6 +79,7 @@ class PipelineTelemetry:
     street_view_ms: float
     segmentation_ms: float
     weather_ms: float
+    weather_source: str = "실측"   # 실측 | 캐시 | 추정
 
 
 class VPTIOrchestrationError(Exception):
@@ -132,13 +145,15 @@ class VPTIOrchestrator:
         # 캐시 miss: Street View fetch + SegFormer 추론
         logger.info("Pano cache MISS, fetching and analyzing: {}", pano_id)
 
-        sv_start = asyncio.get_event_loop().time()
+        sv_start = time.perf_counter()
         sv_result = await self._fetch_with_metadata(pano_id, lat, lon)
-        sv_ms = (asyncio.get_event_loop().time() - sv_start) * 1000
+        sv_ms = (time.perf_counter() - sv_start) * 1000
+        logger.info("[timing] Street View 5-view 다운로드: {:.0f}ms (pano={})", sv_ms, pano_id)
 
-        seg_start = asyncio.get_event_loop().time()
+        seg_start = time.perf_counter()
         analysis = await self._analyze_views(sv_result)
-        seg_ms = (asyncio.get_event_loop().time() - seg_start) * 1000
+        seg_ms = (time.perf_counter() - seg_start) * 1000
+        logger.info("[timing] SegFormer 추론(5-view)+도로축: {:.0f}ms", seg_ms)
 
         await self.cache.set_pano_analysis(analysis)
         return analysis, False, sv_ms, seg_ms
@@ -166,13 +181,27 @@ class VPTIOrchestrator:
         도로축(get_road_axis, Overpass 네트워크)은 세그멘테이션과 **동시** 실행하고,
         결과를 panoId 캐시에 함께 넣는다 → miss 때 1회만 계산, 재방문은 캐시 hit(네트워크 X).
         """
-        # 5개 방향 병렬 추론 (단, CPU-bound이므로 실질적으로 순차에 가까움)
+        # 5개 방향 동시 추론(개별 to_thread) — CPU 멀티코어에 분산돼 배치보다 빠름.
+        # (segment_batch 는 GPU 배치 이득용으로 SegFormerService 에 남겨둠. CPU 에선 미사용.)
         seg_tasks = [
             asyncio.to_thread(self.segformer.segment, img_bytes)
             for img_bytes in sv_result.images.values()
         ]
-        road_task = get_road_axis(sv_result.lat, sv_result.lon)
-        *segmentations, road = await asyncio.gather(*seg_tasks, road_task)
+
+        # SegFormer 추론과 도로축(Overpass)은 동시 실행 — 각각 따로 계측(진단용).
+        async def _timed_seg() -> list:
+            t = time.perf_counter()
+            segs = await asyncio.gather(*seg_tasks)
+            logger.info("[timing]   └ SegFormer 5-view 추론(개별 동시): {:.0f}ms", (time.perf_counter() - t) * 1000)
+            return segs
+
+        async def _timed_road():
+            t = time.perf_counter()
+            r = await get_road_axis(sv_result.lat, sv_result.lon)
+            logger.info("[timing]   └ 도로축(Overpass): {:.0f}ms", (time.perf_counter() - t) * 1000)
+            return r
+
+        segmentations, road = await asyncio.gather(_timed_seg(), _timed_road())
         direction_to_seg = dict(zip(sv_result.images.keys(), segmentations))
 
         # SVF — 상향 시야 하늘 비율
@@ -217,33 +246,68 @@ class VPTIOrchestrator:
 
     # ===== 기상 조회 =====
 
+    @staticmethod
+    def _wc_from_cache(c: WeatherCache) -> WeatherContext:
+        return WeatherContext(
+            temperature_c=c.temperature_c,
+            humidity_pct=c.humidity_pct,
+            wind_speed_ms=c.wind_speed_ms,
+            wind_direction_deg=c.wind_direction_deg,
+            precipitation_mm=c.precipitation_mm,
+        )
+
     async def _get_weather(
         self, lat: float, lon: float
-    ) -> tuple[WeatherContext, bool, float]:
-        """기상 조회. 격자 단위 캐싱.
+    ) -> tuple[WeatherContext, bool, float, str]:
+        """기상 조회. 격자 단위 캐싱 + 하드 타임아웃 폴백.
+
+        폴백(타임아웃/오류 시): ① 마지막 정상값 재사용(캐시) → ② 짧은 재시도 →
+        ③ 안전 기본값(추정). weather_source 로 실측/캐시/추정 구분.
 
         Returns:
-            (weather, is_cache_hit, elapsed_ms)
+            (weather, is_cache_hit, elapsed_ms, weather_source)
         """
         grid = latlon_to_grid(lat, lon)
 
+        # 10분 신선 캐시 hit — 실측 데이터를 캐시한 것.
         cached = await self.cache.get_weather(grid.nx, grid.ny)
         if cached is not None:
-            return (
-                WeatherContext(
-                    temperature_c=cached.temperature_c,
-                    humidity_pct=cached.humidity_pct,
-                    wind_speed_ms=cached.wind_speed_ms,
-                    wind_direction_deg=cached.wind_direction_deg,
-                    precipitation_mm=cached.precipitation_mm,
-                ),
-                True,
-                0.0,
-            )
+            return (self._wc_from_cache(cached), True, 0.0, "실측")
 
-        start = asyncio.get_event_loop().time()
-        obs = await self.kma.get_current_observation(lat, lon)
-        elapsed_ms = (asyncio.get_event_loop().time() - start) * 1000
+        start = time.perf_counter()
+        obs = None
+        try:
+            obs = await asyncio.wait_for(
+                self.kma.get_current_observation(lat, lon), timeout=KMA_TIMEOUT_SEC
+            )
+        except Exception as e:  # noqa: BLE001  (TimeoutError 포함)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            reason = f"{KMA_TIMEOUT_SEC:.1f}s 타임아웃" if isinstance(e, asyncio.TimeoutError) else str(e)
+            logger.warning("[timing] 기상(KMA) 1차 실패({:.0f}ms): {}", elapsed_ms, reason)
+
+            # ① 마지막 정상값(장기 캐시) 재사용
+            last = await self.cache.get_weather_last_good(grid.nx, grid.ny)
+            if last is not None:
+                logger.warning("[timing] 기상 → 마지막 정상값(캐시) 재사용")
+                return (self._wc_from_cache(last), False, elapsed_ms, "캐시")
+
+            # ② 짧은 재시도
+            try:
+                obs = await asyncio.wait_for(
+                    self.kma.get_current_observation(lat, lon),
+                    timeout=KMA_RETRY_TIMEOUT_SEC,
+                )
+            except Exception:  # noqa: BLE001
+                obs = None
+
+            # ③ 안전 기본값(추정)
+            if obs is None:
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                logger.warning("[timing] 기상 → 안전 기본값(추정) 사용")
+                return (WeatherContext(**_DEFAULT_WEATHER), False, elapsed_ms, "추정")
+
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info("[timing] 기상(KMA) 조회: {:.0f}ms (grid {},{})", elapsed_ms, grid.nx, grid.ny)
 
         weather_cache = WeatherCache(
             nx=grid.nx,
@@ -256,19 +320,10 @@ class VPTIOrchestrator:
             observed_at=obs.observed_at.isoformat(),
             cached_at=datetime.now(timezone.utc).isoformat() + "Z",
         )
-        await self.cache.set_weather(weather_cache)
+        await self.cache.set_weather(weather_cache)             # 10분 신선 캐시
+        await self.cache.set_weather_last_good(weather_cache)   # 6시간 폴백용
 
-        return (
-            WeatherContext(
-                temperature_c=obs.temperature_c,
-                humidity_pct=obs.humidity_pct,
-                wind_speed_ms=obs.wind_speed_ms,
-                wind_direction_deg=obs.wind_direction_deg,
-                precipitation_mm=obs.precipitation_mm,
-            ),
-            False,
-            elapsed_ms,
-        )
+        return (self._wc_from_cache(weather_cache), False, elapsed_ms, "실측")
 
     # ===== 메인 파이프라인 =====
 
@@ -279,10 +334,12 @@ class VPTIOrchestrator:
         timestamp: datetime | None = None,
     ) -> tuple[VPTIResult, PipelineTelemetry]:
         """전체 파이프라인 실행."""
-        loop_start = asyncio.get_event_loop().time()
+        loop_start = time.perf_counter()
 
-        # 1. panoId 해석
+        # 1. panoId 해석 (좌표→panoId, 캐시 miss 시 Google Metadata API)
+        t_resolve = time.perf_counter()
         pano_id, canonical_lat, canonical_lon = await self._resolve_pano_id(lat, lon)
+        resolve_ms = (time.perf_counter() - t_resolve) * 1000
 
         # 2 & 3 병렬 실행: 공간 분석 + 기상 조회
         pano_task = self._get_or_compute_pano_analysis(
@@ -294,6 +351,7 @@ class VPTIOrchestrator:
             weather,
             weather_hit,
             weather_ms,
+            weather_source,
         ) = await asyncio.gather(pano_task, weather_task)
 
         # 4. VPTI 산출
@@ -301,6 +359,7 @@ class VPTIOrchestrator:
         views_5 = self._build_synthetic_views(pano_analysis)
         materials = self._build_material_fractions(pano_analysis.material_ratios)
 
+        t_idx = time.perf_counter()
         vpti_result = compute_vpti(
             views_5=views_5,
             materials=materials,
@@ -309,8 +368,9 @@ class VPTIOrchestrator:
             longitude=canonical_lon,
             timestamp=timestamp,
         )
+        index_ms = (time.perf_counter() - t_idx) * 1000
 
-        total_ms = (asyncio.get_event_loop().time() - loop_start) * 1000
+        total_ms = (time.perf_counter() - loop_start) * 1000
         telemetry = PipelineTelemetry(
             pano_cache_hit=pano_hit,
             weather_cache_hit=weather_hit,
@@ -318,14 +378,14 @@ class VPTIOrchestrator:
             street_view_ms=sv_ms,
             segmentation_ms=seg_ms,
             weather_ms=weather_ms,
+            weather_source=weather_source,
         )
 
         logger.info(
-            "VPTI {} | pano_hit={} weather_hit={} total={:.0f}ms",
+            "[timing] VPTI {} | pano_hit={} weather_hit={} wsrc={} | resolve={:.0f} sv={:.0f} seg={:.0f} weather={:.0f} index(VSI/SMTI/PWI)={:.1f} | total={:.0f}ms",
             "cached" if pano_hit and weather_hit else "computed",
-            pano_hit,
-            weather_hit,
-            total_ms,
+            pano_hit, weather_hit, weather_source,
+            resolve_ms, sv_ms, seg_ms, weather_ms, index_ms, total_ms,
         )
 
         return vpti_result, telemetry
@@ -352,9 +412,11 @@ class VPTIOrchestrator:
         도로축(road_axis_deg)은 panoId 공간분석 캐시에 함께 저장된다(_analyze_views 에서
         miss 시 1회 계산). 따라서 hot path(캐시 hit)는 Overpass 네트워크를 타지 않는다.
         """
-        loop_start = asyncio.get_event_loop().time()
+        loop_start = time.perf_counter()
 
+        t_resolve = time.perf_counter()
         pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+        resolve_ms = (time.perf_counter() - t_resolve) * 1000
 
         pano_task = self._get_or_compute_pano_analysis(pano_id, clat, clon)
         weather_task = self._get_weather(clat, clon)
@@ -362,6 +424,7 @@ class VPTIOrchestrator:
             weather,
             weather_hit,
             weather_ms,
+            weather_source,
         ) = await asyncio.gather(pano_task, weather_task)
 
         # app.core 집계값 → vpti_core 입력 형태로 변환
@@ -375,6 +438,7 @@ class VPTIOrchestrator:
         )
         when = timestamp or datetime.now(timezone.utc)
 
+        t_idx = time.perf_counter()
         result = compute_pvpti(
             bio=bio,
             profile=profile,
@@ -387,8 +451,9 @@ class VPTIOrchestrator:
             when=when,
             sky_code=None,       # KMA 실황엔 SKY 없음 → 청천 가정(추후 초단기예보 연계)
         )
+        index_ms = (time.perf_counter() - t_idx) * 1000
 
-        total_ms = (asyncio.get_event_loop().time() - loop_start) * 1000
+        total_ms = (time.perf_counter() - loop_start) * 1000
         telemetry = PipelineTelemetry(
             pano_cache_hit=pano_hit,
             weather_cache_hit=weather_hit,
@@ -396,14 +461,13 @@ class VPTIOrchestrator:
             street_view_ms=sv_ms,
             segmentation_ms=seg_ms,
             weather_ms=weather_ms,
+            weather_source=weather_source,
         )
         logger.info(
-            "pVPTI {} | pano_hit={} weather_hit={} road={} total={:.0f}ms",
+            "[timing] pVPTI {} | pano_hit={} weather_hit={} wsrc={} road={} | resolve={:.0f} sv={:.0f} seg={:.0f} weather={:.0f} index(VSI/SMTI/PWI+PET)={:.1f} | total={:.0f}ms",
             "cached" if pano_hit and weather_hit else "computed",
-            pano_hit,
-            weather_hit,
-            pano_analysis.road_axis_source,
-            total_ms,
+            pano_hit, weather_hit, weather_source, pano_analysis.road_axis_source,
+            resolve_ms, sv_ms, seg_ms, weather_ms, index_ms, total_ms,
         )
         return result, telemetry
 
@@ -458,7 +522,7 @@ class VPTIOrchestrator:
         (0~6h)를 사용한다.
         """
         # 현재 강수량은 이미 캐시된 실황에서 재사용
-        weather, _, _ = await self._get_weather(lat, lon)
+        weather, _, _, _ = await self._get_weather(lat, lon)
         now_precip = weather.precipitation_mm
 
         try:

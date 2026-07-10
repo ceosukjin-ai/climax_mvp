@@ -232,7 +232,11 @@ async def vpti_at_location(
     except Exception as e:  # noqa: BLE001
         logger.warning("강수 전망 부착 실패(무시): {}", e)
 
-    response = VPTIResponse(**result.as_dict(), precipitation=precipitation)
+    response = VPTIResponse(
+        **result.as_dict(),
+        weather_source=telemetry.weather_source,
+        precipitation=precipitation,
+    )
     return response
 
 
@@ -346,7 +350,7 @@ async def vpti_personalized_at(
         )
 
     try:
-        result, _ = await orchestrator.compute_personalized(
+        result, telemetry = await orchestrator.compute_personalized(
             lat=payload.location.lat,
             lon=payload.location.lon,
             bio=bio,
@@ -363,7 +367,9 @@ async def vpti_personalized_at(
             detail=f"Pipeline error: {e}",
         ) from e
 
-    return PersonalizedVPTIResponse(**result.as_dict())
+    return PersonalizedVPTIResponse(
+        **result.as_dict(), weather_source=telemetry.weather_source
+    )
 
 
 @router.get("/geocode", summary="주소/장소 → 좌표 (NCP 주소 + OSM 장소명)")

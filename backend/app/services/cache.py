@@ -165,6 +165,30 @@ class CacheService:
             weather.to_bytes(),
         )
 
+    # 마지막 정상 관측값(장기 TTL) — 10분 캐시가 만료된 뒤 KMA 타임아웃 시 폴백용.
+    @staticmethod
+    def _weather_last_key(nx: int, ny: int) -> str:
+        return f"weather:kma:last:{nx}:{ny}"
+
+    async def get_weather_last_good(self, nx: int, ny: int) -> WeatherCache | None:
+        raw = await self._client.get(self._weather_last_key(nx, ny))
+        if raw is None:
+            return None
+        try:
+            return WeatherCache.from_bytes(raw)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to decode last-good weather cache: {}", e)
+            return None
+
+    async def set_weather_last_good(
+        self, weather: WeatherCache, ttl_seconds: int = 6 * 3600
+    ) -> None:
+        await self._client.setex(
+            self._weather_last_key(weather.nx, weather.ny),
+            ttl_seconds,
+            weather.to_bytes(),
+        )
+
     # ===== 디버깅·관리 =====
 
     async def count_pano_cache(self) -> int:
