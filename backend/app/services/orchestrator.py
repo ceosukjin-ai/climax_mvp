@@ -68,6 +68,30 @@ _DEFAULT_WEATHER = dict(
     wind_speed_ms=1.5, wind_direction_deg=0.0, precipitation_mm=0.0,
 )
 
+# prefetch(앞 미리 분석): 진행 방향 앞 지점을 백그라운드로 미리 캐시해 도착 시 hit.
+PREFETCH_DISTANCES_M = (25.0, 50.0)   # 앞 2지점만 — 2코어 서버 부담 보호
+PREFETCH_HORIZON_SEC = 15.0           # speed_kmh 기준 이 시간 내 도달 거리까지만
+_EARTH_RADIUS_M = 6_371_000.0
+
+
+def destination_point(
+    lat: float, lon: float, bearing_deg: float, dist_m: float
+) -> tuple[float, float]:
+    """(lat,lon)에서 bearing 방향으로 dist_m 앞 좌표(구면 순방향 측지, 하버사인 역산)."""
+    import math
+
+    br = math.radians(bearing_deg)
+    dr = dist_m / _EARTH_RADIUS_M
+    lat1, lon1 = math.radians(lat), math.radians(lon)
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(dr) + math.cos(lat1) * math.sin(dr) * math.cos(br)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(br) * math.sin(dr) * math.cos(lat1),
+        math.cos(dr) - math.sin(lat1) * math.sin(lat2),
+    )
+    return math.degrees(lat2), math.degrees(lon2)
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineTelemetry:
@@ -470,6 +494,45 @@ class VPTIOrchestrator:
             resolve_ms, sv_ms, seg_ms, weather_ms, index_ms, total_ms,
         )
         return result, telemetry
+
+    # ===== prefetch (앞 미리 분석) =====
+
+    async def prefetch_ahead(
+        self,
+        lat: float,
+        lon: float,
+        heading: float,
+        speed_kmh: float | None = None,
+    ) -> None:
+        """진행 방향 앞 지점(25m,50m)을 미리 분석해 캐시에 채운다(백그라운드).
+
+        compute()를 그대로 호출 → 좌표→panoId·공간분석(SegFormer)·기상 캐시를 채운다.
+        이미 캐시면 compute()가 hit로 즉시 끝나 재계산하지 않는다(=skip). 계산 방식은
+        본 요청과 동일하므로 값 정확도 불변. 실패는 조용히 무시(본 응답에 영향 없음).
+
+        speed_kmh 가 있으면 앞으로 PREFETCH_HORIZON_SEC 초 내 도달 거리까지만 미리 계산
+        (느린 이동 시 과도한 prefetch 방지).
+        """
+        horizon_m = (
+            (speed_kmh / 3.6) * PREFETCH_HORIZON_SEC
+            if speed_kmh and speed_kmh > 0
+            else float("inf")
+        )
+        warmed: list[tuple[float, str]] = []
+        for dist in PREFETCH_DISTANCES_M:
+            if dist > horizon_m:
+                continue
+            alat, alon = destination_point(lat, lon, heading, dist)
+            try:
+                _, tel = await self.compute(alat, alon)
+                warmed.append((dist, "hit" if tel.pano_cache_hit else "computed"))
+            except Exception as e:  # noqa: BLE001  (StreetViewNotFound 등)
+                logger.debug("[prefetch] {:.0f}m 실패(무시): {}", dist, e)
+        if warmed:
+            logger.info(
+                "[prefetch] heading={:.0f}° speed={}km/h → {}",
+                heading, speed_kmh if speed_kmh is not None else "?", warmed,
+            )
 
     @staticmethod
     def _build_core_views(

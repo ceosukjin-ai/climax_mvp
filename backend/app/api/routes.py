@@ -13,7 +13,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    HTTPException,
+    Query,
+    Request,
+    status,
+)
 from fastapi.responses import JSONResponse
 from loguru import logger
 
@@ -36,7 +43,31 @@ from app.schemas.vpti import (
     VSIResultOut,
     ViewSegmentationIn,
 )
+from app.services.road_axis import bearing_deg
 from app.services.street_view import StreetViewNotFound
+
+
+def _resolve_heading(request: Request, lat: float, lon: float,
+                     heading: float | None, session_id: str | None) -> float | None:
+    """heading 결정: 명시값 우선, 없으면 세션 직전 좌표 → 현재 좌표 방위로 대체.
+
+    세션 키는 session_id(있으면) 또는 client IP. 세션별 직전 좌표를 app.state 에
+    메모리 저장(휘발성 휴리스틱). 무한 증가 방지로 상한 초과 시 비운다.
+    """
+    sessions = getattr(request.app.state, "prefetch_sessions", None)
+    if sessions is None:
+        sessions = {}
+        request.app.state.prefetch_sessions = sessions
+    skey = session_id or (request.client.host if request.client else "anon")
+
+    if heading is None:
+        prev = sessions.get(skey)
+        if prev is not None and prev != (lat, lon):
+            heading = bearing_deg(prev[0], prev[1], lat, lon)
+    if len(sessions) > 5000:
+        sessions.clear()
+    sessions[skey] = (lat, lon)
+    return heading
 
 # vpti_core PET 경로(특허 충실) — pVPTI 전용. app.core(휴리스틱)와 별개.
 from vpti_core import (
@@ -199,12 +230,17 @@ async def vpti(payload: VPTIRequest) -> VPTIResponse:
 )
 async def vpti_at_location(
     request: Request,
+    background: BackgroundTasks,
     lat: float = Query(..., ge=-90.0, le=90.0, description="위도 [deg]"),
     lon: float = Query(..., ge=-180.0, le=180.0, description="경도 [deg]"),
+    heading: float | None = Query(None, ge=0.0, lt=360.0, description="진행 방향[deg] (prefetch용)"),
+    speed_kmh: float | None = Query(None, ge=0.0, le=300.0, description="이동 속도[km/h] (prefetch용)"),
+    session_id: str | None = Query(None, max_length=128, description="세션 식별(heading 대체용)"),
 ) -> VPTIResponse:
     """위경도만 주면 Street View, 기상청, SegFormer 모두 자동 호출.
 
-    캐시 hit 시 <100ms, miss 시 1~3초 소요.
+    캐시 hit 시 <100ms, miss 시 1~3초 소요. heading(또는 세션 직전좌표)이 있으면
+    응답 후 진행 방향 앞 지점을 백그라운드 prefetch.
     """
     orchestrator = getattr(request.app.state, "orchestrator", None)
     if orchestrator is None:
@@ -212,6 +248,8 @@ async def vpti_at_location(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Orchestrator not initialized. Backend may still be starting.",
         )
+
+    heading = _resolve_heading(request, lat, lon, heading, session_id)
 
     try:
         result, telemetry = await orchestrator.compute(lat=lat, lon=lon)
@@ -231,6 +269,10 @@ async def vpti_at_location(
         precipitation = await orchestrator.get_precipitation_outlook(lat, lon)
     except Exception as e:  # noqa: BLE001
         logger.warning("강수 전망 부착 실패(무시): {}", e)
+
+    # 응답 후 백그라운드로 진행 방향 앞 지점 prefetch (heading 있을 때만)
+    if heading is not None:
+        background.add_task(orchestrator.prefetch_ahead, lat, lon, heading, speed_kmh)
 
     response = VPTIResponse(
         **result.as_dict(),
@@ -320,6 +362,7 @@ async def vpti_personalized(
 async def vpti_personalized_at(
     request: Request,
     payload: AutoPersonalizedVPTIRequest,
+    background: BackgroundTasks,
 ) -> PersonalizedVPTIResponse:
     """좌표 + 애플워치 생체신호만으로 pVPTI 자동 산출(B2).
 
@@ -349,10 +392,13 @@ async def vpti_personalized_at(
             observed_hr_max=payload.profile.observed_hr_max,
         )
 
+    lat, lon = payload.location.lat, payload.location.lon
+    heading = _resolve_heading(request, lat, lon, payload.heading, payload.session_id)
+
     try:
         result, telemetry = await orchestrator.compute_personalized(
-            lat=payload.location.lat,
-            lon=payload.location.lon,
+            lat=lat,
+            lon=lon,
             bio=bio,
             profile=profile,
             timestamp=payload.timestamp,
@@ -366,6 +412,12 @@ async def vpti_personalized_at(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Pipeline error: {e}",
         ) from e
+
+    # 응답 후 백그라운드로 진행 방향 앞 지점 prefetch (heading 있을 때만)
+    if heading is not None:
+        background.add_task(
+            orchestrator.prefetch_ahead, lat, lon, heading, payload.speed_kmh
+        )
 
     return PersonalizedVPTIResponse(
         **result.as_dict(), weather_source=telemetry.weather_source

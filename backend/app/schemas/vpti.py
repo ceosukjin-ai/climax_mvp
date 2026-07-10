@@ -218,6 +218,16 @@ class AutoPersonalizedVPTIRequest(BaseModel):
     timestamp: datetime | None = Field(None, description="평가 시각(None이면 현재)")
     biometrics: BiometricsIn
     profile: ProfileDerivedIn | None = None
+    # prefetch(앞 미리 분석)용 — 모두 선택적. heading 없으면 세션 직전좌표로 방위 계산.
+    heading: float | None = Field(
+        None, ge=0.0, lt=360.0, description="진행 방향[deg] 0~359 (prefetch용)"
+    )
+    speed_kmh: float | None = Field(
+        None, ge=0.0, le=300.0, description="이동 속도[km/h] (prefetch 거리 제한용)"
+    )
+    session_id: str | None = Field(
+        None, max_length=128, description="세션 식별(heading 없을 때 직전좌표 방위 계산)"
+    )
 
 
 class PersonalizedVPTIResponse(BaseModel):
