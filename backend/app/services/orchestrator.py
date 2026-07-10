@@ -495,6 +495,57 @@ class VPTIOrchestrator:
         )
         return result, telemetry
 
+    # ===== 캐시 전용 peek (lookahead 용) =====
+
+    async def peek_personalized(
+        self,
+        lat: float,
+        lon: float,
+        bio: Biometrics,
+        profile: PhysiologyProfile | None = None,
+        timestamp: datetime | None = None,
+    ) -> PersonalizedVPTIResult | None:
+        """앞 지점이 **이미 캐시(prefetch)** 돼 있으면 pVPTI 산출, 없으면 None.
+
+        콜드 계산(Street View fetch/SegFormer/도로축 네트워크)은 **절대 하지 않는다** →
+        본 응답을 막지 않는다. 캐시된 공간분석·기상 + 본 요청 생체신호로 compute_pvpti
+        를 그대로 호출(=본 계산과 동일 파이프라인, 새 계산식 없음).
+        """
+        pano_id = await self.cache.get_pano_id_for_location(lat, lon)
+        if pano_id is None:
+            return None
+        analysis = await self.cache.get_pano_analysis(pano_id)
+        if analysis is None:
+            return None
+        grid = latlon_to_grid(lat, lon)
+        wcache = await self.cache.get_weather(grid.nx, grid.ny)
+        if wcache is None:
+            wcache = await self.cache.get_weather_last_good(grid.nx, grid.ny)
+        if wcache is None:
+            return None
+
+        core_weather = CoreWeatherContext(
+            temperature_c=wcache.temperature_c,
+            wind_speed_ms=wcache.wind_speed_ms,
+            wind_direction_deg=wcache.wind_direction_deg,
+            humidity_pct=wcache.humidity_pct,
+        )
+        views_5 = self._build_core_views(analysis)
+        materials = self._build_core_materials(analysis.material_ratios)
+        when = timestamp or datetime.now(timezone.utc)
+        return compute_pvpti(
+            bio=bio,
+            profile=profile,
+            views_5=views_5,
+            materials=materials,
+            weather=core_weather,
+            road_axis_deg=analysis.road_axis_deg,
+            lat=lat,
+            lon=lon,
+            when=when,
+            sky_code=None,
+        )
+
     # ===== prefetch (앞 미리 분석) =====
 
     async def prefetch_ahead(

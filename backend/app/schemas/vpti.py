@@ -230,6 +230,14 @@ class AutoPersonalizedVPTIRequest(BaseModel):
     )
 
 
+class LookaheadItem(BaseModel):
+    """진행 방향 앞 지점의 미리 산출된 체감기후(prefetch 캐시 기반)."""
+
+    distance_m: float
+    pvpti: float
+    risk_level: Literal["safe", "caution", "warning", "danger", "severe"]
+
+
 class PersonalizedVPTIResponse(BaseModel):
     """pVPTI 응답. base_* 는 개인화 전 참조값(둘 다 PET)."""
 
@@ -247,6 +255,8 @@ class PersonalizedVPTIResponse(BaseModel):
     stress_category: str
     comfort: dict
     weather_source: str = "실측"   # 실측 | 캐시 | 추정 (KMA 타임아웃 폴백 구분)
+    # 진행 방향 앞 지점(prefetch로 이미 분석된 것만). 없으면 빈 배열.
+    lookahead: list[LookaheadItem] = Field(default_factory=list)
 
 
 # ===== Health =====

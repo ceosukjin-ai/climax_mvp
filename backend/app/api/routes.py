@@ -35,6 +35,7 @@ from app.core.vsi import (
 from app.schemas.vpti import (
     AutoPersonalizedVPTIRequest,
     HealthResponse,
+    LookaheadItem,
     PersonalizedVPTIRequest,
     PersonalizedVPTIResponse,
     VPTIRequest,
@@ -43,6 +44,7 @@ from app.schemas.vpti import (
     VSIResultOut,
     ViewSegmentationIn,
 )
+from app.services.orchestrator import PREFETCH_DISTANCES_M, destination_point
 from app.services.road_axis import bearing_deg
 from app.services.street_view import StreetViewNotFound
 
@@ -413,14 +415,35 @@ async def vpti_personalized_at(
             detail=f"Pipeline error: {e}",
         ) from e
 
-    # 응답 후 백그라운드로 진행 방향 앞 지점 prefetch (heading 있을 때만)
+    # lookahead: 이미 prefetch로 캐시된 앞 지점만 캐시 전용 조회(콜드 계산 없음 → 응답 안 막음).
+    # 아직 prefetch 안 된 지점은 생략(첫 방문지 첫 요청은 빈 배열).
+    lookahead: list[LookaheadItem] = []
+    if heading is not None:
+        for dist in PREFETCH_DISTANCES_M:
+            alat, alon = destination_point(lat, lon, heading, dist)
+            try:
+                ahead = await orchestrator.peek_personalized(
+                    alat, alon, bio, profile, payload.timestamp
+                )
+            except Exception:  # noqa: BLE001
+                ahead = None
+            if ahead is not None:
+                lookahead.append(LookaheadItem(
+                    distance_m=dist,
+                    pvpti=round(ahead.pvpti, 2),
+                    risk_level=ahead.risk_level,
+                ))
+
+    # 응답 후 백그라운드로 진행 방향 앞 지점 prefetch (heading 있을 때만) — 다음 요청의 lookahead 채움
     if heading is not None:
         background.add_task(
             orchestrator.prefetch_ahead, lat, lon, heading, payload.speed_kmh
         )
 
     return PersonalizedVPTIResponse(
-        **result.as_dict(), weather_source=telemetry.weather_source
+        **result.as_dict(),
+        weather_source=telemetry.weather_source,
+        lookahead=lookahead,
     )
 
 
