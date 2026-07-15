@@ -20,10 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 # CPU 버전 PyTorch를 별도 인덱스에서 설치 (이미지 크기 절반 줄임)
-RUN pip install --prefix=/install --upgrade pip && \
-    pip install --prefix=/install \
+#
+# 주의: pip 업그레이드에 --prefix를 쓰면 안 됩니다.
+# 기존 pip를 지우고 새 pip를 /install에 설치해버려서 PATH에서 사라지고,
+# 다음 pip 호출이 "pip: not found" (exit 127)로 죽습니다.
+# 업그레이드는 prefix 없이, 패키지 설치만 --prefix로. 호출은 python -m pip 사용.
+RUN python -m pip install --upgrade pip && \
+    python -m pip install --prefix=/install \
         torch --index-url https://download.pytorch.org/whl/cpu && \
-    pip install --prefix=/install -r requirements.txt
+    python -m pip install --prefix=/install -r requirements.txt
 
 
 # ===========================================================================
