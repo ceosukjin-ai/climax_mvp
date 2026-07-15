@@ -58,7 +58,11 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 # 애플리케이션 코드
+# vpti_core는 app이 최상위로 import하는 별도 패키지 (app/services/orchestrator.py,
+# app/api/routes.py에서 `from vpti_core import ...`). 빠뜨리면 기동 시
+# ModuleNotFoundError: No module named 'vpti_core' 로 죽습니다.
 COPY --chown=climax:climax app ./app
+COPY --chown=climax:climax vpti_core ./vpti_core
 
 # 모델 캐시 디렉토리 (non-root 사용자가 쓸 수 있게)
 RUN mkdir -p /app/.cache/huggingface && \
