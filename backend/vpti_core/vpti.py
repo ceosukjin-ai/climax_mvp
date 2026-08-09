@@ -380,6 +380,7 @@ def compute_vpti_thermal(
         gvi=vsi.gvi,
         ground_albedo=ground_albedo,
         ground_emissivity=ground_emissivity,
+        wind_ms=pwi.pedestrian_wind_speed_ms,   # 지표면 대류 냉각(바람) 반영
         config=config.mrt,
     )
 

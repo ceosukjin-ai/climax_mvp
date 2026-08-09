@@ -188,13 +188,25 @@ class BiometricsIn(BaseModel):
 
 
 class ProfileDerivedIn(BaseModel):
-    """개인화 파생값 — 민감정보 최소화(나이·성별·체격만, 기저질환 등 미전송)."""
+    """개인화 파생값 — 나이·성별·체격 + 폭염 취약군(기저질환) 키.
+
+    ⚠️ conditions 는 민감정보(건강정보)다. 위험도 개인화 계산에만 쓰고
+    서버에 저장·로깅하지 않는다(biometrics 와 동일 원칙, 계산 후 폐기).
+    """
 
     age: int | None = Field(None, ge=0, le=120)
     sex: Literal["male", "female"] | None = None
     height_cm: float | None = Field(None, ge=50.0, le=250.0)
     weight_kg: float | None = Field(None, ge=10.0, le=300.0)
     observed_hr_max: float | None = Field(None, ge=100.0, le=250.0)
+    conditions: list[str] | None = Field(
+        None,
+        max_length=20,
+        description=(
+            "폭염 취약군 키(cardio/resp/diabetes/kidney/pregnant). "
+            "민감정보 — 계산에만 사용, 미저장."
+        ),
+    )
 
 
 class PersonalizedVPTIRequest(BaseModel):

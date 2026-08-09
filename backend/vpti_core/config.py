@@ -217,11 +217,19 @@ class MRTConfig:
     ground_albedo_default: float = 0.15
     ground_emissivity_default: float = 0.95
 
-    # ⚠️ UNCONFIRMED — 일사에 의한 지표면 승온 단순화.
-    #   ΔTsurf = surface_temp_rise_max · (1−albedo) · (GHI/ghi_reference) · (1−SVF보정)
-    #   완전 에너지수지(대류·증발) 대신 일사 비례 1차 근사. 실증 데이터로 대체 대상.
-    surface_temp_rise_max: float = 25.0   # 청천 정오 완전노출 불투수면 ΔT [°C]
-    ghi_reference: float = 800.0          # ΔT 정규화 기준 일사 [W/m²]
+    # [구·deprecated] 일사 비례 1차 근사 파라미터.
+    #   estimate_ground_temp 가 표면 에너지수지(아래)로 대체되어 더 이상 사용 안 함.
+    #   호환을 위해 남겨둠. ghi_reference 는 solar_intensity·SMTI 에서 계속 사용.
+    surface_temp_rise_max: float = 25.0   # (deprecated) 미사용
+    ghi_reference: float = 800.0          # 정규화 기준 일사 [W/m²] — solar_intensity·SMTI 용
+
+    # === 표면 에너지수지 (지표면 온도 정밀화, estimate_ground_temp) ===
+    # ✅ 표준 미기상 에너지평형: 흡수일사 = 장파 순손실 + 대류 + 지중저장 을 Tsurf 로 풀이.
+    #   기존 '일사 비례' 근사와 달리 바람(대류)·야간 복사냉각을 물리적으로 반영.
+    hc_a: float = 6.0     # 무풍 대류 열전달계수 [W/m²K] (McAdams/Jürges 외기표면식)
+    hc_b: float = 4.0     # 풍속 민감도 [W/m²K per m/s] → 바람에 의한 표면 냉각
+    ground_storage_fraction: float = 0.25  # 흡수일사 중 지중 전도(저장) 비율 (Oke 도시 주간 근사, ⚠️ 근사)
+    env_emissivity: float = 0.90           # 주변(건물·식생) 장파 방사율 (지면이 하늘 대신 보는 부분, ≈기온)
 
 
 # =============================================================================
@@ -316,6 +324,26 @@ class PHIConfig:
     #   위험경계 앞당김 폭 [°C]. 환경 체감이 같아도 몸이 부담받으면 위험을 더 심각히
     #   분류. 실증(PHI 실증로깅)으로 교정 대상.
     strain_shift_max: float = 3.0
+
+    # 폭염 취약군(기저질환) 위험경계 앞당김 [°C].
+    #   환경 체감(pVPTI) 값은 물리량이라 그대로 두고 위험도 '분류'만 더 보수적으로
+    #   앞당긴다(같은 더위라도 더 일찍 경고).
+    #   [1단계 문헌 보정, 2026-07] 값 근거: 한국 per-°C 열-사망 기울기(심혈관이 전체
+    #   대비 1.3~4배 가파름; Kim 2015 서울/Chung 2017 전국)와 질환별 폭염 위험도
+    #   (Bouchama 2007: 심혈관 OR 2.48 > 호흡기 1.61; 당뇨 RR 1.18; CKD; 임신 조산 OR
+    #   1.16~1.26)로 등급화. 취약군 피해는 공식 33°C보다 ~3–4°C 낮은 지점부터 발현.
+    #   상세: docs 밖 프로젝트 문서 '취약군_가중치_보정_1단계.md'. 2단계(워치 회귀)로 재교정 예정.
+    condition_shift: dict[str, float] = field(
+        default_factory=lambda: {
+            "cardio": 3.0,     # 심혈관질환 — Bouchama OR 2.48(최고), per-°C 기울기 최대
+            "resp": 1.5,       # 호흡기질환 — Bouchama OR 1.61
+            "diabetes": 1.5,   # 당뇨 — 폭염사망 RR 1.18·이환 1.10 (Moon 2021)
+            "kidney": 1.5,     # 신장질환 — CKD 입원 RR 1.008/°C, 탈수·급성신손상 임상위험
+            "pregnant": 1.0,   # 임신 중 — 폭염 조산 OR 1.16~1.26(태아 결과, 중간)
+        }
+    )
+    # 취약군 합산 앞당김 상한 [°C] (여러 질환 중복 시 과도 방지). PET 밴드(6°C)의 ~2/3.
+    vuln_shift_max: float = 4.0
 
 
 @dataclass(frozen=True)

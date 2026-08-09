@@ -68,6 +68,14 @@ _DEFAULT_WEATHER = dict(
     wind_speed_ms=1.5, wind_direction_deg=0.0, precipitation_mm=0.0,
 )
 
+# ===== 하늘상태(SKY) 조회 설정 =====
+# 초단기예보의 SKY(1맑음/3구름많음/4흐림)를 운량 감쇠에 연결 —
+# 비·흐림 날 "맑음 가정 일사"로 인한 체감온도 과대평가 방지 (2026-08-09).
+SKY_TIMEOUT_SEC = 1.5            # 예보 조회 하드 타임아웃
+SKY_CACHE_TTL_SEC = 30 * 60      # 예보는 매시 갱신 — 격자당 30분 캐시면 충분
+SKY_FAIL_TTL_SEC = 5 * 60        # 실패 시 잠시 재시도 억제 (응답 지연 방지)
+_SKY_NAME_TO_CODE = {"맑음": 1, "구름많음": 3, "흐림": 4}
+
 # prefetch(앞 미리 분석): 진행 방향 앞 지점을 백그라운드로 미리 캐시해 도착 시 hit.
 PREFETCH_DISTANCES_M = (25.0, 50.0)   # 앞 2지점만 — 2코어 서버 부담 보호
 PREFETCH_HORIZON_SEC = 15.0           # speed_kmh 기준 이 시간 내 도달 거리까지만
@@ -127,23 +135,45 @@ class VPTIOrchestrator:
         self.street_view = street_view
         self.kma = kma
         self.segformer = segformer
+        # 하늘상태(SKY) 인메모리 캐시: (nx,ny) → (sky_code|None, 만료 monotonic)
+        self._sky_cache: dict[tuple[int, int], tuple[int | None, float]] = {}
 
     # ===== panoId 해석 =====
+
+    # 파노라마 탐색 반경 단계 [m].
+    # 한국은 골목 단위 Street View 커버리지가 빈 곳이 많아(예: 부산 장전동 주택가),
+    # 정확히 그 지점(50m)에 없으면 인근 촬영 지점으로 단계적으로 넓혀 찾는다.
+    # 같은 블록(≤400m)의 가로 형태는 공간 지표(SVF/GVI/BVI)의 근사로 유효.
+    PANO_SEARCH_RADII_M = (50, 150, 400)
 
     async def _resolve_pano_id(self, lat: float, lon: float) -> tuple[str, float, float]:
         """좌표 → panoId.
 
         1차: Redis 좌표 매핑
-        2차: Google Metadata API → 캐시 저장
+        2차: Google Metadata API(반경 50→150→400m 단계 확장) → 캐시 저장
         """
         cached = await self.cache.get_pano_id_for_location(lat, lon)
         if cached:
             return cached, lat, lon
 
-        meta = await self.street_view.get_pano_metadata(lat, lon)
-        if meta.status != "OK" or not meta.pano_id:
+        meta = None
+        for radius_m in self.PANO_SEARCH_RADII_M:
+            meta = await self.street_view.get_pano_metadata(lat, lon, radius_m=radius_m)
+            if meta.status == "OK" and meta.pano_id:
+                if radius_m > self.PANO_SEARCH_RADII_M[0]:
+                    logger.info(
+                        "Street View: 지점 50m 내 없음 → 반경 {}m에서 인근 파노라마 사용 "
+                        "({}, {}) → pano={}",
+                        radius_m, lat, lon, meta.pano_id,
+                    )
+                break
+
+        if meta is None or meta.status != "OK" or not meta.pano_id:
+            status = meta.status if meta else "UNKNOWN"
             raise StreetViewNotFound(
-                f"No Street View at ({lat}, {lon}): {meta.status}"
+                f"이 지점 주변 {self.PANO_SEARCH_RADII_M[-1]}m 안에 거리 이미지가 없어 "
+                f"측정할 수 없어요. 큰길 근처에서 다시 시도해 주세요. "
+                f"({lat:.5f}, {lon:.5f}: {status})"
             )
 
         await self.cache.set_pano_id_for_location(lat, lon, meta.pano_id)
@@ -349,6 +379,58 @@ class VPTIOrchestrator:
 
         return (self._wc_from_cache(weather_cache), False, elapsed_ms, "실측")
 
+    # ===== 하늘상태(SKY) — 운량 감쇠용 (2026-08-09) =====
+
+    def _sky_from_cache(self, nx: int, ny: int) -> tuple[bool, int | None]:
+        """(캐시 존재 여부, sky_code). 만료 항목은 없음으로 취급."""
+        hit = self._sky_cache.get((nx, ny))
+        if hit is None:
+            return False, None
+        sky, expires = hit
+        if time.monotonic() > expires:
+            return False, None
+        return True, sky
+
+    async def _get_sky_code(
+        self, lat: float, lon: float, weather: WeatherContext
+    ) -> int | None:
+        """KMA 초단기예보의 SKY를 조회해 일사(운량) 감쇠에 사용.
+
+        - 지금 비가 오면(실황 강수 RN1 > 0) 예보와 무관하게 흐림(4).
+        - 격자 단위 30분 인메모리 캐시 — 측정마다 API를 부르지 않음.
+        - 조회 실패 시 None(청천 가정, 기존 동작 그대로) + 5분 재시도 억제.
+        """
+        grid = latlon_to_grid(lat, lon)
+        raining = weather.precipitation_mm > 0.0
+
+        found, cached_sky = self._sky_from_cache(grid.nx, grid.ny)
+        if found:
+            return 4 if raining else cached_sky
+
+        sky: int | None = None
+        ttl = SKY_FAIL_TTL_SEC
+        try:
+            forecasts = await asyncio.wait_for(
+                self.kma.get_ultra_short_forecast(lat, lon),
+                timeout=SKY_TIMEOUT_SEC,
+            )
+            if forecasts:
+                f = forecasts[0]  # 가장 가까운 예보 시각
+                sky = _SKY_NAME_TO_CODE.get(f.sky_condition or "")
+                # 예보상 강수(비/눈/소나기 등)면 흐림으로 강화
+                if f.precipitation_type not in (None, "없음"):
+                    sky = 4
+                ttl = SKY_CACHE_TTL_SEC
+                logger.info(
+                    "[sky] grid {},{} → SKY={} (예보 {}, 강수형태 {})",
+                    grid.nx, grid.ny, sky, f.sky_condition, f.precipitation_type,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[sky] 초단기예보 조회 실패 → 청천 가정: {}", e)
+
+        self._sky_cache[(grid.nx, grid.ny)] = (sky, time.monotonic() + ttl)
+        return 4 if raining else sky
+
     # ===== 메인 파이프라인 =====
 
     async def compute(
@@ -451,6 +533,9 @@ class VPTIOrchestrator:
             weather_source,
         ) = await asyncio.gather(pano_task, weather_task)
 
+        # 하늘상태(운량) — 예보 기반, 격자 캐시. 실패 시 None(청천 가정)
+        sky_code = await self._get_sky_code(clat, clon, weather)
+
         # app.core 집계값 → vpti_core 입력 형태로 변환
         views_5 = self._build_core_views(pano_analysis)
         materials = self._build_core_materials(pano_analysis.material_ratios)
@@ -473,7 +558,7 @@ class VPTIOrchestrator:
             lat=clat,
             lon=clon,
             when=when,
-            sky_code=None,       # KMA 실황엔 SKY 없음 → 청천 가정(추후 초단기예보 연계)
+            sky_code=sky_code,   # 초단기예보 SKY(운량 감쇠) — 비·흐림 과대평가 방지
         )
         index_ms = (time.perf_counter() - t_idx) * 1000
 
@@ -524,6 +609,11 @@ class VPTIOrchestrator:
         if wcache is None:
             return None
 
+        # 하늘상태 — peek은 네트워크 금지: 인메모리 캐시만 사용, 지금 비면 흐림(4)
+        _, peek_sky = self._sky_from_cache(grid.nx, grid.ny)
+        if (wcache.precipitation_mm or 0.0) > 0.0:
+            peek_sky = 4
+
         core_weather = CoreWeatherContext(
             temperature_c=wcache.temperature_c,
             wind_speed_ms=wcache.wind_speed_ms,
@@ -543,7 +633,7 @@ class VPTIOrchestrator:
             lat=lat,
             lon=lon,
             when=when,
-            sky_code=None,
+            sky_code=peek_sky,
         )
 
     # ===== prefetch (앞 미리 분석) =====

@@ -57,6 +57,7 @@ class PhysiologyProfile:
     height_cm: float | None = None
     weight_kg: float | None = None
     observed_hr_max: float | None = None   # 관측 최댓값(콜드스타트 보정)
+    conditions: tuple[str, ...] = ()       # 폭염 취약군(기저질환) 키 — 위험경계 앞당김에만 사용
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +192,20 @@ def residual_strain(observed_hrr: float, expected_hrr: float) -> float:
     return min(max(observed_hrr - expected_hrr, 0.0), 1.0)
 
 
+def vulnerability_offset(profile: PhysiologyProfile | None, config: PHIConfig) -> float:
+    """폭염 취약군(기저질환) → 위험경계 앞당김 [°C].
+
+    질병관리청·기상청 온열질환 취약군(심혈관·호흡기·당뇨·신장질환·임신부 등)에 해당하면
+    같은 더위라도 더 일찍 위험으로 분류한다. 환경 체감(pVPTI) 값 자체는 물리량이라
+    건드리지 않고, 위험도 '분류'에만 반영한다(strain 과 동일한 방식).
+    생체신호(워치)가 없어도 항상 적용된다. ⚠️ 계수는 UNCONFIRMED — 실증 교정 대상.
+    """
+    if profile is None or not profile.conditions:
+        return 0.0
+    shift = sum(config.condition_shift.get(c, 0.0) for c in profile.conditions)
+    return min(shift, config.vuln_shift_max)
+
+
 # =============================================================================
 # 개인화 산출
 # =============================================================================
@@ -255,7 +270,8 @@ def evaluate_personalized(
         strain = residual_strain(observed_hrr, expected_hrr)
 
     base_risk = _classify_risk_thermal(base_vpti, "pet")
-    effective = pvpti + strain * phi.strain_shift_max   # ⚠️ UNCONFIRMED 결합
+    vuln = vulnerability_offset(profile, phi)           # 폭염 취약군 위험경계 앞당김
+    effective = pvpti + strain * phi.strain_shift_max + vuln   # ⚠️ UNCONFIRMED 결합
     risk = _classify_risk_thermal(effective, "pet")
 
     return PersonalizedVPTIResult(

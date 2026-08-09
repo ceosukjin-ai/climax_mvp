@@ -113,33 +113,65 @@ def sky_emissivity(
     return (1.0 - cf) * eps_clear + cf * 1.0
 
 
+def convective_coefficient(wind_ms: float, config: MRTConfig = DEFAULT_CONFIG.mrt) -> float:
+    """외기 표면 대류 열전달계수 h_c = a + b·u [W/m²K].
+
+    ✅ McAdams/Jürges 계열 외기 표면 대류식. 바람이 셀수록 뜨거운 표면을 더 식힌다.
+    """
+    return config.hc_a + config.hc_b * max(wind_ms, 0.0)
+
+
 def estimate_ground_temp(
     air_temp_c: float,
-    ghi: float,
+    solar: SolarResult,
     ground_albedo: float,
+    ground_emissivity: float,
     svf: float,
     gvi: float,
+    wind_ms: float,
+    eps_sky: float,
     config: MRTConfig = DEFAULT_CONFIG.mrt,
 ) -> float:
-    """⚠️ UNCONFIRMED — 일사에 의한 지표면 승온 단순화.
+    """표면 에너지수지로 지표면 온도 Tsurf 산출 (✅ 표준 미기상 에너지평형).
 
-        ΔTsurf = ΔT_max · (1−albedo) · (GHI/GHI_ref) · SVF
-        Tsurf_impervious = Ta + ΔTsurf
-        Tsurf = GVI·Ta + (1−GVI)·Tsurf_impervious   ← 식생은 기온에 근접(증발산·음영)
+    불투수 지면의 정상상태 에너지평형을 Tsurf 에 대해 푼다:
 
-    완전 에너지수지(대류·증발·전도) 대신 일사 비례 1차 근사.
-    하늘이 막힌 곳(SVF↓)은 직사 노출이 적어 승온 작음 → SVF 비례.
-    GVI 가 클수록 식생 지표라 표면온도가 기온에 가까워짐.
+        (1−α)·S↓·(1−f_stor) + ε_g·(L↓ − σ·Tsurf⁴) − h_c·(Tsurf − Ta) = 0
+
+      · S↓ = DNI·sinβ + DHI·SVF              지면 입사 단파 [W/m²]
+      · L↓ = σ·Ta⁴·(SVF·ε_sky + (1−SVF)·ε_env)  지면 입사 장파(하늘 + 주변 건물·식생)
+      · h_c = a + b·u                        풍속 의존 대류계수 → 바람 냉각 반영
+      · f_stor                               흡수일사 중 지중 저장(전도) 비율
+
+    기존 '일사 비례 1차 근사'를 대체한다. 대류(바람)와 장파 순손실을 물리적으로
+    반영하므로, 야간·흐린 날엔 Tsurf < Ta(복사냉각)까지 재현된다. 4차식을 Newton
+    반복으로 푼다. 식생 지분은 증발산으로 기온에 근접 → GVI 비율만큼 Ta 로 혼합.
     """
-    dt = (
-        config.surface_temp_rise_max
-        * (1.0 - min(max(ground_albedo, 0.0), 1.0))
-        * min(max(ghi, 0.0) / config.ghi_reference, 1.5)
-        * min(max(svf, 0.0), 1.0)
+    beta = math.radians(max(solar.solar_elevation_deg, 0.0))
+    svf_c = min(max(svf, 0.0), 1.0)
+    s_down = max(solar.dni * math.sin(beta) + solar.dhi * svf_c, 0.0)
+    sw_abs = (1.0 - min(max(ground_albedo, 0.0), 1.0)) * s_down
+    avail_sw = sw_abs * (1.0 - min(max(config.ground_storage_fraction, 0.0), 1.0))
+
+    l_down = STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4 * (
+        svf_c * eps_sky + (1.0 - svf_c) * config.env_emissivity
     )
-    tsurf_impervious = air_temp_c + dt
+    h_c = convective_coefficient(wind_ms, config)
+    eps_g = min(max(ground_emissivity, 0.0), 1.0)
+
+    # Newton 반복: f(Ts)=avail_sw + ε(L↓ − σTs⁴) − h_c(Ts − Ta) = 0
+    ts = air_temp_c
+    for _ in range(20):
+        ts_k = ts + KELVIN
+        f = avail_sw + eps_g * (l_down - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - air_temp_c)
+        fprime = -4.0 * eps_g * STEFAN_BOLTZMANN * ts_k ** 3 - h_c
+        step = f / fprime
+        ts -= step
+        if abs(step) < 1e-4:
+            break
+
     g = min(max(gvi, 0.0), 1.0)
-    return g * air_temp_c + (1.0 - g) * tsurf_impervious
+    return g * air_temp_c + (1.0 - g) * ts
 
 
 def compute_mrt(
@@ -150,6 +182,7 @@ def compute_mrt(
     gvi: float,
     ground_albedo: float,
     ground_emissivity: float,
+    wind_ms: float = 0.0,
     config: MRTConfig = DEFAULT_CONFIG.mrt,
 ) -> MRTResult:
     """6방향 복사속 적분으로 평균복사온도 Tmrt 산출 (VDI 3787 Part 2).
@@ -162,6 +195,7 @@ def compute_mrt(
         gvi: Green View Index [0,1] (VSI).
         ground_albedo: 지면 알베도 [0,1] (SMTI 재질에서 도출).
         ground_emissivity: 지면 방사율 [0,1] (SMTI 재질에서 도출).
+        wind_ms: 보행자 풍속 [m/s] (지표면 대류 냉각용). 0이면 무풍(대류계수 최소).
         config: MRT 설정.
 
     Returns:
@@ -200,7 +234,10 @@ def compute_mrt(
     eps_sky = sky_emissivity(air_temp_c, humidity_pct, solar.cloud_fraction, config)
     l_sky_flux = eps_sky * STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4
 
-    tsurf = estimate_ground_temp(air_temp_c, solar.ghi, ground_albedo, svf, gvi, config)
+    tsurf = estimate_ground_temp(
+        air_temp_c, solar, ground_albedo, ground_emissivity,
+        svf, gvi, wind_ms, eps_sky, config,
+    )
     l_surf_flux = ground_emissivity * STEFAN_BOLTZMANN * (tsurf + KELVIN) ** 4
 
     lw_sky = 0.0

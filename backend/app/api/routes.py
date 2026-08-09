@@ -11,7 +11,7 @@ VPTI REST API 라우트.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import (
     APIRouter,
@@ -44,6 +44,7 @@ from app.schemas.vpti import (
     VSIResultOut,
     ViewSegmentationIn,
 )
+from app.services.kma import KST
 from app.services.orchestrator import PREFETCH_DISTANCES_M, destination_point
 from app.services.road_axis import bearing_deg
 from app.services.street_view import StreetViewNotFound
@@ -331,6 +332,7 @@ async def vpti_personalized(
             height_cm=payload.profile.height_cm,
             weight_kg=payload.profile.weight_kg,
             observed_hr_max=payload.profile.observed_hr_max,
+            conditions=tuple(payload.profile.conditions or ()),
         )
     when = payload.timestamp or datetime.now(timezone.utc)
 
@@ -392,6 +394,7 @@ async def vpti_personalized_at(
             height_cm=payload.profile.height_cm,
             weight_kg=payload.profile.weight_kg,
             observed_hr_max=payload.profile.observed_hr_max,
+            conditions=tuple(payload.profile.conditions or ()),
         )
 
     lat, lon = payload.location.lat, payload.location.lon
@@ -581,6 +584,64 @@ async def route_vpti(
         "points": points,
     }
     return JSONResponse(profile)
+
+
+@router.get(
+    "/brief/daily",
+    summary="아침 브리핑 — 오늘 예보 요약 (우산·더위·옷차림 판단 재료, 2026-08-09)",
+)
+async def daily_brief(
+    request: Request,
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+) -> dict:
+    """오늘(KST) 남은 시간대 단기예보를 요약해 반환.
+
+    앱의 아침 브리핑 알림용. 좌표→예보 요약만 — 개인정보 없음·미저장.
+    """
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized.",
+        )
+
+    try:
+        forecasts = await orchestrator.kma.get_short_term_forecast(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"KMA forecast failed: {e}")
+
+    now = datetime.now(KST)
+    today = [
+        f for f in forecasts
+        if f.forecast_for.date() == now.date()
+        and f.forecast_for >= now - timedelta(hours=1)
+    ]
+    if not today:
+        raise HTTPException(status_code=404, detail="오늘 예보 없음")
+
+    temps = [f.temperature_c for f in today if f.temperature_c is not None]
+    hums = [f.humidity_pct for f in today if f.humidity_pct is not None]
+    rain_slots = [
+        f for f in today
+        if (f.precipitation_type not in (None, "없음"))
+        or ((f.precipitation_mm or 0.0) > 0.0)
+    ]
+    sky_rank = {"맑음": 1, "구름많음": 3, "흐림": 4}
+    worst = max((sky_rank.get(f.sky_condition or "", 0) for f in today), default=0)
+    first_rain = min((f.forecast_for for f in rain_slots), default=None)
+
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "t_max": max(temps) if temps else None,
+        "t_min": min(temps) if temps else None,
+        "humidity_max": max(hums) if hums else None,
+        "rain_expected": bool(rain_slots),
+        "first_rain_hour": first_rain.hour if first_rain is not None else None,
+        "rain_type": rain_slots[0].precipitation_type if rain_slots else None,
+        "sky_worst": {1: "맑음", 3: "구름많음", 4: "흐림"}.get(worst),
+        "slots": len(today),
+    }
 
 
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
