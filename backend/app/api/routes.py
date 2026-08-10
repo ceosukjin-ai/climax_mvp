@@ -649,12 +649,15 @@ async def daily_brief(
     summary="건물 열취약 판정 — 건축물대장 연식·구조 기반 (실내축 2단계, 2026-08-10)",
 )
 async def building_risk_at(
+    request: Request,
     lat: float = Query(..., ge=-90.0, le=90.0),
     lon: float = Query(..., ge=-180.0, le=180.0),
 ) -> dict:
-    """좌표의 건물 정보(연식·층수·구조)와 폭염 실내 과열 취약 등급을 반환.
+    """좌표의 건물 정보(연식·층수·구조)·폭염 취약 등급·**예상 실내 온도**를 반환.
 
-    데이터: V-World(국토부) + 건축HUB 건축물대장 — 공개 데이터만 사용, 좌표 미저장.
+    데이터: V-World(국토부) + 건축HUB 건축물대장 + 기상청 실황 — 공개 데이터만, 좌표 미저장.
+    예상 실내 온도(v1 근사): 비냉방 가정 — 낮엔 바깥보다 약간 낮고, 밤엔 축열로 더 높음.
+    취약 건물(score↑)일수록 가산. 이어러블 실측이 연결되면 앱이 실측을 우선 사용.
     건물을 못 찾으면 404 (앱은 무시하고 기존 판정 유지).
     """
     from app.services.building import building_risk, to_dict
@@ -662,7 +665,25 @@ async def building_risk_at(
     b = await building_risk(lat, lon)
     if b is None:
         raise HTTPException(status_code=404, detail="건물 정보를 찾을 수 없음")
-    return to_dict(b)
+    result = to_dict(b)
+
+    # 예상 실내 온도 — 현재 바깥 기온 + 건물 취약점수 기반 근사 (실패해도 무시)
+    est: float | None = None
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is not None:
+        try:
+            obs = await orchestrator.kma.get_current_observation(lat, lon)
+            t_out = obs.temperature_c
+            hour = datetime.now(KST).hour
+            if 10 <= hour <= 18:
+                est = t_out - 1.0 + 0.6 * b.score      # 낮: 그늘 실내 ≈ 바깥-1, 취약할수록 +
+            else:
+                est = t_out + 2.0 + 0.4 * b.score      # 밤: 축열로 바깥보다 높음
+            est = round(est * 2) / 2                    # 0.5°C 단위
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"est_indoor failed: {e}")
+    result["est_indoor_c"] = est
+    return result
 
 
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
