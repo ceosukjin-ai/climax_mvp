@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     ncp_maps_client_secret: str = ""
     kma_api_key: str = ""
     kma_base_url: str = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
+    # 건물 열취약 판정 (실내축 2단계) — V-World 리버스지오코딩 + 건축HUB 건축물대장
+    vworld_api_key: str = ""
+    building_api_key: str = ""
 
     # NCP Object Storage
     ncp_object_access_key: str = ""

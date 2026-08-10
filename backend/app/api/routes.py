@@ -644,6 +644,27 @@ async def daily_brief(
     }
 
 
+@router.get(
+    "/building/risk",
+    summary="건물 열취약 판정 — 건축물대장 연식·구조 기반 (실내축 2단계, 2026-08-10)",
+)
+async def building_risk_at(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+) -> dict:
+    """좌표의 건물 정보(연식·층수·구조)와 폭염 실내 과열 취약 등급을 반환.
+
+    데이터: V-World(국토부) + 건축HUB 건축물대장 — 공개 데이터만 사용, 좌표 미저장.
+    건물을 못 찾으면 404 (앱은 무시하고 기존 판정 유지).
+    """
+    from app.services.building import building_risk, to_dict
+
+    b = await building_risk(lat, lon)
+    if b is None:
+        raise HTTPException(status_code=404, detail="건물 정보를 찾을 수 없음")
+    return to_dict(b)
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""
