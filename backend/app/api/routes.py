@@ -652,37 +652,79 @@ async def building_risk_at(
     request: Request,
     lat: float = Query(..., ge=-90.0, le=90.0),
     lon: float = Query(..., ge=-180.0, le=180.0),
+    age: int | None = Query(None, ge=0, le=120),
+    conditions: str | None = Query(None, description="취약군 콤마 구분: cardio,resp,…"),
+    ambient: float | None = Query(None, description="이어러블 실측 실내온도(°C) — 있으면 추정 대체"),
 ) -> dict:
-    """좌표의 건물 정보(연식·층수·구조)·폭염 취약 등급·**예상 실내 온도**를 반환.
+    """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
-    데이터: V-World(국토부) + 건축HUB 건축물대장 + 기상청 실황 — 공개 데이터만, 좌표 미저장.
-    예상 실내 온도(v1 근사): 비냉방 가정 — 낮엔 바깥보다 약간 낮고, 밤엔 축열로 더 높음.
-    취약 건물(score↑)일수록 가산. 이어러블 실측이 연결되면 앱이 실측을 우선 사용.
-    건물을 못 찾으면 404 (앱은 무시하고 기존 판정 유지).
+    야외 pVPTI와 같은 사상 — 건물 축열·시간대별 일사·구름으로 실내 기온을 추정하고,
+    습도(후덥지근함)·무풍을 반영한 '실내 체감'과 취약군 반영 위험 등급을 낸다.
+    이어러블 실측(ambient)이 오면 추정 대신 실측 기반 — '이 사람이 실제 겪는 실내 체감'.
+    데이터: V-World + 건축물대장 + 기상청 — 공개 데이터만, 좌표·생체 미저장.
     """
     from app.services.building import building_risk, to_dict
+    from app.services.indoor import compute_indoor
 
     b = await building_risk(lat, lon)
     if b is None:
         raise HTTPException(status_code=404, detail="건물 정보를 찾을 수 없음")
     result = to_dict(b)
+    result["est_indoor_c"] = None
+    result["indoor_pvpti"] = None
+    result["indoor_risk"] = None
+    result["indoor_measured"] = False
 
-    # 예상 실내 온도 — 현재 바깥 기온 + 건물 취약점수 기반 근사 (실패해도 무시)
-    est: float | None = None
     orchestrator = getattr(request.app.state, "orchestrator", None)
     if orchestrator is not None:
         try:
             obs = await orchestrator.kma.get_current_observation(lat, lon)
-            t_out = obs.temperature_c
-            hour = datetime.now(KST).hour
-            if 10 <= hour <= 18:
-                est = t_out - 1.0 + 0.6 * b.score      # 낮: 그늘 실내 ≈ 바깥-1, 취약할수록 +
-            else:
-                est = t_out + 2.0 + 0.4 * b.score      # 밤: 축열로 바깥보다 높음
-            est = round(est * 2) / 2                    # 0.5°C 단위
+            # 오늘 평균기온(축열 기준) — 단기예보의 오늘 시간대 평균, 실패 시 현재기온
+            t_mean = obs.temperature_c
+            try:
+                fcst = await orchestrator.kma.get_short_term_forecast(lat, lon)
+                today = [
+                    f.temperature_c for f in fcst
+                    if f.forecast_for.date() == datetime.now(KST).date()
+                    and f.temperature_c is not None
+                ]
+                if today:
+                    t_mean = sum(today) / len(today)
+            except Exception:  # noqa: BLE001
+                pass
+            # 구름량 — 초단기예보 SKY (엔진 일사감쇠와 동일 소스), 실패 시 중간값
+            cloud = 0.5
+            try:
+                wx = WeatherContext(
+                    temperature_c=obs.temperature_c,
+                    humidity_pct=obs.humidity_pct,
+                    wind_speed_ms=obs.wind_speed_ms,
+                    wind_direction_deg=obs.wind_direction_deg,
+                    precipitation_mm=obs.precipitation_mm,
+                )
+                sky = await orchestrator._get_sky_code(lat, lon, wx)  # noqa: SLF001
+                cloud = {1: 0.1, 3: 0.6, 4: 0.9}.get(sky or 0, 0.5)
+            except Exception:  # noqa: BLE001
+                pass
+
+            ind = compute_indoor(
+                t_out_now=obs.temperature_c,
+                t_mean_today=t_mean,
+                humidity_pct=obs.humidity_pct,
+                cloud_fraction=cloud,
+                building_score=b.score,
+                structure=b.structure,
+                age=age,
+                conditions=conditions.split(",") if conditions else None,
+                ambient_measured=ambient,
+            )
+            result["est_indoor_c"] = ind.t_in_est
+            result["indoor_pvpti"] = ind.indoor_pvpti
+            result["indoor_risk"] = ind.indoor_risk
+            result["indoor_measured"] = ind.measured
+            result["indoor_basis"] = ind.basis
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"est_indoor failed: {e}")
-    result["est_indoor_c"] = est
+            logger.warning(f"indoor pvpti failed: {e}")
     return result
 
 
