@@ -392,3 +392,165 @@ class KMAClient:
             forecasts,
             key=lambda f: abs((f.forecast_for - target_time).total_seconds()),
         )
+
+
+# =============================================================================
+# ASOS 실시간 지상관측 — 기상청 API허브 (2026-08-11)
+# =============================================================================
+# 동네예보 격자에는 없는 실측 항목(일사·전운량·지면온도)을 관측소 단위로 받는다.
+#   · 일사 SI [MJ/m², 1시간 누적] → 추정 GHI 보정(운량 역산)
+#   · 전운량 CA_TOT [0~10]        → 예보 SKY 코드보다 정확한 운량
+#   · 지면온도 TS [°C]            → 엔진 Tsurf(에너지수지) 교정 로그
+# 인증키는 apihub.kma.go.kr 회원키(authKey) — 공공데이터포털 키와 별개.
+# 호출량: 관측소당 시간 1회 수준(오케스트레이터에서 캐시) — 한도 무관.
+
+APIHUB_SFCTM2_URL = "https://apihub.kma.go.kr/api/typ01/url/kma_sfctm2.php"
+
+# 관측소 위경도 — 운량은 국지성이 있어 가까운 관측소만 신뢰한다.
+# 전국 확장 시 지점 추가(기상자료개방포털 지점정보 참조).
+ASOS_STATIONS: dict[int, tuple[float, float]] = {
+    159: (35.10468, 129.03203),   # 부산
+}
+
+# kma_sfctm2 고정 컬럼(공백 구분, 0-based) — help=1 문서 기준
+_SFC_IDX_TM = 0
+_SFC_IDX_STN = 1
+_SFC_IDX_WS = 3
+_SFC_IDX_TA = 11
+_SFC_IDX_HM = 13
+_SFC_IDX_CA_TOT = 25
+_SFC_IDX_SI = 34
+_SFC_IDX_TS = 36
+_SFC_MIN_TOKENS = 37
+
+
+@dataclass(frozen=True, slots=True)
+class ASOSObservation:
+    """API허브 지상관측(종관) 시간자료 1건 — 결측은 None."""
+
+    station_id: int
+    observed_at: datetime            # 관측시각(KST) — SI는 이 시각까지 1시간 누적
+    temperature_c: float | None
+    humidity_pct: float | None
+    wind_speed_ms: float | None
+    cloud_cover_tenths: float | None  # 전운량 [0~10]
+    solar_mj: float | None            # 1시간 일사 [MJ/m²]
+    ground_temp_c: float | None       # 지면온도 [°C]
+
+    @property
+    def solar_avg_wm2(self) -> float | None:
+        """1시간 누적 일사 → 시간평균 일사 [W/m²] (MJ/m²·h × 10⁶/3600)."""
+        if self.solar_mj is None:
+            return None
+        return self.solar_mj * (1_000_000.0 / 3600.0)
+
+
+def _sfc_value(tokens: list[str], idx: int, lo: float, hi: float) -> float | None:
+    """토큰 → float. 결측 코드(-9/-99 계열)·범위 밖은 None."""
+    try:
+        v = float(tokens[idx])
+    except (IndexError, ValueError):
+        return None
+    if v in (-9.0, -99.0, -999.0, -9.9):
+        return None
+    if not (lo <= v <= hi):
+        return None
+    return v
+
+
+def parse_sfctm2(text: str, station_id: int) -> ASOSObservation | None:
+    """kma_sfctm2 응답(텍스트)에서 지정 관측소의 최신 1건 파싱.
+
+    형식: '#' 주석 헤더 + 공백 구분 고정 컬럼 데이터 행.
+    컬럼 어긋남(문서와 다른 버전) 방어: TM 형식·STN 일치·기온 범위 검증.
+    """
+    best: ASOSObservation | None = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("="):
+            continue
+        tokens = line.split()
+        if len(tokens) < _SFC_MIN_TOKENS:
+            continue
+        tm, stn = tokens[_SFC_IDX_TM], tokens[_SFC_IDX_STN]
+        if len(tm) != 12 or not tm.isdigit():
+            continue
+        if stn != str(station_id):
+            continue
+        observed_at = datetime.strptime(tm, "%Y%m%d%H%M").replace(tzinfo=KST)
+        obs = ASOSObservation(
+            station_id=station_id,
+            observed_at=observed_at,
+            temperature_c=_sfc_value(tokens, _SFC_IDX_TA, -45.0, 55.0),
+            humidity_pct=_sfc_value(tokens, _SFC_IDX_HM, 0.0, 100.0),
+            wind_speed_ms=_sfc_value(tokens, _SFC_IDX_WS, 0.0, 80.0),
+            cloud_cover_tenths=_sfc_value(tokens, _SFC_IDX_CA_TOT, 0.0, 10.0),
+            solar_mj=_sfc_value(tokens, _SFC_IDX_SI, 0.0, 5.0),
+            ground_temp_c=_sfc_value(tokens, _SFC_IDX_TS, -45.0, 80.0),
+        )
+        # 최신 시각 우선
+        if best is None or obs.observed_at > best.observed_at:
+            best = obs
+    return best
+
+
+class ASOSClient:
+    """기상청 API허브 지상관측(종관) 시간자료 비동기 클라이언트."""
+
+    def __init__(self, auth_key: str, timeout_sec: float = 10.0) -> None:
+        if not auth_key:
+            raise ValueError("API허브 인증키(authKey)가 필요합니다")
+        self.auth_key = auth_key
+        self._client = httpx.AsyncClient(timeout=timeout_sec)
+
+    async def close(self) -> None:
+        await self._client.aclose()
+
+    @staticmethod
+    def nearest_station(
+        lat: float, lon: float, max_km: float = 50.0
+    ) -> int | None:
+        """좌표에서 max_km 이내 최근접 관측소 ID. 없으면 None(→ SKY 예보 폴백)."""
+        best_id, best_km = None, max_km
+        for stn, (slat, slon) in ASOS_STATIONS.items():
+            dlat = math.radians(slat - lat)
+            dlon = math.radians(slon - lon)
+            a = (
+                math.sin(dlat / 2) ** 2
+                + math.cos(math.radians(lat))
+                * math.cos(math.radians(slat))
+                * math.sin(dlon / 2) ** 2
+            )
+            km = 2 * 6371.0 * math.asin(math.sqrt(a))
+            if km <= best_km:
+                best_id, best_km = stn, km
+        return best_id
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
+        retry=retry_if_exception_type(httpx.RequestError),
+    )
+    async def get_hourly(self, station_id: int = 159) -> ASOSObservation | None:
+        """최신 정시 관측 1건. 발표 지연(~10여 분)을 고려해 현재 정시→직전 정시 순 시도."""
+        now = datetime.now(KST)
+        candidates = [
+            (now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=h))
+            for h in (0, 1, 2)
+        ]
+        for tm in candidates:
+            params = {
+                "tm": tm.strftime("%Y%m%d%H%M"),
+                "stn": str(station_id),
+                "help": "0",
+                "authKey": self.auth_key,
+            }
+            resp = await self._client.get(APIHUB_SFCTM2_URL, params=params)
+            resp.raise_for_status()
+            text = resp.content.decode("euc-kr", errors="replace")
+            if '"status"' in text and "403" in text:
+                raise KMAError("API허브 활용신청 필요 또는 인증키 오류 (403)")
+            obs = parse_sfctm2(text, station_id)
+            if obs is not None:
+                return obs
+        return None

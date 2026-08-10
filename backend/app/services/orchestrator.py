@@ -46,7 +46,14 @@ from vpti_core import (
     WeatherContext as CoreWeatherContext,
     compute_pvpti,
 )
-from app.services.kma import KMAClient, KST, latlon_to_grid
+from app.services.kma import (
+    ASOS_STATIONS,
+    ASOSClient,
+    ASOSObservation,
+    KMAClient,
+    KST,
+    latlon_to_grid,
+)
 from app.services.road_axis import get_road_axis
 from app.services.street_view import (
     GoogleStreetViewClient,
@@ -75,6 +82,15 @@ SKY_TIMEOUT_SEC = 1.5            # 예보 조회 하드 타임아웃
 SKY_CACHE_TTL_SEC = 30 * 60      # 예보는 매시 갱신 — 격자당 30분 캐시면 충분
 SKY_FAIL_TTL_SEC = 5 * 60        # 실패 시 잠시 재시도 억제 (응답 지연 방지)
 _SKY_NAME_TO_CODE = {"맑음": 1, "구름많음": 3, "흐림": 4}
+
+# ===== ASOS 실측(운량·일사·지면온도) 설정 (2026-08-11) =====
+# 관측소 실측이 예보 SKY보다 우선. 관측은 매시 정시 + 발표 ~10여 분 지연 →
+# 관측소당 20분 캐시면 시간당 최대 3회 호출(전국 사용자 수와 무관).
+ASOS_TIMEOUT_SEC = 1.5
+ASOS_CACHE_TTL_SEC = 20 * 60
+ASOS_FAIL_TTL_SEC = 5 * 60
+ASOS_MAX_DISTANCE_KM = 50.0      # 이보다 먼 관측소의 운량은 국지성 때문에 미사용
+ASOS_MAX_AGE_SEC = 2.5 * 3600    # 관측이 이보다 오래되면 미사용(예보 폴백)
 
 # prefetch(앞 미리 분석): 진행 방향 앞 지점을 백그라운드로 미리 캐시해 도착 시 hit.
 PREFETCH_DISTANCES_M = (25.0, 50.0)   # 앞 2지점만 — 2코어 서버 부담 보호
@@ -130,13 +146,17 @@ class VPTIOrchestrator:
         street_view: GoogleStreetViewClient,
         kma: KMAClient,
         segformer: "SegFormerService",
+        asos: ASOSClient | None = None,
     ) -> None:
         self.cache = cache
         self.street_view = street_view
         self.kma = kma
         self.segformer = segformer
+        self.asos = asos
         # 하늘상태(SKY) 인메모리 캐시: (nx,ny) → (sky_code|None, 만료 monotonic)
         self._sky_cache: dict[tuple[int, int], tuple[int | None, float]] = {}
+        # ASOS 실측 인메모리 캐시: station_id → (ASOSObservation|None, 만료 monotonic)
+        self._asos_cache: dict[int, tuple[ASOSObservation | None, float]] = {}
 
     # ===== panoId 해석 =====
 
@@ -431,6 +451,91 @@ class VPTIOrchestrator:
         self._sky_cache[(grid.nx, grid.ny)] = (sky, time.monotonic() + ttl)
         return 4 if raining else sky
 
+    # ===== ASOS 실측 운량·일사 (2026-08-11) =====
+
+    async def _get_asos_obs(self, station_id: int) -> ASOSObservation | None:
+        """관측소 최신 실측 1건 — 20분 인메모리 캐시, 실패 시 5분 재시도 억제."""
+        hit = self._asos_cache.get(station_id)
+        if hit is not None:
+            obs, expires = hit
+            if time.monotonic() <= expires:
+                return obs
+
+        obs: ASOSObservation | None = None
+        ttl = ASOS_FAIL_TTL_SEC
+        try:
+            obs = await asyncio.wait_for(
+                self.asos.get_hourly(station_id), timeout=ASOS_TIMEOUT_SEC
+            )
+            if obs is not None:
+                ttl = ASOS_CACHE_TTL_SEC
+                # 지면온도(TS)는 엔진 Tsurf(에너지수지) 상시 교정용 — 로그로 축적
+                logger.info(
+                    "[asos] stn={} tm={} ta={} hm={} ws={} 전운량={}/10 일사={}MJ 지면온도={}°C",
+                    station_id, obs.observed_at.strftime("%H:%M"),
+                    obs.temperature_c, obs.humidity_pct, obs.wind_speed_ms,
+                    obs.cloud_cover_tenths, obs.solar_mj, obs.ground_temp_c,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[asos] stn={} 조회 실패 → SKY 예보 폴백: {}", station_id, e)
+
+        self._asos_cache[station_id] = (obs, time.monotonic() + ttl)
+        return obs
+
+    def _asos_cloud_fraction(
+        self, obs: ASOSObservation, station_id: int
+    ) -> float | None:
+        """실측 → 전운량 비율. 주간엔 일사 역산(감쇠 실측)이 전운량보다 우선."""
+        slat, slon = ASOS_STATIONS[station_id]
+        cf: float | None = None
+        source = None
+        ghi_obs = obs.solar_avg_wm2
+        if ghi_obs is not None:
+            from vpti_core.solar import cloud_fraction_from_obs_ghi
+
+            cf = cloud_fraction_from_obs_ghi(slat, slon, obs.observed_at, ghi_obs)
+            if cf is not None:
+                source = "일사역산"
+        if cf is None and obs.cloud_cover_tenths is not None:
+            cf = obs.cloud_cover_tenths / 10.0
+            source = "전운량"
+        if cf is not None:
+            logger.info("[asos] cloud_fraction={:.2f} ({})", cf, source)
+        return cf
+
+    async def _get_cloud_fraction(
+        self, lat: float, lon: float, weather: WeatherContext
+    ) -> tuple[float | None, int | None]:
+        """운량 결정 — 우선순위: ① ASOS 실측(50km 내 관측소) ② SKY 예보 ③ None(청천).
+
+        Returns:
+            (cloud_fraction, sky_code) — cloud_fraction 이 있으면 엔진에서 우선 사용,
+            None 이면 sky_code(예보) 경로. 지금 비가 오면 흐림 하한(0.95) 적용.
+        """
+        raining = weather.precipitation_mm > 0.0
+        cf: float | None = None
+
+        if self.asos is not None:
+            station_id = ASOSClient.nearest_station(lat, lon, ASOS_MAX_DISTANCE_KM)
+            if station_id is not None:
+                obs = await self._get_asos_obs(station_id)
+                if obs is not None:
+                    age = (datetime.now(KST) - obs.observed_at).total_seconds()
+                    if age <= ASOS_MAX_AGE_SEC:
+                        cf = self._asos_cloud_fraction(obs, station_id)
+                    else:
+                        logger.warning(
+                            "[asos] 관측 {}분 경과(오래됨) → SKY 예보 폴백", int(age / 60)
+                        )
+
+        if cf is not None:
+            if raining:
+                cf = max(cf, 0.95)
+            return cf, None
+
+        sky_code = await self._get_sky_code(lat, lon, weather)
+        return None, sky_code
+
     # ===== 메인 파이프라인 =====
 
     async def compute(
@@ -533,8 +638,8 @@ class VPTIOrchestrator:
             weather_source,
         ) = await asyncio.gather(pano_task, weather_task)
 
-        # 하늘상태(운량) — 예보 기반, 격자 캐시. 실패 시 None(청천 가정)
-        sky_code = await self._get_sky_code(clat, clon, weather)
+        # 운량 — ① ASOS 실측(일사 역산>전운량) ② SKY 예보 ③ 청천 가정 (2026-08-11)
+        cloud_fraction, sky_code = await self._get_cloud_fraction(clat, clon, weather)
 
         # app.core 집계값 → vpti_core 입력 형태로 변환
         views_5 = self._build_core_views(pano_analysis)
@@ -558,7 +663,8 @@ class VPTIOrchestrator:
             lat=clat,
             lon=clon,
             when=when,
-            sky_code=sky_code,   # 초단기예보 SKY(운량 감쇠) — 비·흐림 과대평가 방지
+            sky_code=sky_code,               # 예보 SKY(폴백 경로)
+            cloud_fraction=cloud_fraction,   # ASOS 실측 운량 — 있으면 SKY보다 우선
         )
         index_ms = (time.perf_counter() - t_idx) * 1000
 
@@ -609,10 +715,19 @@ class VPTIOrchestrator:
         if wcache is None:
             return None
 
-        # 하늘상태 — peek은 네트워크 금지: 인메모리 캐시만 사용, 지금 비면 흐림(4)
+        # 운량 — peek은 네트워크 금지: ASOS·SKY 인메모리 캐시만 사용, 지금 비면 흐림
+        peek_cf: float | None = None
+        if self.asos is not None:
+            stn = ASOSClient.nearest_station(lat, lon, ASOS_MAX_DISTANCE_KM)
+            if stn is not None:
+                hit = self._asos_cache.get(stn)
+                if hit is not None and time.monotonic() <= hit[1] and hit[0] is not None:
+                    peek_cf = self._asos_cloud_fraction(hit[0], stn)
         _, peek_sky = self._sky_from_cache(grid.nx, grid.ny)
         if (wcache.precipitation_mm or 0.0) > 0.0:
             peek_sky = 4
+            if peek_cf is not None:
+                peek_cf = max(peek_cf, 0.95)
 
         core_weather = CoreWeatherContext(
             temperature_c=wcache.temperature_c,
@@ -634,6 +749,7 @@ class VPTIOrchestrator:
             lon=lon,
             when=when,
             sky_code=peek_sky,
+            cloud_fraction=peek_cf,
         )
 
     # ===== prefetch (앞 미리 분석) =====

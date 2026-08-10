@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 외부 API 클라이언트
     sv_client: GoogleStreetViewClient | None = None
     kma_client: KMAClient | None = None
+    asos_client = None
     orchestrator: VPTIOrchestrator | None = None
 
     if settings.google_streetview_api_key and settings.kma_api_key:
@@ -69,6 +70,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             signing_secret=settings.google_streetview_signing_secret,
         )
         kma_client = KMAClient(api_key=settings.kma_api_key)
+
+        # ASOS 실측(일사·전운량·지면온도) — API허브 키 있을 때만 (없으면 SKY 예보만)
+        if settings.kma_apihub_key:
+            from app.services.kma import ASOSClient
+            asos_client = ASOSClient(auth_key=settings.kma_apihub_key)
+            logger.info("ASOS 실측 클라이언트 ready (운량·일사 실측 보정 사용)")
+        else:
+            logger.info("KMA_APIHUB_KEY 없음 → ASOS 실측 미사용 (SKY 예보 경로만)")
 
         # SegFormer (시간 걸림)
         segformer = get_segformer_service()
@@ -84,6 +93,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 street_view=sv_client,
                 kma=kma_client,
                 segformer=segformer,
+                asos=asos_client,
             )
             logger.info("Orchestrator ready")
 
@@ -133,6 +143,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await sv_client.close()
     if kma_client is not None:
         await kma_client.close()
+    if asos_client is not None:
+        await asos_client.close()
     if directions is not None:
         await directions.close()
 

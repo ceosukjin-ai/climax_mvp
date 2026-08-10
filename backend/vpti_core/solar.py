@@ -146,3 +146,50 @@ def estimate_solar(
         solar_azimuth_deg=azimuth, cloud_fraction=cf,
         sky_code=sky_code, is_daytime=True,
     )
+
+
+def cloud_fraction_from_obs_ghi(
+    lat: float,
+    lon: float,
+    hour_end: datetime,
+    obs_ghi_wm2: float,
+    config: SolarConfig = DEFAULT_CONFIG.solar,
+) -> float | None:
+    """실측 시간평균 GHI → 유효 전운량 역산 (Kasten & Czeplak 역함수).
+
+    ASOS 일사 SI(1시간 누적 MJ/m²)를 시간평균 W/m²로 바꾼 값과, 같은 관측소
+    좌표·같은 1시간 구간의 청천 GHI 평균의 비(kc)를 구해 운량으로 역산한다:
+
+        kc = GHI_obs / GHI_clear  →  CF = ((1 − kc) / a)^(1/b)   (a=0.75, b=3.4)
+
+    이 CF 를 estimate_solar(cloud_fraction=...)에 넣으면 그 시각의 **실측 감쇠**가
+    엔진 전체(단파·장파 ε_sky)에 일관되게 반영된다.
+
+    Returns:
+        CF ∈ [0,1]. 역산이 불안정한 조건(저태양고도·야간: 청천 평균 < 100 W/m²,
+        또는 관측 결측)이면 None → 호출부는 전운량(CA_TOT)으로 폴백할 것.
+    """
+    if obs_ghi_wm2 is None or obs_ghi_wm2 < 0.0:
+        return None
+
+    if hour_end.tzinfo is None:
+        end = pd.Timestamp(hour_end).tz_localize(config.timezone)
+    else:
+        end = pd.Timestamp(hour_end)
+
+    # 1시간 누적 구간을 10분 간격 7점으로 샘플해 청천 GHI 평균 산출
+    times = pd.date_range(end - pd.Timedelta(hours=1), end, freq="10min")
+    location = pvlib.location.Location(
+        latitude=lat, longitude=lon, tz=config.timezone, altitude=config.altitude_m
+    )
+    ghi_clear_mean = float(
+        location.get_clearsky(times, model=config.clearsky_model)["ghi"].mean()
+    )
+    if ghi_clear_mean < 100.0:   # 일출·일몰 부근/야간 — 역산 불안정
+        return None
+
+    kc = min(max(obs_ghi_wm2 / ghi_clear_mean, 0.0), 1.0)
+    if kc >= 1.0:
+        return 0.0
+    cf = ((1.0 - kc) / config.kc_a) ** (1.0 / config.kc_b)
+    return min(max(cf, 0.0), 1.0)

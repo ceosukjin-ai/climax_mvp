@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     ncp_maps_client_secret: str = ""
     kma_api_key: str = ""
     kma_base_url: str = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
+    # 기상청 API허브(apihub.kma.go.kr) 회원 인증키 — ASOS 실시간(일사·전운량·지면온도).
+    # 비어 있으면 ASOS 미사용(기존 SKY 예보 경로만) — 하위호환.
+    kma_apihub_key: str = ""
     # 건물 열취약 판정 (실내축 2단계) — V-World 리버스지오코딩 + 건축HUB 건축물대장
     vworld_api_key: str = ""
     building_api_key: str = ""
