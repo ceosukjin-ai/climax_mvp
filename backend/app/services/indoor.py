@@ -77,6 +77,29 @@ def vulnerability_level(age: int | None, conditions: list[str] | None) -> int:
     return min(lvl, 3)
 
 
+def _floor_delta(
+    floor: int | None, total_floors: int | None, sf: float, cloud: float
+) -> float:
+    """층 위치 보정 — 같은 건물도 층에 따라 실내 열환경이 다르다.
+
+    · 최상층: 지붕이 직접 일사를 받음 — 낮엔 크게(+최대 1.6), 밤에도 축열 방출(+0.5)
+    · 중상층(상위 20%): 외피 노출 비중 큼 (+0.3)
+    · 중간층: 위아래 세대가 단열 완충 역할 (−0.3)
+    · 저층(1~2층): 지붕 영향 없음, 지면 그늘 (0)
+    """
+    if floor is None or total_floors is None or total_floors <= 1:
+        return 0.0
+    if floor >= total_floors:                      # 최상층
+        day = sf * (1.0 - cloud) * 1.6             # 지붕 일사
+        night = 0.5 if sf == 0.0 else 0.0          # 야간 지붕 축열 방출
+        return day + night
+    if floor / total_floors >= 0.8:
+        return 0.3
+    if floor <= 2:
+        return 0.0
+    return -0.3
+
+
 def compute_indoor(
     *,
     t_out_now: float,
@@ -88,14 +111,17 @@ def compute_indoor(
     age: int | None = None,
     conditions: list[str] | None = None,
     ambient_measured: float | None = None,   # 이어러블 실측 (있으면 추정 대체)
+    floor: int | None = None,                # 거주 층 (예: 22)
+    total_floors: int | None = None,         # 건물 전체 층수 (예: 25)
     now: datetime | None = None,
 ) -> IndoorResult:
     now = now or datetime.now(KST)
     sf = _solar_factor(now)
     d = _damping(structure)
+    fd = _floor_delta(floor, total_floors, sf, cloud_fraction)
 
     if ambient_measured is not None:
-        t_in = ambient_measured
+        t_in = ambient_measured                    # 실측이 왕 — 층 보정 불필요
         measured = True
     else:
         # ① 축열 감쇠: 실내는 오늘 평균기온 주변에서 바깥 변화를 D만큼만 따라감
@@ -105,6 +131,8 @@ def compute_indoor(
         # ③ 야간 축열 방출: 해가 진 뒤 낮에 머금은 열 (+1.0 ~ +2.75)
         if sf == 0.0:
             t_in += 1.0 + 0.25 * building_score
+        # ④ 층 위치 보정 (최상층 지붕 일사 / 중간층 완충)
+        t_in += fd
         measured = False
 
     # ④ 실내 체감 = 기온 + 습도(후덥지근함, 야외 엔진과 동일 공식) + 무풍 보정
@@ -135,5 +163,7 @@ def compute_indoor(
             "building_score": building_score,
             "humidity_delta": round(dh, 1),
             "vulnerability_shift": shift,
+            "floor": floor,
+            "floor_delta": round(fd, 1),
         },
     )

@@ -655,6 +655,7 @@ async def building_risk_at(
     age: int | None = Query(None, ge=0, le=120),
     conditions: str | None = Query(None, description="취약군 콤마 구분: cardio,resp,…"),
     ambient: float | None = Query(None, description="이어러블 실측 실내온도(°C) — 있으면 추정 대체"),
+    floor: int | None = Query(None, ge=1, le=120, description="거주 층 — 최상층/중간층 보정"),
 ) -> dict:
     """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
@@ -717,6 +718,8 @@ async def building_risk_at(
                 age=age,
                 conditions=conditions.split(",") if conditions else None,
                 ambient_measured=ambient,
+                floor=floor,
+                total_floors=b.floors,
             )
             result["est_indoor_c"] = ind.t_in_est
             result["indoor_pvpti"] = ind.indoor_pvpti
