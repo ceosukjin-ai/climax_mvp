@@ -82,6 +82,8 @@ SKY_TIMEOUT_SEC = 1.5            # 예보 조회 하드 타임아웃
 SKY_CACHE_TTL_SEC = 30 * 60      # 예보는 매시 갱신 — 격자당 30분 캐시면 충분
 SKY_FAIL_TTL_SEC = 5 * 60        # 실패 시 잠시 재시도 억제 (응답 지연 방지)
 _SKY_NAME_TO_CODE = {"맑음": 1, "구름많음": 3, "흐림": 4}
+# SKY 코드 → 대표 운량(구간 중앙값, vpti_core config 와 동일) — 앱 표시용
+_SKY_CODE_TO_CF = {1: 0.25, 3: 0.70, 4: 0.95}
 
 # ===== ASOS 실측(운량·일사·지면온도) 설정 (2026-08-11) =====
 # 관측소 실측이 예보 SKY보다 우선. 관측은 매시 정시 + 발표 ~10여 분 지연 →
@@ -128,6 +130,9 @@ class PipelineTelemetry:
     segmentation_ms: float
     weather_ms: float
     weather_source: str = "실측"   # 실측 | 캐시 | 추정
+    # 운량 정보 (2026-08-11) — 앱 하늘상태 카드용
+    cloud_fraction: float | None = None   # 엔진에 실제 들어간 전운량 [0,1]
+    cloud_source: str | None = None       # 실측(일사) | 실측(운량) | 예보 | None(청천 가정)
 
 
 class VPTIOrchestrationError(Exception):
@@ -484,36 +489,37 @@ class VPTIOrchestrator:
 
     def _asos_cloud_fraction(
         self, obs: ASOSObservation, station_id: int
-    ) -> float | None:
-        """실측 → 전운량 비율. 주간엔 일사 역산(감쇠 실측)이 전운량보다 우선."""
+    ) -> tuple[float | None, str | None]:
+        """실측 → (전운량 비율, 출처). 주간엔 일사 역산(감쇠 실측)이 전운량보다 우선."""
         slat, slon = ASOS_STATIONS[station_id]
         cf: float | None = None
-        source = None
+        source: str | None = None
         ghi_obs = obs.solar_avg_wm2
         if ghi_obs is not None:
             from vpti_core.solar import cloud_fraction_from_obs_ghi
 
             cf = cloud_fraction_from_obs_ghi(slat, slon, obs.observed_at, ghi_obs)
             if cf is not None:
-                source = "일사역산"
+                source = "실측(일사)"
         if cf is None and obs.cloud_cover_tenths is not None:
             cf = obs.cloud_cover_tenths / 10.0
-            source = "전운량"
+            source = "실측(운량)"
         if cf is not None:
             logger.info("[asos] cloud_fraction={:.2f} ({})", cf, source)
-        return cf
+        return cf, source
 
     async def _get_cloud_fraction(
         self, lat: float, lon: float, weather: WeatherContext
-    ) -> tuple[float | None, int | None]:
+    ) -> tuple[float | None, int | None, str | None]:
         """운량 결정 — 우선순위: ① ASOS 실측(50km 내 관측소) ② SKY 예보 ③ None(청천).
 
         Returns:
-            (cloud_fraction, sky_code) — cloud_fraction 이 있으면 엔진에서 우선 사용,
-            None 이면 sky_code(예보) 경로. 지금 비가 오면 흐림 하한(0.95) 적용.
+            (cloud_fraction, sky_code, source) — cloud_fraction 이 있으면 엔진에서
+            우선 사용, None 이면 sky_code(예보) 경로. 비가 오면 흐림 하한(0.95).
         """
         raining = weather.precipitation_mm > 0.0
         cf: float | None = None
+        source: str | None = None
 
         if self.asos is not None:
             station_id = ASOSClient.nearest_station(lat, lon, ASOS_MAX_DISTANCE_KM)
@@ -522,7 +528,7 @@ class VPTIOrchestrator:
                 if obs is not None:
                     age = (datetime.now(KST) - obs.observed_at).total_seconds()
                     if age <= ASOS_MAX_AGE_SEC:
-                        cf = self._asos_cloud_fraction(obs, station_id)
+                        cf, source = self._asos_cloud_fraction(obs, station_id)
                     else:
                         logger.warning(
                             "[asos] 관측 {}분 경과(오래됨) → SKY 예보 폴백", int(age / 60)
@@ -531,10 +537,10 @@ class VPTIOrchestrator:
         if cf is not None:
             if raining:
                 cf = max(cf, 0.95)
-            return cf, None
+            return cf, None, source
 
         sky_code = await self._get_sky_code(lat, lon, weather)
-        return None, sky_code
+        return None, sky_code, ("예보" if sky_code is not None else None)
 
     # ===== 메인 파이프라인 =====
 
@@ -639,7 +645,9 @@ class VPTIOrchestrator:
         ) = await asyncio.gather(pano_task, weather_task)
 
         # 운량 — ① ASOS 실측(일사 역산>전운량) ② SKY 예보 ③ 청천 가정 (2026-08-11)
-        cloud_fraction, sky_code = await self._get_cloud_fraction(clat, clon, weather)
+        cloud_fraction, sky_code, cloud_source = await self._get_cloud_fraction(
+            clat, clon, weather
+        )
 
         # app.core 집계값 → vpti_core 입력 형태로 변환
         views_5 = self._build_core_views(pano_analysis)
@@ -677,6 +685,12 @@ class VPTIOrchestrator:
             segmentation_ms=seg_ms,
             weather_ms=weather_ms,
             weather_source=weather_source,
+            cloud_fraction=(
+                cloud_fraction
+                if cloud_fraction is not None
+                else _SKY_CODE_TO_CF.get(sky_code or 0)
+            ),
+            cloud_source=cloud_source,
         )
         logger.info(
             "[timing] pVPTI {} | pano_hit={} weather_hit={} wsrc={} road={} | resolve={:.0f} sv={:.0f} seg={:.0f} weather={:.0f} index(VSI/SMTI/PWI+PET)={:.1f} | total={:.0f}ms",

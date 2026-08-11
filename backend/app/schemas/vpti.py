@@ -267,6 +267,10 @@ class PersonalizedVPTIResponse(BaseModel):
     stress_category: str
     comfort: dict
     weather_source: str = "실측"   # 실측 | 캐시 | 추정 (KMA 타임아웃 폴백 구분)
+    # 하늘상태(운량) — ASOS 실측 연동 (2026-08-11). 앱 하늘 카드용.
+    sky_desc: str | None = None          # 맑음 | 구름많음 | 흐림
+    sky_source: str | None = None        # 실측(일사) | 실측(운량) | 예보
+    cloud_fraction: float | None = None  # 엔진에 들어간 전운량 [0,1]
     # 진행 방향 앞 지점(prefetch로 이미 분석된 것만). 없으면 빈 배열.
     lookahead: list[LookaheadItem] = Field(default_factory=list)
 
