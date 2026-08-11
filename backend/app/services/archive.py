@@ -87,8 +87,13 @@ class Archive:
         try:
             self._engine = create_async_engine(self._url, pool_size=3, max_overflow=2)
             self._session = async_sessionmaker(self._engine, expire_on_commit=False)
+            # API 는 워커 여러 개로 뜬다. 워커들이 동시에 CREATE TABLE/INDEX 를 실행하면
+            # IF NOT EXISTS 라도 pg_class 유니크 제약에서 충돌한다(2026-08-11 실서버 확인).
+            # → 자문 잠금(advisory lock)으로 한 워커만 DDL 을 돌리고 나머지는 대기시킨다.
             async with self._engine.begin() as conn:
-                for stmt in filter(None, (s.strip() for s in DDL.split(";"))):
+                await conn.execute(text("SELECT pg_advisory_xact_lock(:k)"),
+                                   {"k": 8_150_811})     # 이 앱 전용 임의 상수
+                for stmt in filter(None, (x.strip() for x in DDL.split(";"))):
                     await conn.execute(text(stmt))
             self._ready = True
             logger.info("[archive] 준비 완료 — 측정 이력 적재 시작")
@@ -157,7 +162,7 @@ class Archive:
                ROUND(AVG(svf)::numeric, 2)  AS avg_svf,
                ROUND(AVG(gvi)::numeric, 2)  AS avg_gvi
         FROM measurement
-        WHERE observed_at > NOW() - (:hours || ' hours')::interval
+        WHERE observed_at > NOW() - make_interval(hours => :hours)
           AND indoor = FALSE AND pvpti IS NOT NULL
         GROUP BY lat, lon
         HAVING COUNT(*) >= :min_samples
