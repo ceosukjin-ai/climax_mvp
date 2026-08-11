@@ -631,6 +631,7 @@ class VPTIOrchestrator:
         bio: Biometrics,
         profile: PhysiologyProfile | None = None,
         timestamp: datetime | None = None,
+        archive_consent: bool = False,
     ) -> tuple[PersonalizedVPTIResult, PipelineTelemetry]:
         """좌표 + 애플워치 생체신호만으로 pVPTI 자동 산출.
 
@@ -708,7 +709,8 @@ class VPTIOrchestrator:
             cloud_source=cloud_source,
         )
         # 측정 이력 적재 — 개인 식별자 없이 '이 자리가 몇 도였는가'만 남긴다.
-        if self.archive is not None:
+        # ⚠️ 이용자가 동의한 경우에만 적재한다(옵트인). 동의 없이 쌓으면 개인정보 처리방침 위반.
+        if self.archive is not None and archive_consent:
             # 개인화 전 값(base_*)을 남긴다 — 장소의 특성이지 사람의 특성이 아니어야
             # 여러 사용자의 측정을 한 격자에서 비교·집계할 수 있다.
             inputs = getattr(getattr(result, "comfort", None), "inputs", None)

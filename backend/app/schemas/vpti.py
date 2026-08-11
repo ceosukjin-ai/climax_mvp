@@ -240,6 +240,11 @@ class AutoPersonalizedVPTIRequest(BaseModel):
     session_id: str | None = Field(
         None, max_length=128, description="세션 식별(heading 없을 때 직전좌표 방위 계산)"
     )
+    # 익명 측정 기록(폭염 지도 연구용) 수집 동의. 기본 False — 동의한 경우에만 적재한다.
+    # 구버전 앱은 이 값을 보내지 않으므로 자동으로 수집 대상에서 제외된다.
+    archive_consent: bool = Field(
+        False, description="익명 측정 기록 수집 동의 여부(옵트인)"
+    )
 
 
 class LookaheadItem(BaseModel):

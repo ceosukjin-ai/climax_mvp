@@ -407,6 +407,8 @@ async def vpti_personalized_at(
             bio=bio,
             profile=profile,
             timestamp=payload.timestamp,
+            # 익명 측정 기록 수집 동의 — 앱에서 전달. 미전달(구버전 앱)이면 수집하지 않음.
+            archive_consent=bool(payload.archive_consent),
         )
     except StreetViewNotFound as e:
         raise HTTPException(
