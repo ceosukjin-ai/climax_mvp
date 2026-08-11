@@ -443,18 +443,9 @@ async def vpti_personalized_at(
             orchestrator.prefetch_ahead, lat, lon, heading, payload.speed_kmh
         )
 
-    # 하늘상태 표시값 — 운량 [0,1] → KMA 구간(맑음 0~5.5/구름많음 ~8.5/흐림)
-    sky_desc = None
-    if telemetry.cloud_fraction is not None:
-        cf = telemetry.cloud_fraction
-        sky_desc = "맑음" if cf < 0.55 else ("구름많음" if cf < 0.85 else "흐림")
-
     return PersonalizedVPTIResponse(
         **result.as_dict(),
         weather_source=telemetry.weather_source,
-        sky_desc=sky_desc,
-        sky_source=telemetry.cloud_source,
-        cloud_fraction=telemetry.cloud_fraction,
         lookahead=lookahead,
     )
 
@@ -735,11 +726,37 @@ async def building_risk_at(
             result["indoor_risk"] = ind.indoor_risk
             result["indoor_measured"] = ind.measured
             result["indoor_basis"] = ind.basis
-            result["indoor_vent"] = ind.ventilation      # 창문 환기 what-if
-            result["indoor_actions"] = ind.actions or []  # 행동 사다리
         except Exception as e:  # noqa: BLE001
             logger.warning(f"indoor pvpti failed: {e}")
     return result
+
+
+@router.get("/archive/stats", summary="측정 이력 적재 현황 (관리자용)")
+async def archive_stats(request: Request) -> dict:
+    """데이터가 실제로 쌓이고 있는지 확인 — 건수·기간·격자 수."""
+    archive = getattr(request.app.state, "archive", None)
+    if archive is None:
+        return {"enabled": False, "reason": "archive 미초기화"}
+    return await archive.stats()
+
+
+@router.get("/archive/hotspots", summary="격자별 체감기후 집계 (핫스팟)")
+async def archive_hotspots(
+    request: Request,
+    hours: int = Query(24, ge=1, le=24 * 90, description="최근 N시간"),
+    min_samples: int = Query(1, ge=1, le=100, description="이 표본 수 미만 격자는 제외"),
+    limit: int = Query(500, ge=1, le=5000),
+) -> dict:
+    """개인 식별자 없이, 격자 단위 평균·최고 체감온도를 반환한다.
+
+    지자체 제안·연구용 집계. min_samples 를 올리면 표본이 적은 격자를 제외해
+    재식별 위험을 낮출 수 있다(대외 제공 시 권장).
+    """
+    archive = getattr(request.app.state, "archive", None)
+    if archive is None:
+        return {"cells": [], "note": "archive 미초기화"}
+    cells = await archive.hotspots(hours=hours, min_samples=min_samples, limit=limit)
+    return {"hours": hours, "min_samples": min_samples, "count": len(cells), "cells": cells}
 
 
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")

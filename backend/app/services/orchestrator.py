@@ -152,12 +152,14 @@ class VPTIOrchestrator:
         kma: KMAClient,
         segformer: "SegFormerService",
         asos: ASOSClient | None = None,
+        archive=None,          # app.services.archive.Archive — 측정 이력 적재(선택)
     ) -> None:
         self.cache = cache
         self.street_view = street_view
         self.kma = kma
         self.segformer = segformer
         self.asos = asos
+        self.archive = archive
         # 하늘상태(SKY) 인메모리 캐시: (nx,ny) → (sky_code|None, 만료 monotonic)
         self._sky_cache: dict[tuple[int, int], tuple[int | None, float]] = {}
         # ASOS 실측 인메모리 캐시: station_id → (ASOSObservation|None, 만료 monotonic)
@@ -481,6 +483,19 @@ class VPTIOrchestrator:
                     obs.temperature_c, obs.humidity_pct, obs.wind_speed_ms,
                     obs.cloud_cover_tenths, obs.solar_mj, obs.ground_temp_c,
                 )
+                # 실측 ↔ 엔진 추정 짝 기록 — 로그는 재배포하면 사라지므로 DB에 남긴다.
+                if self.archive is not None:
+                    self.archive.record_engine_check(
+                        observed_at=obs.observed_at,
+                        station_id=station_id,
+                        obs_ground_c=obs.ground_temp_c,
+                        obs_solar_mj=obs.solar_mj,
+                        obs_cloud=(obs.cloud_cover_tenths / 10.0
+                                   if obs.cloud_cover_tenths is not None else None),
+                        air_temp=obs.temperature_c,
+                        wind_ms=obs.wind_speed_ms,
+                        note="ASOS 정시 관측",
+                    )
         except Exception as e:  # noqa: BLE001
             logger.warning("[asos] stn={} 조회 실패 → SKY 예보 폴백: {}", station_id, e)
 
@@ -692,6 +707,28 @@ class VPTIOrchestrator:
             ),
             cloud_source=cloud_source,
         )
+        # 측정 이력 적재 — 개인 식별자 없이 '이 자리가 몇 도였는가'만 남긴다.
+        if self.archive is not None:
+            # 개인화 전 값(base_*)을 남긴다 — 장소의 특성이지 사람의 특성이 아니어야
+            # 여러 사용자의 측정을 한 격자에서 비교·집계할 수 있다.
+            inputs = getattr(getattr(result, "comfort", None), "inputs", None)
+            self.archive.record_measurement(
+                observed_at=when,
+                lat=clat, lon=clon,
+                pvpti=getattr(result, "base_vpti", None),
+                risk_level=getattr(result, "base_risk_level", None),
+                air_temp=weather.temperature_c,
+                humidity=weather.humidity_pct,
+                wind_ms=weather.wind_speed_ms,
+                mrt=getattr(inputs, "tr", None),
+                svf=pano_analysis.svf, gvi=pano_analysis.gvi, bvi=pano_analysis.bvi,
+                cloud=(cloud_fraction if cloud_fraction is not None
+                       else _SKY_CODE_TO_CF.get(sky_code or 0)),
+                cloud_src=cloud_source,
+                indoor=False,
+                source="app",
+            )
+
         logger.info(
             "[timing] pVPTI {} | pano_hit={} weather_hit={} wsrc={} road={} | resolve={:.0f} sv={:.0f} seg={:.0f} weather={:.0f} index(VSI/SMTI/PWI+PET)={:.1f} | total={:.0f}ms",
             "cached" if pano_hit and weather_hit else "computed",

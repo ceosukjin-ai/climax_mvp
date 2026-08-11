@@ -53,6 +53,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from app.services.orchestrator import VPTIOrchestrator
     from app.services.street_view import GoogleStreetViewClient
 
+    # 측정 이력 적재 — 핫스팟 자산(DB 없거나 실패해도 서비스는 정상 동작)
+    from app.services.archive import Archive
+    archive = Archive(settings.database_url, enabled=settings.archive_enabled)
+    await archive.start()
+
     # 캐시
     cache = CacheService(redis_url=settings.redis_url)
     redis_ok = await cache.ping()
@@ -94,6 +99,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 kma=kma_client,
                 segformer=segformer,
                 asos=asos_client,
+                archive=archive,
             )
             logger.info("Orchestrator ready")
 
@@ -132,12 +138,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 앱 state에 주입
     app.state.cache = cache
+    app.state.archive = archive
     app.state.orchestrator = orchestrator
     app.state.directions = directions
 
     yield
 
     logger.info("ClimaX backend shutting down")
+    await archive.close()
     await cache.close()
     if sv_client is not None:
         await sv_client.close()

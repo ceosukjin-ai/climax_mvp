@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     vworld_api_key: str = ""
     building_api_key: str = ""
 
+    # 측정 이력 적재(핫스팟 자산). 일반 사용자 대상 수집은 동의 화면·방침 개정 후 켤 것.
+    archive_enabled: bool = True
+
     # NCP Object Storage
     ncp_object_access_key: str = ""
     ncp_object_secret_key: str = ""
