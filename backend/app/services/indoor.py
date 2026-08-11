@@ -37,6 +37,9 @@ class IndoorResult:
     t_in_est: float              # 실내 기온 (추정 또는 실측)
     measured: bool               # True = 이어러블 실측 사용
     basis: dict                  # 계산 근거 (투명성 — 화면 "왜?" 표시용)
+    # 행동 권고 (2026-08-11) — "위험하다"에서 끝나지 않고 "뭘 하면 되는지"까지
+    ventilation: dict | None = None   # {"t_vent_est","delta","advice"} — 창문 환기 what-if
+    actions: list[str] | None = None  # 등급별 행동 사다리 (위 항목부터 우선)
 
 
 def _damping(structure: str | None) -> float:
@@ -149,6 +152,50 @@ def compute_indoor(
     shift = min(vulnerability_level(age, conditions) * 1.0, 3.0)
     risk = _classify_risk(feel + shift, season)
 
+    # ⑥ 환기 what-if + 행동 사다리 (2026-08-11, 여름만)
+    #    물리: 창문을 열면 실내는 외기온에 근접(잔열 +0.5). 폭염 한낮엔 바깥이 더
+    #    더워 "열지 마세요"가 정답인 경우가 많다 — 방향까지 판단해 알려준다.
+    #    선풍기: 실내 35°C 이상 고온에선 단독 사용 비권장(온열질환 예방 가이드).
+    ventilation: dict | None = None
+    actions: list[str] = []
+    if season == "summer":
+        t_vent = t_out_now + 0.5
+        delta = t_vent - t_in
+        if delta <= -0.7:
+            vent_advice = (
+                f"창문을 열면 약 {abs(delta):.1f}도 내려가 실내 {t_vent:.1f}°C 예상 — 환기하세요"
+            )
+        elif delta >= 0.7:
+            vent_advice = "지금은 바깥이 더 더워요 — 창문을 닫고 커튼으로 햇빛을 가리세요"
+        else:
+            vent_advice = "창문을 열고 닫아도 지금은 큰 차이가 없어요"
+        ventilation = {"t_vent_est": round(t_vent, 1), "delta": round(delta, 1), "advice": vent_advice}
+
+        vent_helps = delta <= -0.7
+        if risk == "caution":
+            actions = ["물을 자주 마시세요"]
+            if vent_helps:
+                actions.append("창문을 열어 환기하세요")
+        elif risk == "warning":
+            actions = ["에어컨이 있으면 켜세요"]
+            if t_in >= 35.0:
+                actions.append("이 온도에선 선풍기만으론 부족해요 — 냉방이 어려우면 무더위쉼터로")
+            elif vent_helps:
+                actions.append("선풍기를 켜고 창문을 열어 환기하세요")
+            else:
+                actions.append("선풍기를 켜고 물을 자주 드세요")
+        elif risk == "danger":
+            actions = [
+                "에어컨을 켜세요",
+                "냉방이 어려우면 가까운 무더위쉼터로 이동하세요",
+                "시원한 물로 손·목을 적셔 체온을 낮추세요",
+            ]
+        elif risk == "severe":
+            actions = [
+                "즉시 냉방하거나 무더위쉼터로 이동하세요",
+                "어지러움·메스꺼움이 있으면 119에 연락하세요",
+            ]
+
     return IndoorResult(
         indoor_pvpti=round(feel, 1),
         indoor_risk=risk,
@@ -166,4 +213,6 @@ def compute_indoor(
             "floor": floor,
             "floor_delta": round(fd, 1),
         },
+        ventilation=ventilation,
+        actions=actions or None,
     )

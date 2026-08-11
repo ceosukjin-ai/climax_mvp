@@ -735,6 +735,8 @@ async def building_risk_at(
             result["indoor_risk"] = ind.indoor_risk
             result["indoor_measured"] = ind.measured
             result["indoor_basis"] = ind.basis
+            result["indoor_vent"] = ind.ventilation      # 창문 환기 what-if
+            result["indoor_actions"] = ind.actions or []  # 행동 사다리
         except Exception as e:  # noqa: BLE001
             logger.warning(f"indoor pvpti failed: {e}")
     return result
