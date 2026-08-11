@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import asdict, dataclass
 
@@ -31,6 +32,9 @@ HUB_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
 # 좌표(소수 4자리 ≈ 11m) → 결과 캐시. 건물 정보는 잘 안 변하므로 24시간.
 _CACHE: dict[tuple[float, float], tuple[float, "BuildingRisk | None"]] = {}
 _CACHE_TTL_SEC = 24 * 3600
+# 실패 결과의 캐시 수명. 성공값과 같은 24시간을 쓰면 일시적 타임아웃 한 번이
+# 그 좌표의 건물 정보를 하루 종일 막는다(2026-08-11 실사용에서 확인).
+_NEG_CACHE_TTL_SEC = 180
 
 
 @dataclass
@@ -51,14 +55,25 @@ async def building_risk(lat: float, lon: float) -> BuildingRisk | None:
     """좌표의 건물 열취약 판정. 실패(주소 없음·API 오류)면 None — 호출측은 무시하면 됨."""
     key = (round(lat, 4), round(lon, 4))
     hit = _CACHE.get(key)
-    if hit is not None and time.monotonic() - hit[0] < _CACHE_TTL_SEC:
-        return hit[1]
+    if hit is not None:
+        ttl = _CACHE_TTL_SEC if hit[1] is not None else _NEG_CACHE_TTL_SEC
+        if time.monotonic() - hit[0] < ttl:
+            return hit[1]
 
     result: BuildingRisk | None = None
-    try:
-        result = await _lookup(lat, lon)
-    except Exception as e:  # noqa: BLE001 — 부가 기능: 실패해도 본 기능에 영향 없음
-        logger.warning(f"building_risk({lat:.4f},{lon:.4f}) failed: {e}")
+    for attempt in (1, 2):          # 공공 API가 느릴 때가 잦아 1회 재시도
+        try:
+            result = await _lookup(lat, lon)
+            break
+        except Exception as e:  # noqa: BLE001 — 부가 기능: 실패해도 본 기능에 영향 없음
+            # 타임아웃 예외는 str(e)가 비어 있어 원인 파악이 안 됐다 → 예외 타입도 남긴다
+            logger.warning(
+                f"building_risk({lat:.4f},{lon:.4f}) 시도{attempt} 실패: "
+                f"{type(e).__name__}: {e or '(메시지 없음)'}"
+            )
+            if attempt == 2:
+                break
+            await asyncio.sleep(0.4)
 
     _CACHE[key] = (time.monotonic(), result)
     return result
@@ -70,7 +85,7 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
         logger.warning("building_risk: VWORLD_API_KEY/BUILDING_API_KEY 미설정")
         return None
 
-    async with httpx.AsyncClient(timeout=5.0) as client:
+    async with httpx.AsyncClient(timeout=9.0) as client:
         # ── ① V-World 리버스 지오코딩: 좌표 → 지번 주소 + 법정동코드 ──
         rv = await client.get(VWORLD_URL, params={
             "service": "address", "request": "getAddress", "version": "2.0",
