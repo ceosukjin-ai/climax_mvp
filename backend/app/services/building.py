@@ -28,6 +28,7 @@ from app.config import get_settings
 
 VWORLD_URL = "https://api.vworld.kr/req/address"
 HUB_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+NCP_REVERSE_URL = "https://maps.apigw.ntruss.com/map-reversegeocode/v2/gc"
 
 # 좌표(소수 4자리 ≈ 11m) → 결과 캐시. 건물 정보는 잘 안 변하므로 24시간.
 _CACHE: dict[tuple[float, float], tuple[float, "BuildingRisk | None"]] = {}
@@ -79,33 +80,90 @@ async def building_risk(lat: float, lon: float) -> BuildingRisk | None:
     return result
 
 
+# 좌표 → (법정동코드 10자리, 본번, 부번, 주소문자열)
+_Parcel = tuple[str, str, str, str | None]
+
+
+async def _reverse_ncp(client: httpx.AsyncClient, lat: float, lon: float) -> _Parcel | None:
+    """NCP 리버스 지오코딩 — 좌표 → 법정동코드·지번.
+
+    실서버(디엔에이클라우드)에서 api.vworld.kr 로 나가는 연결이 ReadTimeout 이라
+    이쪽을 1순위로 쓴다. NCP 지도 키는 경로 탐색용으로 이미 설정돼 있고,
+    국내 주소 정확도도 V-World 못지않다. (2026-08-11)
+    """
+    s = get_settings()
+    if not s.ncp_maps_client_id or not s.ncp_maps_client_secret:
+        return None
+    r = await client.get(NCP_REVERSE_URL, params={
+        "coords": f"{lon},{lat}", "output": "json", "orders": "addr",
+    }, headers={
+        "x-ncp-apigw-api-key-id": s.ncp_maps_client_id,
+        "x-ncp-apigw-api-key": s.ncp_maps_client_secret,
+    })
+    r.raise_for_status()
+    results = r.json().get("results") or []
+    if not results:
+        return None
+    it = results[0]
+    bjd_code = (it.get("code") or {}).get("id") or ""     # 법정동코드 10자리
+    land = it.get("land") or {}
+    n1 = (land.get("number1") or "").strip()              # 본번
+    n2 = (land.get("number2") or "").strip()              # 부번
+    if len(bjd_code) < 10 or not n1:
+        return None
+    reg = it.get("region") or {}
+    address = " ".join(
+        (reg.get(f"area{i}") or {}).get("name", "") for i in range(1, 5)
+    ).strip() + f" {n1}" + (f"-{n2}" if n2 else "")
+    return bjd_code, n1.zfill(4), (n2 or "0").zfill(4), address or None
+
+
+async def _reverse_vworld(client: httpx.AsyncClient, lat: float, lon: float) -> _Parcel | None:
+    """V-World 리버스 지오코딩 — 보조 경로(NCP 실패 시)."""
+    s = get_settings()
+    if not s.vworld_api_key:
+        return None
+    rv = await client.get(VWORLD_URL, params={
+        "service": "address", "request": "getAddress", "version": "2.0",
+        "crs": "epsg:4326", "point": f"{lon},{lat}", "format": "json",
+        "type": "PARCEL", "key": s.vworld_api_key,
+    })
+    rv.raise_for_status()
+    vj = rv.json().get("response", {})
+    if vj.get("status") != "OK":
+        return None
+    item = (vj.get("result") or [{}])[0]
+    st = item.get("structure", {})
+    bjd_code = st.get("level4LC") or ""
+    bunji = (st.get("level5") or "").strip()
+    if len(bjd_code) < 10 or not bunji:
+        return None
+    parts = bunji.replace("산", "").split("-")
+    return (bjd_code, parts[0].strip().zfill(4),
+            (parts[1].strip() if len(parts) > 1 else "0").zfill(4), item.get("text"))
+
+
 async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
     s = get_settings()
-    if not s.vworld_api_key or not s.building_api_key:
-        logger.warning("building_risk: VWORLD_API_KEY/BUILDING_API_KEY 미설정")
+    if not s.building_api_key:
+        logger.warning("building_risk: BUILDING_API_KEY 미설정")
         return None
 
     async with httpx.AsyncClient(timeout=9.0) as client:
-        # ── ① V-World 리버스 지오코딩: 좌표 → 지번 주소 + 법정동코드 ──
-        rv = await client.get(VWORLD_URL, params={
-            "service": "address", "request": "getAddress", "version": "2.0",
-            "crs": "epsg:4326", "point": f"{lon},{lat}", "format": "json",
-            "type": "PARCEL", "key": s.vworld_api_key,
-        })
-        rv.raise_for_status()
-        vj = rv.json().get("response", {})
-        if vj.get("status") != "OK":
+        # ── ① 리버스 지오코딩: NCP 우선, 실패 시 V-World ──
+        parcel = None
+        for name, fn in (("NCP", _reverse_ncp), ("V-World", _reverse_vworld)):
+            try:
+                parcel = await fn(client, lat, lon)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"리버스지오코딩({name}) 실패: {type(e).__name__}: {e or '(메시지 없음)'}")
+                parcel = None
+            if parcel:
+                logger.info(f"리버스지오코딩({name}) 성공: {parcel[3]}")
+                break
+        if not parcel:
             return None
-        item = (vj.get("result") or [{}])[0]
-        address = item.get("text")
-        st = item.get("structure", {})
-        bjd_code = st.get("level4LC") or ""     # 법정동코드 10자리
-        bunji = (st.get("level5") or "").strip()  # 예: "200" / "123-45"
-        if len(bjd_code) < 10 or not bunji:
-            return None
-        parts = bunji.replace("산", "").split("-")
-        bun = parts[0].strip().zfill(4)
-        ji = (parts[1].strip() if len(parts) > 1 else "0").zfill(4)
+        bjd_code, bun, ji, address = parcel
 
         # ── ② 건축HUB 건축물대장 표제부: 연식·층수·구조·지붕 ──
         rb = await client.get(HUB_URL, params={
