@@ -445,9 +445,20 @@ async def vpti_personalized_at(
             orchestrator.prefetch_ahead, lat, lon, heading, payload.speed_kmh
         )
 
+    # 하늘상태 표시값 — 운량 [0,1] → KMA 구간(맑음 0~5.5/구름많음 ~8.5/흐림)
+    # ⚠️ 이 블록은 0f28a76 에서 추가됐다가 0414b95(아카이브)에서 실수로 지워졌던 것 —
+    #    2026-08-12 복구. 응답의 sky_desc 가 빠지면 앱 하늘 카드가 통째로 사라진다.
+    sky_desc = None
+    if telemetry.cloud_fraction is not None:
+        cf = telemetry.cloud_fraction
+        sky_desc = "맑음" if cf < 0.55 else ("구름많음" if cf < 0.85 else "흐림")
+
     return PersonalizedVPTIResponse(
         **result.as_dict(),
         weather_source=telemetry.weather_source,
+        sky_desc=sky_desc,
+        sky_source=telemetry.cloud_source,
+        cloud_fraction=telemetry.cloud_fraction,
         lookahead=lookahead,
     )
 
