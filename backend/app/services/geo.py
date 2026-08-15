@@ -50,7 +50,24 @@ _NEG_CACHE_TTL_SEC = 6 * 3600
 
 # 이 비율 미만이면 '정사각형에 가까움' = 타워형 → 방위가 의미 없다고 본다.
 MIN_ELONGATION = 1.25
-SEARCH_RADIUS_M = 40
+# 2026-08-15: 40 → 100. 이웃 건물 차폐(SVF)까지 계산하려면 주변 100m는 봐야 한다.
+# (25층 아파트 = 70m 높이 — 100m 거리에서도 저층에 그림자를 드리운다.)
+SEARCH_RADIUS_M = 100
+# 층고 근사 (기압 층 추정과 동일한 값 사용)
+FLOOR_HEIGHT_M = 2.8
+# 차폐 시 일사 배율 — 직달일사가 사라지고 산란 성분만 남는다.
+SHADED_GAIN = 0.35
+MAX_NEIGHBORS = 12
+
+
+@dataclass
+class Neighbor:
+    """이웃 건물 하나 — 차폐(그림자) 계산용 (2026-08-15)."""
+    az_deg: float             # 우리 위치에서 본 이웃 건물 중심의 방위각
+    half_deg: float           # 그 건물이 가리는 각도 반폭 (방위각 기준)
+    dist_m: float             # 외곽선까지 거리
+    height_m: float           # 건물 높이 (층수 × 2.8m)
+    label: str                # "제124동(23층)" 등 — 설명 문구용
 
 
 @dataclass
@@ -60,7 +77,8 @@ class BuildingGeometry:
     facade_b_deg: float       # 주 외피 법선 ② (반대편)
     elongation: float         # 장축/단축 비 — 1에 가까우면 타워형
     is_slab: bool             # 판상형으로 볼 수 있는가
-    source: str               # "osm"
+    source: str               # "V-World" / "OSM"
+    neighbors: list = None    # list[Neighbor] — 층수를 아는 이웃 건물만
 
 
 def _to_local_m(lat: float, lon: float, lat0: float, lon0: float) -> tuple[float, float]:
@@ -156,6 +174,7 @@ async def building_geometry(
             elongation=round(elong, 2),
             is_slab=elong >= MIN_ELONGATION,
             source=name,
+            neighbors=_collect_neighbors(rings, best),
         )
         break
 
@@ -264,6 +283,77 @@ async def _rings_from_vworld(
                         [_to_local_m(p[1], p[0], lat, lon) for p in ring], props,
                     ))
         return out
+
+
+def _collect_neighbors(
+    rings: list[tuple[list[tuple[float, float]], dict]],
+    home_ring: list[tuple[float, float]],
+) -> list[Neighbor]:
+    """이웃 건물들의 방위·각도폭·거리·높이 — 차폐 계산 재료 (2026-08-15).
+
+    층수를 아는 건물만 넣는다. 높이를 모르는 건물을 임의 높이로 넣으면
+    그림자를 지어내는 셈이라, 모르면 뺀다 (근거 없는 값 금지 원칙).
+    """
+    out: list[Neighbor] = []
+    for ring, props in rings:
+        if ring is home_ring or len(ring) < 4:
+            continue
+        try:
+            floors = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
+        except (TypeError, ValueError):
+            floors = 0
+        if floors <= 0:
+            continue
+        dist = _dist_to_ring(0.0, 0.0, ring)
+        if dist < 1.0:
+            continue                     # 사실상 같은 건물
+        cx = sum(p[0] for p in ring) / len(ring)
+        cy = sum(p[1] for p in ring) / len(ring)
+        center_az = _azimuth_of(cx, cy)
+        # 각도 반폭: 꼭짓점들의 방위각이 중심에서 최대 얼마나 벗어나는가
+        half = 0.0
+        for x, y in ring:
+            d = abs(((_azimuth_of(x, y) - center_az + 180) % 360) - 180)
+            half = max(half, min(d, 90.0))
+        label = str(props.get("buld_nm_dc") or props.get("buld_nm")
+                    or props.get("name") or "이웃 건물")
+        out.append(Neighbor(
+            az_deg=round(center_az, 1), half_deg=round(half, 1),
+            dist_m=round(dist, 1), height_m=round(floors * FLOOR_HEIGHT_M, 1),
+            label=f"{label}({floors}층)",
+        ))
+    out.sort(key=lambda n: n.dist_m)
+    return out[:MAX_NEIGHBORS]
+
+
+def shading_factor(
+    sun_azimuth_deg: float,
+    sun_elevation_deg: float,
+    geom: BuildingGeometry | None,
+    user_floor: int | None,
+) -> tuple[float, str | None]:
+    """이웃 건물이 태양을 가리는가 — 실내판 SVF (2026-08-15).
+
+    사용자 층 높이에서 태양 방향을 봤을 때, 그 방위각 안에 있는 이웃 건물의
+    꼭대기 앙각이 태양 고도보다 높으면 직달일사가 차단된 것. 배율 0.35(산란만).
+
+    층이 높을수록 앙각이 작아져 그림자를 벗어난다 — 22층은 거의 안 가려지고
+    2층은 자주 가려지는 실제 물리가 그대로 나온다.
+    """
+    if sun_elevation_deg <= 0 or geom is None or not geom.neighbors:
+        return 1.0, None
+    user_h = max(0, ((user_floor or 1) - 1)) * FLOOR_HEIGHT_M + 1.5   # 창 높이 근사
+    for n in geom.neighbors:
+        d_az = abs(((sun_azimuth_deg - n.az_deg + 180) % 360) - 180)
+        if d_az > n.half_deg + 2.0:      # 태양이 그 건물 방위 밖
+            continue
+        rise = n.height_m - user_h
+        if rise <= 0:
+            continue                     # 우리 층이 더 높다
+        obstruction = math.degrees(math.atan2(rise, n.dist_m))
+        if sun_elevation_deg < obstruction:
+            return SHADED_GAIN, f"{n.label}이 햇빛을 가려주는 중"
+    return 1.0, None
 
 
 def facade_solar_gain(

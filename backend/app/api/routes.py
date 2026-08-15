@@ -747,7 +747,9 @@ async def building_risk_at(
             facade_gain, facade_note = 1.0, None
             try:
                 from app.core.smti import compute_solar_position
-                from app.services.geo import building_geometry, facade_solar_gain
+                from app.services.geo import (
+                    building_geometry, facade_solar_gain, shading_factor,
+                )
 
                 sun = compute_solar_position(lat, lon, datetime.now(KST))
                 # 건축물대장에서 이미 아는 건물명·층수로 교차 대조 — 긴 아파트 옆의
@@ -758,6 +760,14 @@ async def building_risk_at(
                 facade_gain, facade_note = facade_solar_gain(
                     sun.azimuth_deg, sun.elevation_deg, geom, facing_deg=facing,
                 )
+                # 이웃 건물 차폐(실내판 SVF) — 사용자 층 높이 기준 (2026-08-15).
+                # 저층은 옆 동 그림자에 자주 들어가고 고층은 벗어난다.
+                shade_gain, shade_note = shading_factor(
+                    sun.azimuth_deg, sun.elevation_deg, geom, floor,
+                )
+                facade_gain *= shade_gain
+                if shade_note:
+                    facade_note = f"{facade_note} · {shade_note}" if facade_note else shade_note
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"facade gain skipped ({type(e).__name__}): {e}")
 
