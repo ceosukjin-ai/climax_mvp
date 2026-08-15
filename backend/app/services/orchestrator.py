@@ -484,14 +484,60 @@ class VPTIOrchestrator:
                     obs.cloud_cover_tenths, obs.solar_mj, obs.ground_temp_c,
                 )
                 # 실측 ↔ 엔진 추정 짝 기록 — 로그는 재배포하면 사라지므로 DB에 남긴다.
+                #
+                # 2026-08-15: 스키마의 est_ground_c 가 비어 있던 것을 채운다.
+                # 같은 시각·같은 조건으로 엔진 에너지수지를 돌려 **추정 지면온도**를
+                # 함께 적재 → 실측(TS)과의 잔차가 쌓이면 f_stor·h_c 계수를 데이터로
+                # 교정할 수 있다 (7/17 문서 '남은 정밀화' 항목의 실행).
+                # ASOS 관측소는 개활지(잔디/나지) — SVF=1, GVI=0, 알베도 0.20 근사가
+                # 가장 깨끗한 비교 조건: 도시 혼합 없이 순수하게 수지식만 검증된다.
                 if self.archive is not None:
+                    est_ground: float | None = None
+                    est_cf: float | None = None
+                    if obs.temperature_c is not None:
+                        try:
+                            from vpti_core.mrt import estimate_ground_temp, sky_emissivity
+                            from vpti_core.solar import estimate_solar
+
+                            slat, slon = ASOS_STATIONS[station_id]
+                            est_cf, _src = self._asos_cloud_fraction(obs, station_id)
+                            solar_now = estimate_solar(
+                                slat, slon, obs.observed_at, cloud_fraction=est_cf,
+                            )
+                            eps_sky = sky_emissivity(
+                                obs.temperature_c, obs.humidity_pct or 50.0,
+                                solar_now.cloud_fraction,
+                            )
+                            est_ground = estimate_ground_temp(
+                                air_temp_c=obs.temperature_c,
+                                solar=solar_now,
+                                ground_albedo=0.20,      # 관측소 잔디/나지 근사
+                                ground_emissivity=0.95,
+                                svf=1.0, gvi=0.0,        # 개활지
+                                wind_ms=obs.wind_speed_ms or 0.5,
+                                eps_sky=eps_sky,
+                            )
+                            if obs.ground_temp_c is not None:
+                                logger.info(
+                                    "[tsurf-calib] stn={} 실측 {}°C vs 추정 {:.1f}°C"
+                                    " (잔차 {:+.1f})",
+                                    station_id, obs.ground_temp_c, est_ground,
+                                    est_ground - obs.ground_temp_c,
+                                )
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                "[tsurf-calib] 추정 실패 ({}): {}", type(e).__name__, e
+                            )
                     self.archive.record_engine_check(
                         observed_at=obs.observed_at,
                         station_id=station_id,
                         obs_ground_c=obs.ground_temp_c,
+                        est_ground_c=(round(est_ground, 2)
+                                      if est_ground is not None else None),
                         obs_solar_mj=obs.solar_mj,
                         obs_cloud=(obs.cloud_cover_tenths / 10.0
                                    if obs.cloud_cover_tenths is not None else None),
+                        est_cloud=(round(est_cf, 3) if est_cf is not None else None),
                         air_temp=obs.temperature_c,
                         wind_ms=obs.wind_speed_ms,
                         note="ASOS 정시 관측",
