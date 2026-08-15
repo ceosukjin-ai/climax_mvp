@@ -11,6 +11,8 @@ VPTI REST API 라우트.
 """
 from __future__ import annotations
 
+import time as _time
+
 from datetime import datetime, timedelta, timezone
 
 from fastapi import (
@@ -83,6 +85,10 @@ from vpti_core import (
 )
 
 router = APIRouter(prefix="/api/v1", tags=["vpti"])
+
+# 실내 열 기억 (2026-08-16) — (lat, lon, floor) → (시각, 마지막 실내온도).
+# 급변 날씨에서 방이 즉시 리셋되는 문제 방지 (indoor.py ⑤ 참조).
+_INDOOR_MEMORY: dict[tuple[float, float, int], tuple[float, float]] = {}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -771,6 +777,19 @@ async def building_risk_at(
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"facade gain skipped ({type(e).__name__}): {e}")
 
+            # 열 기억 (2026-08-16) — 좌표·층별 마지막 실내값을 기억해 급변 날씨에서
+            # 방이 즉시 리셋되지 않게 한다. 실측(센서)이 있었으면 그 값이 기억되므로
+            # 센서가 잠시 끊겨도 한동안 실측 수준을 유지한다.
+            # ⚠️ 워커별 인메모리 — 워커마다 따로 수렴하고 재시작 시 사라짐(그 경우
+            #    공식값으로 폴백). 정밀화는 센서 짝 데이터로 τ 교정과 함께.
+            mem_key = (round(lat, 4), round(lon, 4), floor or 0)
+            prev_rec = _INDOOR_MEMORY.get(mem_key)
+            t_in_prev = prev_age_h = None
+            if prev_rec is not None:
+                age_h = (_time.time() - prev_rec[0]) / 3600.0
+                if age_h < 48.0:
+                    t_in_prev, prev_age_h = prev_rec[1], age_h
+
             ind = compute_indoor(
                 t_out_now=obs.temperature_c,
                 t_mean_today=t_mean,
@@ -788,7 +807,12 @@ async def building_risk_at(
                 lon=lon,
                 facade_gain=facade_gain,
                 facade_note=facade_note,
+                t_in_prev=t_in_prev,
+                prev_age_h=prev_age_h,
             )
+            if len(_INDOOR_MEMORY) > 10_000:      # 폭주 방지 — 오래된 것부터 비움
+                _INDOOR_MEMORY.clear()
+            _INDOOR_MEMORY[mem_key] = (_time.time(), ind.t_in_est)
             result["est_indoor_c"] = ind.t_in_est
             result["indoor_pvpti"] = ind.indoor_pvpti
             result["indoor_risk"] = ind.indoor_risk

@@ -169,6 +169,8 @@ def compute_indoor(
     lon: float | None = None,
     facade_gain: float = 1.0,             # 건물 방위 반영 일사 배율 (0.4~1.6, 1.0=미반영)
     facade_note: str | None = None,       # "서향 외피 — 지금 태양과 12° 차이"
+    t_in_prev: float | None = None,       # 이전 실내 추정/실측 (열 기억, 2026-08-16)
+    prev_age_h: float | None = None,      # 그 값의 경과 시간 [h]
 ) -> IndoorResult:
     now = now or datetime.now(KST)
     sf = _solar_factor(now, lat, lon)
@@ -176,6 +178,7 @@ def compute_indoor(
     fd = _floor_delta(floor, total_floors, sf, cloud_fraction)
 
     night_w = 0.0
+    t_in_formula: float | None = None
     if ambient_measured is not None:
         t_in = ambient_measured                    # 실측이 왕 — 층 보정 불필요
         measured = True
@@ -195,6 +198,23 @@ def compute_indoor(
         t_in += night_w * (1.0 + 0.25 * building_score)
         # ④ 층 위치 보정 (최상층 지붕 일사 / 중간층 완충)
         t_in += fd
+
+        # ⑤ 열 기억 (2026-08-16) — 방은 오늘 날씨로 즉시 리셋되지 않는다.
+        #
+        #    발견 경위: 8/16 아침, 비로 외기가 23.3°C까지 식자 공식은 실내를 24.3°C로
+        #    냈지만 방 센서 실측은 29.8°C — 어제까지 폭염의 축열이 남아 있었다.
+        #    공식의 t_mean_today 는 '오늘'만 보므로 날씨 급변 시 열 관성을 놓치고,
+        #    이 오차는 **위험을 낮게 판정하는 방향**(보호 실패)이라 반드시 막아야 한다.
+        #
+        #    1차 열 지연(RC 근사): 이전 값에서 공식 목표값으로 시정수 τ만큼 천천히 수렴.
+        #        t_in = target + (prev − target) · exp(−Δt/τ)
+        #    τ = 30h  ⚠️ 근사(공학적 판단) — 중량 콘크리트 구조의 문헌 시상수 수십 시간대
+        #    의 중간값. 8/16 사례 시뮬레이션에서 15h는 너무 빨리 잊어 '주의'에 머물렀고
+        #    30h는 실측과 같은 '경고'에 도달. 방 센서 짝 데이터가 쌓이면 데이터로 교정.
+        t_in_formula = t_in
+        if t_in_prev is not None and prev_age_h is not None and prev_age_h >= 0.0:
+            w = math.exp(-prev_age_h / 30.0)
+            t_in = t_in_formula + (t_in_prev - t_in_formula) * w
         measured = False
 
     # ④ 실내 체감 = 기온 + 습도(후덥지근함, 야외 엔진과 동일 공식) + 무풍 보정
@@ -286,6 +306,10 @@ def compute_indoor(
             "floor_delta": round(fd, 1),
             "facade_gain": round(facade_gain, 2),
             "facade_note": facade_note,
+            "t_in_formula": (round(t_in_formula, 1)
+                             if t_in_formula is not None else None),
+            "t_in_prev": (round(t_in_prev, 1) if t_in_prev is not None else None),
+            "prev_age_h": (round(prev_age_h, 1) if prev_age_h is not None else None),
         },
         ventilation=ventilation,
         actions=actions or None,
