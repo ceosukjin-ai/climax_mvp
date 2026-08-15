@@ -667,8 +667,16 @@ async def building_risk_at(
     lon: float = Query(..., ge=-180.0, le=180.0),
     age: int | None = Query(None, ge=0, le=120),
     conditions: str | None = Query(None, description="취약군 콤마 구분: cardio,resp,…"),
-    ambient: float | None = Query(None, description="이어러블 실측 실내온도(°C) — 있으면 추정 대체"),
+    ambient: float | None = Query(None, description="방 센서 실측 실내온도(°C) — 있으면 추정 대체"),
+    humidity: float | None = Query(
+        None, ge=0.0, le=100.0,
+        description="방 센서 실측 실내습도(%) — 있으면 외기습도 변환 대신 실측 사용 (2026-08-14)",
+    ),
     floor: int | None = Query(None, ge=1, le=120, description="거주 층 — 최상층/중간층 보정"),
+    facing: float | None = Query(
+        None, ge=0.0, le=360.0,
+        description="창문이 향하는 방위각(0=북,90=동) — 온보딩에서 받으면 건물 방위 추정보다 우선",
+    ),
 ) -> dict:
     """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
@@ -693,7 +701,19 @@ async def building_risk_at(
     if orchestrator is not None:
         try:
             obs = await orchestrator.kma.get_current_observation(lat, lon)
-            # 오늘 평균기온(축열 기준) — 단기예보의 오늘 시간대 평균, 실패 시 현재기온
+            # 오늘 평균기온(축열 기준) — 실패 시 현재기온
+            #
+            # ⚠️ 2026-08-14 버그 수정. 전에는 오늘 예보 슬롯의 산술평균을 썼는데,
+            #    단기예보는 **발표 시각 이후의 미래 슬롯만** 준다. 새벽 06시에 조회하면
+            #    06~23시만 남아 밤·새벽의 낮은 기온이 통째로 빠지고 낮 기온만 평균에
+            #    들어간다 → t_mean 과대 → 실내 기온 추정 과대.
+            #    (8/14 06:12 부산: 역산 t_mean 31.0°C, 실제 일평균은 27°C 안팎)
+            #    조회가 이를수록 오차가 크고 저녁엔 반대로 작아지는 —
+            #    "낮·아침 검증에서는 안 보이는" 종류의 버그였다.
+            #
+            #    수정: 기후학 표준인 일평균 =(일최고+일최저)/2 로 계산하고,
+            #    이미 지나간 시간대를 대표하도록 **현재 관측값을 후보에 포함**한다
+            #    (새벽이면 현재값이 그날 최저에 가깝다).
             t_mean = obs.temperature_c
             try:
                 fcst = await orchestrator.kma.get_short_term_forecast(lat, lon)
@@ -703,7 +723,8 @@ async def building_risk_at(
                     and f.temperature_c is not None
                 ]
                 if today:
-                    t_mean = sum(today) / len(today)
+                    vals = today + [obs.temperature_c]
+                    t_mean = (max(vals) + min(vals)) / 2.0
             except Exception:  # noqa: BLE001
                 pass
             # 구름량 — 초단기예보 SKY (엔진 일사감쇠와 동일 소스), 실패 시 중간값
@@ -721,6 +742,25 @@ async def building_risk_at(
             except Exception:  # noqa: BLE001
                 pass
 
+            # 건물 방위(GIS) — 서향/북향 세대의 일사 취득 차이를 반영 (2026-08-14).
+            # 건물은 안 변하므로 30일 캐시. 못 구하면 gain=1.0이라 기존과 동일하게 동작.
+            facade_gain, facade_note = 1.0, None
+            try:
+                from app.core.smti import compute_solar_position
+                from app.services.geo import building_geometry, facade_solar_gain
+
+                sun = compute_solar_position(lat, lon, datetime.now(KST))
+                # 건축물대장에서 이미 아는 건물명·층수로 교차 대조 — 긴 아파트 옆의
+                # 작은 상가가 '가장 가까운 건물'로 잡히는 것을 막는다 (2026-08-15 실검증).
+                geom = await building_geometry(
+                    lat, lon, name_hint=b.building_name, floors_hint=b.floors,
+                )
+                facade_gain, facade_note = facade_solar_gain(
+                    sun.azimuth_deg, sun.elevation_deg, geom, facing_deg=facing,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"facade gain skipped ({type(e).__name__}): {e}")
+
             ind = compute_indoor(
                 t_out_now=obs.temperature_c,
                 t_mean_today=t_mean,
@@ -731,8 +771,13 @@ async def building_risk_at(
                 age=age,
                 conditions=conditions.split(",") if conditions else None,
                 ambient_measured=ambient,
+                humidity_measured=humidity,
                 floor=floor,
                 total_floors=b.floors,
+                lat=lat,          # 실제 태양 위치로 일사 계산 (2026-08-14)
+                lon=lon,
+                facade_gain=facade_gain,
+                facade_note=facade_note,
             )
             result["est_indoor_c"] = ind.t_in_est
             result["indoor_pvpti"] = ind.indoor_pvpti

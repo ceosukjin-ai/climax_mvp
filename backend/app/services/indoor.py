@@ -26,8 +26,31 @@ from datetime import datetime
 
 from loguru import logger
 
-from app.core.vpti import WeatherContext, _classify_risk, _humidity_contribution
+from app.core.vpti import (
+    WeatherContext,
+    _classify_risk,
+    _humidity_contribution,
+    _saturation_vapor_pressure,
+)
 from app.services.kma import KST
+
+
+def _indoor_relative_humidity(rh_out_pct: float, t_out_c: float, t_in_c: float) -> float:
+    """외기 상대습도 → 실내 상대습도 변환 (2026-08-14 수정).
+
+    창문을 닫은 방은 **수증기압(절대습도)이 외기와 거의 같다.** 온도만 높아지므로
+    포화수증기압이 커져 **상대습도는 낮아진다.** 외기 RH를 실내 온도에 그대로
+    쓰면 습도 기여가 과대평가된다.
+
+    예) 외기 21.8°C·89% → 수증기압 23.2 hPa. 실내 25.0°C에서는 RH 73.6%이지
+        89%가 아니다. 이 차이가 체감으로 약 +2.6°C 과대를 만들었다.
+
+    검증: 8/12 BT-3 실측(실내 29.1°C·RH 52%)에서 외기 RH를 그대로 썼다면
+          습도항이 1.6°C가 아니라 6.5°C가 됐을 것.
+    """
+    e_out = (rh_out_pct / 100.0) * _saturation_vapor_pressure(t_out_c)
+    rh_in = e_out / _saturation_vapor_pressure(t_in_c) * 100.0
+    return min(100.0, max(0.0, rh_in))
 
 
 @dataclass
@@ -54,8 +77,32 @@ def _damping(structure: str | None) -> float:
     return 0.6
 
 
-def _solar_factor(now: datetime) -> float:
-    """태양고도 근사(0~1) — 6시 일출~19시 일몰 사인 곡선 (여름 한반도 근사)."""
+def _solar_factor(
+    now: datetime, lat: float | None = None, lon: float | None = None
+) -> float:
+    """일사 강도 계수 (0~1).
+
+    2026-08-14 개선 — 좌표가 있으면 **실제 태양 위치**(pvlib SPA + Haurwitz 청명모델)로
+    계산한다. 기존 "6시 일출~19시 일몰 사인 곡선"은 한여름 한반도에서만 맞는 근사라
+
+      · 계절이 바뀌면 일출·일몰 시각이 어긋나고 (겨울 7시 반 일출을 6시로 봄)
+      · 위도가 다르면(서울 vs 제주) 같은 값을 주며
+      · 저각도 대기 감쇠를 반영하지 못한다.
+
+    청명 GHI를 900 W/m²(한여름 정오 부근)로 정규화해 0~1로 쓴다.
+    좌표가 없거나 계산 실패 시에는 기존 사인 근사로 안전하게 되돌아간다.
+    """
+    if lat is not None and lon is not None:
+        try:
+            from app.core.smti import compute_solar_position
+
+            sun = compute_solar_position(lat, lon, now)
+            if sun.elevation_deg <= 0.0:
+                return 0.0
+            return max(0.0, min(1.0, sun.clearsky_ghi / 900.0))
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"solar position failed ({type(e).__name__}) — 사인 근사로 대체")
+
     h = now.hour + now.minute / 60.0
     if h <= 6.0 or h >= 19.0:
         return 0.0
@@ -113,16 +160,22 @@ def compute_indoor(
     structure: str | None,
     age: int | None = None,
     conditions: list[str] | None = None,
-    ambient_measured: float | None = None,   # 이어러블 실측 (있으면 추정 대체)
+    ambient_measured: float | None = None,   # 방 센서 실측 온도 (있으면 추정 대체)
+    humidity_measured: float | None = None,  # 방 센서 실측 상대습도 (2026-08-14)
     floor: int | None = None,                # 거주 층 (예: 22)
     total_floors: int | None = None,         # 건물 전체 층수 (예: 25)
     now: datetime | None = None,
+    lat: float | None = None,             # 있으면 실제 태양 위치로 일사 계산 (2026-08-14)
+    lon: float | None = None,
+    facade_gain: float = 1.0,             # 건물 방위 반영 일사 배율 (0.4~1.6, 1.0=미반영)
+    facade_note: str | None = None,       # "서향 외피 — 지금 태양과 12° 차이"
 ) -> IndoorResult:
     now = now or datetime.now(KST)
-    sf = _solar_factor(now)
+    sf = _solar_factor(now, lat, lon)
     d = _damping(structure)
     fd = _floor_delta(floor, total_floors, sf, cloud_fraction)
 
+    night_w = 0.0
     if ambient_measured is not None:
         t_in = ambient_measured                    # 실측이 왕 — 층 보정 불필요
         measured = True
@@ -130,21 +183,36 @@ def compute_indoor(
         # ① 축열 감쇠: 실내는 오늘 평균기온 주변에서 바깥 변화를 D만큼만 따라감
         t_in = t_mean_today + d * (t_out_now - t_mean_today)
         # ② 일사 취득: 해가 떠 있고 하늘이 열려 있으면 외피가 데워져 실내로 (+0 ~ +2.6)
-        t_in += sf * (1.0 - cloud_fraction) * (0.8 + 0.25 * building_score)
+        #    2026-08-14 — **건물 방위 반영**(facade_gain). 같은 아파트 같은 층이라도
+        #    서향 세대는 여름 저녁에 외피가 달궈지고 북향은 거의 안 받는다. 지금까지는
+        #    이 둘을 완전히 같게 봤다. 방위를 못 구하면 1.0이라 기존과 동일하다.
+        t_in += sf * (1.0 - cloud_fraction) * (0.8 + 0.25 * building_score) * facade_gain
         # ③ 야간 축열 방출: 해가 진 뒤 낮에 머금은 열 (+1.0 ~ +2.75)
-        if sf == 0.0:
-            t_in += 1.0 + 0.25 * building_score
+        #    2026-08-14 수정 — 전에는 `sf == 0.0` 일 때만 붙여서 일출 직후 1분 사이에
+        #    1.25°C가 절벽처럼 사라졌다(05:59 +1.25 → 06:01 +0.00). 새벽에 앱을 두 번
+        #    보면 값이 튀는 원인. 해가 뜬 뒤 서서히 빠지도록 선형 감쇠로 바꾼다.
+        night_w = max(0.0, 1.0 - sf / 0.25)   # sf 0 → 1.0, sf 0.25(약 07시) → 0
+        t_in += night_w * (1.0 + 0.25 * building_score)
         # ④ 층 위치 보정 (최상층 지붕 일사 / 중간층 완충)
         t_in += fd
         measured = False
 
     # ④ 실내 체감 = 기온 + 습도(후덥지근함, 야외 엔진과 동일 공식) + 무풍 보정
+    #    ⚠️ humidity_pct 는 **외기** 상대습도다. 실내 온도에 그대로 쓰면 안 된다
+    #       (2026-08-14 버그: 새벽 외기 89%를 실내 26.7°C에 적용해 체감 +2.6°C 과대).
+    #       실측(ambient)이 있어도 방의 수증기압은 외기와 같으므로 동일하게 변환한다.
+    #    방 센서(샤오미 LYWSD03MMC 등)가 습도를 실측해 주면 변환이 아예 필요 없다 —
+    #    가정을 측정으로 대체한다. 재실자 수분 발생·취사·환기까지 자동 반영된다.
+    if humidity_measured is not None:
+        rh_in = min(100.0, max(0.0, humidity_measured))
+    else:
+        rh_in = _indoor_relative_humidity(humidity_pct, t_out_now, t_in)
     wx = WeatherContext(
-        temperature_c=t_in, humidity_pct=humidity_pct,
+        temperature_c=t_in, humidity_pct=rh_in,
         wind_speed_ms=0.1, wind_direction_deg=0.0,
     )
     season = wx.season
-    dh = _humidity_contribution(t_in, humidity_pct, season)
+    dh = _humidity_contribution(t_in, rh_in, season)
     still_air = 0.5 if season == "summer" else 0.0   # 실내 무풍 — 여름 체감 가중
     feel = t_in + dh + still_air
 
@@ -208,10 +276,16 @@ def compute_indoor(
             "solar_factor": round(sf, 2),
             "cloud_fraction": round(cloud_fraction, 2),
             "building_score": building_score,
+            "humidity_pct_out": round(humidity_pct, 1),
+            "humidity_pct_in": round(rh_in, 1),
+            "humidity_measured": humidity_measured is not None,
             "humidity_delta": round(dh, 1),
+            "night_release_w": round(night_w, 2) if not measured else None,
             "vulnerability_shift": shift,
             "floor": floor,
             "floor_delta": round(fd, 1),
+            "facade_gain": round(facade_gain, 2),
+            "facade_note": facade_note,
         },
         ventilation=ventilation,
         actions=actions or None,
