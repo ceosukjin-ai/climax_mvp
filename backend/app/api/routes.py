@@ -665,6 +665,45 @@ async def daily_brief(
     }
 
 
+@router.get("/field", include_in_schema=False)
+async def field_tool_page():
+    """현장 대조 도구 페이지 (대표 전용) — 서버가 직접 서빙 (2026-08-16).
+
+    http://<서버>/api/v1/field 를 아이폰 사파리로 열고 "홈 화면에 추가"하면
+    홈 화면 아이콘으로 수시 사용 가능. 같은 서버 상대경로 호출이라
+    HTTPS 전환 전에도 동작한다. 페이지 자체는 공개돼도 무해 — 저장(POST)은
+    FIELD_KEY 없이는 404 라 아무것도 못 한다.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    p = Path(__file__).resolve().parents[1] / "web" / "field_admin.html"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(p, media_type="text/html")
+
+
+@router.get("/field/stats", include_in_schema=False)
+async def field_stats(
+    request: Request,
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """'뇌 상태' — 쌓인 학습 데이터 현황 (대표 전용, 2026-08-16).
+
+    눈에 안 보이던 데이터 플라이휠을 숫자로 보여준다: 테이블별 적재 건수,
+    최근 48h Tsurf 실측↔추정 잔차, 최근 현장실측 5건.
+    """
+    s = get_settings()
+    if not s.field_key or x_field_key != s.field_key:
+        raise HTTPException(status_code=404, detail="Not Found")
+    archive = getattr(request.app.state, "archive", None)
+    stats = await archive.brain_stats() if archive is not None else None
+    if stats is None:
+        return {"ready": False}
+    return {"ready": True, **stats}
+
+
 @router.post(
     "/field/check",
     summary="현장 실측 ↔ 엔진 대조 (대표 전용, 2026-08-16)",

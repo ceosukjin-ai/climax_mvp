@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>현장 대조</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="현장 대조">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<!--
+  ClimaX 현장 실측 ↔ 엔진 자동 대조 도구 (2026-08-16, 대표 전용)
+
+  기존 현장실측 도구(climax_field)와의 차이:
+   · 앱 값을 눈으로 보고 손으로 옮겨 적는 대신, 서버 엔진을 직접 호출해
+     같은 순간·같은 좌표의 산출 전체를 받아 잔차를 자동 계산한다.
+   · 실측·산출 짝이 서버 DB(field_check)에 자동 적재된다
+     → PWI 풍속 보정·MRT 검증·계수 교정의 원천 데이터.
+
+  사용법: 이 파일을 폰으로 보내 브라우저로 열기(파일 앱에서 열림) 또는
+  Netlify 기존 사이트에 field_admin.html 로 추가 업로드.
+  첫 실행 때 접근키(FIELD_KEY) 입력 — 이 폰에만 저장된다.
+
+  ⚠️ 접근키가 없으면 서버가 404 — 이 파일이 유출돼도 데이터는 못 넣는다.
+  ⚠️ GPS 자동 좌표는 https 호스팅에서만 동작(브라우저 정책). http/파일로 열면
+     '우리 집' 버튼이나 수동 입력을 쓰면 된다.
+-->
+<style>
+  :root { --teal:#0d9488; --coral:#f97066; --bg:#f4f4f6; --card:#fff; --ink:#111; --mut:#777; }
+  * { box-sizing:border-box; font-family:-apple-system,'Apple SD Gothic Neo','Noto Sans KR',sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--ink); padding:16px; max-width:520px; margin-inline:auto; }
+  h1 { font-size:19px; margin:4px 0 2px; }
+  .sub { color:var(--mut); font-size:12px; margin-bottom:14px; }
+  .card { background:var(--card); border-radius:14px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .card h2 { font-size:14px; margin:0 0 10px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:8px 0 3px; }
+  input, textarea { width:100%; padding:10px; border:1px solid #ddd; border-radius:9px; font-size:16px; }
+  .row { display:flex; gap:8px; }
+  .row > div { flex:1; }
+  button { width:100%; padding:13px; border:0; border-radius:11px; font-size:16px; font-weight:700; cursor:pointer; }
+  .primary { background:var(--teal); color:#fff; margin-top:12px; }
+  .ghost { background:#e8e8ec; color:#333; font-size:13px; padding:9px; width:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:right; padding:6px 4px; border-bottom:1px solid #eee; }
+  th:first-child, td:first-child { text-align:left; }
+  .ok  { color:var(--teal); font-weight:700; }
+  .bad { color:var(--coral); font-weight:700; }
+  .status { font-size:13px; color:var(--mut); margin-top:10px; white-space:pre-line; }
+  .pill { display:inline-block; background:#eef7f6; color:var(--teal); border-radius:99px; padding:2px 10px; font-size:12px; font-weight:700; }
+</style>
+</head>
+<body>
+<h1>🌡 현장 대조 <span class="pill">대표 전용</span></h1>
+<div class="sub">실측을 넣으면 같은 순간 엔진 산출과 자동 대조 · 짝은 서버에 적재</div>
+
+<div class="card">
+  <h2>📍 위치</h2>
+  <div class="row">
+    <div><label>위도</label><input id="lat" type="number" step="any" inputmode="decimal"></div>
+    <div><label>경도</label><input id="lon" type="number" step="any" inputmode="decimal"></div>
+  </div>
+  <div class="row" style="margin-top:9px">
+    <button class="ghost" onclick="useHome()">🏠 우리 집</button>
+    <button class="ghost" onclick="useGPS()">📡 GPS</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>✍️ 실측값 <span style="font-weight:400;color:var(--mut)">(잰 것만 입력 — 빈 칸 무시)</span></h2>
+  <div class="row">
+    <div><label>기온 Ta (°C)</label><input id="m_ta" type="number" step="any" inputmode="decimal"></div>
+    <div><label>습도 RH (%)</label><input id="m_rh" type="number" step="any" inputmode="decimal"></div>
+  </div>
+  <div class="row">
+    <div><label>풍속 (m/s)</label><input id="m_wind" type="number" step="any" inputmode="decimal"></div>
+    <div><label>흑구 Tg (°C)</label><input id="m_globe" type="number" step="any" inputmode="decimal"></div>
+  </div>
+  <div class="row">
+    <div><label>노면온도 (°C, IR)</label><input id="m_surf" type="number" step="any" inputmode="decimal"></div>
+    <div><label>실측 PET (도구 계산값)</label><input id="m_pet" type="number" step="any" inputmode="decimal"></div>
+  </div>
+  <label>메모 (장소·조건)</label><input id="m_note" placeholder="예: 토곡로 인도, 그늘, 버스 지나감">
+  <button class="primary" onclick="submit()">엔진과 대조 + 저장</button>
+  <div id="status" class="status"></div>
+</div>
+
+<div class="card">
+  <h2>🧠 뇌 상태 <span style="font-weight:400;color:var(--mut)">(쌓인 학습 데이터)</span></h2>
+  <button class="ghost" onclick="loadStats()">현황 불러오기</button>
+  <div id="statTiles" style="display:flex;gap:8px;margin-top:10px"></div>
+  <div id="tsurfBox" style="margin-top:10px"></div>
+  <div id="fieldBox" style="margin-top:6px"></div>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+  <h2>📊 대조 결과</h2>
+  <table id="resultTable"></table>
+  <div class="status" id="resultNote"></div>
+</div>
+
+<script>
+// 서버가 이 페이지를 직접 서빙하므로(/api/v1/field) 같은 서버로 상대경로 호출 —
+// http/https 어느 쪽이든 mixed-content 문제가 없다. 파일로 열었을 때만 절대주소 폴백.
+const API = location.protocol.startsWith("http") ? "" : "http://180.210.76.123";
+const HOME = [35.18232, 129.10330];           // 연산엘지
+
+function $(id){ return document.getElementById(id); }
+function num(id){ const v = $(id).value.trim(); return v === "" ? null : parseFloat(v); }
+
+function useHome(){ $("lat").value = HOME[0]; $("lon").value = HOME[1]; }
+function useGPS(){
+  if (!navigator.geolocation) { $("status").textContent = "이 환경에선 GPS 불가 — 수동 입력"; return; }
+  navigator.geolocation.getCurrentPosition(
+    p => { $("lat").value = p.coords.latitude.toFixed(6); $("lon").value = p.coords.longitude.toFixed(6); },
+    e => { $("status").textContent = "GPS 실패(" + e.message + ") — http/파일에서는 막힘. 수동 입력 또는 우리 집."; }
+  );
+}
+
+function fieldKey(){
+  let k = localStorage.getItem("climax_field_key");
+  if (!k) {
+    k = prompt("접근키(FIELD_KEY)를 입력하세요 — 이 폰에만 저장됩니다.");
+    if (k) localStorage.setItem("climax_field_key", k.trim());
+  }
+  return (k || "").trim();
+}
+
+async function submit(){
+  const lat = num("lat"), lon = num("lon");
+  if (lat === null || lon === null) { $("status").textContent = "위치를 먼저 넣어주세요."; return; }
+  const key = fieldKey();
+  if (!key) { $("status").textContent = "접근키가 필요합니다."; return; }
+
+  const meas = {};
+  const map = { m_ta:"ta", m_rh:"rh", m_wind:"wind_ms", m_globe:"globe_c", m_surf:"surface_c", m_pet:"pet" };
+  for (const [id, k2] of Object.entries(map)) { const v = num(id); if (v !== null) meas[k2] = v; }
+  if (Object.keys(meas).length === 0) { $("status").textContent = "실측값을 하나 이상 입력하세요."; return; }
+
+  $("status").textContent = "엔진 계산 중… (첫 방문 지점은 10~20초 걸릴 수 있어요)";
+  try {
+    const r = await fetch(API + "/api/v1/field/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Field-Key": key },
+      body: JSON.stringify({ lat, lon, meas, note: $("m_note").value || null }),
+    });
+    if (r.status === 404) { localStorage.removeItem("climax_field_key");
+      $("status").textContent = "접근키가 틀립니다 — 다시 시도하면 재입력 창이 뜹니다."; return; }
+    if (!r.ok) { $("status").textContent = "서버 오류 " + r.status; return; }
+    const d = await r.json();
+    render(d, meas);
+    $("status").textContent = d.saved ? "✅ 저장 완료 — 교정 데이터로 쌓였습니다." : "⚠️ 대조는 됐지만 DB 저장은 안 됨";
+  } catch (e) {
+    $("status").textContent = "연결 실패: " + e.message + "\n(https 페이지에서 http 서버 호출은 브라우저가 막습니다 — 파일로 열거나 HTTPS 전환 후 사용)";
+  }
+}
+
+async function loadStats(){
+  const key = fieldKey();
+  if (!key) return;
+  $("statTiles").innerHTML = '<span class="status">불러오는 중…</span>';
+  try {
+    const r = await fetch(API + "/api/v1/field/stats", { headers: { "X-Field-Key": key } });
+    if (r.status === 404) { localStorage.removeItem("climax_field_key");
+      $("statTiles").innerHTML = '<span class="status">접근키가 틀립니다 — 다시 시도하세요.</span>'; return; }
+    const d = await r.json();
+    if (!d.ready) { $("statTiles").innerHTML = '<span class="status">DB 연결 안 됨</span>'; return; }
+
+    const tiles = [
+      ["측정 이력", d.counts.measurement],
+      ["ASOS 잔차짝", d.counts.engine_check],
+      ["현장 실측짝", d.counts.field_check],
+    ].map(([n,v]) =>
+      `<div style="flex:1;background:#eef7f6;border-radius:10px;padding:10px;text-align:center">
+         <div style="font-size:20px;font-weight:800;color:var(--teal)">${v}</div>
+         <div style="font-size:11px;color:var(--mut)">${n}</div></div>`).join("");
+    $("statTiles").innerHTML = tiles;
+
+    if (d.tsurf && d.tsurf.length) {
+      const rs = d.tsurf.map(x => x.resid);
+      const mean = (rs.reduce((a,b)=>a+b,0)/rs.length).toFixed(1);
+      const worst = rs.reduce((a,b)=>Math.abs(b)>Math.abs(a)?b:a,0).toFixed(1);
+      const last = d.tsurf[0];
+      $("tsurfBox").innerHTML =
+        `<div style="font-size:13px"><b>지면온도 채점 (최근 48h · ${rs.length}건)</b><br>` +
+        `평균 잔차 <b class="${Math.abs(mean)<=2?'ok':'bad'}">${mean>0?'+':''}${mean}°C</b> · ` +
+        `최대 ${worst>0?'+':''}${worst}°C<br>` +
+        `<span class="status">최근: 실측 ${last.obs}° vs 엔진 ${last.est}° — ` +
+        `잔차가 한쪽으로 쏠리면 계수 교정 신호</span></div>`;
+    } else {
+      $("tsurfBox").innerHTML = '<span class="status">지면온도 짝 아직 없음 — 배포 후 시간당 1건씩 쌓입니다</span>';
+    }
+
+    if (d.field && d.field.length) {
+      $("fieldBox").innerHTML = '<div style="font-size:13px;margin-top:4px"><b>내 최근 실측</b></div>' +
+        d.field.map(f =>
+          `<div class="status">· ${f.t.slice(5,16).replace("T"," ")} — ${f.note || "(메모 없음)"}` +
+          (f.est && f.est.pvpti !== undefined ? ` · 엔진 ${f.est.pvpti}°` : "") + `</div>`).join("");
+    }
+  } catch (e) { $("statTiles").innerHTML = '<span class="status">연결 실패: ' + e.message + '</span>'; }
+}
+
+function render(d, meas){
+  const est = d.est, res = d.residual || {};
+  const rows = [
+    ["체감 (PET/UTCI)", meas.pet,     est.pvpti, res.pvpti],
+    ["기온 Ta",         meas.ta,      est.ta,    res.ta],
+    ["습도 RH",         meas.rh,      est.rh,    res.rh],
+    ["보행자 풍속",     meas.wind_ms, est.u_p,   res.u_p],
+    ["MRT (흑구 대응)", meas.mrt,     est.mrt,   res.mrt],
+  ];
+  let html = "<tr><th>항목</th><th>실측</th><th>엔진</th><th>Δ(엔진−실측)</th></tr>";
+  for (const [name, m, e, r0] of rows) {
+    if (m === undefined && e === undefined) continue;
+    const cls = r0 === undefined ? "" : (Math.abs(r0) <= 2 ? "ok" : "bad");
+    html += `<tr><td>${name}</td><td>${m ?? "—"}</td><td>${e ?? "—"}</td>` +
+            `<td class="${cls}">${r0 !== undefined ? (r0 > 0 ? "+" : "") + r0 : "—"}</td></tr>`;
+  }
+  $("resultTable").innerHTML = html;
+  $("resultNote").textContent =
+    `엔진 등급 ${est.risk} · 지수 ${est.index} · 기상 ${est.weather_source}` +
+    ` — |Δ|≤2°C 양호(초록) / 초과(주황)는 원인 분해 대상`;
+  $("resultCard").style.display = "block";
+}
+</script>
+</body>
+</html>

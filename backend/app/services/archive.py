@@ -175,6 +175,51 @@ class Archive:
                "CAST(:est AS JSONB), :note)")
         await self._run(sql, vals, "field_check")
 
+    # ── 조회 (2026-08-16, 대표 전용 '뇌 상태' 화면용) ──────────
+    async def brain_stats(self) -> dict | None:
+        """쌓인 학습 데이터 현황 — 눈에 보이는 뇌.
+
+        적재는 fire-and-forget 이지만 조회는 응답이 필요하므로 동기 대기한다.
+        DB가 없으면 None (화면에서 '아직 연결 안 됨' 표시).
+        """
+        if not self._ready:
+            return None
+        try:
+            async with self._session() as s:
+                counts = {}
+                for t in ("measurement", "engine_check", "field_check"):
+                    r = await s.execute(text(f"SELECT COUNT(*) FROM {t}"))
+                    counts[t] = int(r.scalar() or 0)
+
+                # Tsurf 잔차 — 최근 48h, 실측·추정 둘 다 있는 것만
+                r = await s.execute(text(
+                    "SELECT observed_at, obs_ground_c, est_ground_c "
+                    "FROM engine_check "
+                    "WHERE obs_ground_c IS NOT NULL AND est_ground_c IS NOT NULL "
+                    "AND observed_at > NOW() - INTERVAL '48 hours' "
+                    "ORDER BY observed_at DESC LIMIT 48"
+                ))
+                tsurf = [
+                    {"t": row[0].isoformat(), "obs": float(row[1]),
+                     "est": float(row[2]),
+                     "resid": round(float(row[2]) - float(row[1]), 1)}
+                    for row in r
+                ]
+
+                r = await s.execute(text(
+                    "SELECT observed_at, lat, lon, meas, est, note "
+                    "FROM field_check ORDER BY observed_at DESC LIMIT 5"
+                ))
+                field = [
+                    {"t": row[0].isoformat(), "lat": row[1], "lon": row[2],
+                     "meas": row[3], "est": row[4], "note": row[5]}
+                    for row in r
+                ]
+                return {"counts": counts, "tsurf": tsurf, "field": field}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[archive] brain_stats 실패: {}: {}", type(e).__name__, e)
+            return None
+
     async def _run(self, sql: str, vals: dict, what: str) -> None:
         try:
             async with self._session() as s:
