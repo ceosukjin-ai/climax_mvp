@@ -18,6 +18,8 @@ from datetime import datetime, timedelta, timezone
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -661,6 +663,71 @@ async def daily_brief(
         "sky_worst": {1: "맑음", 3: "구름많음", 4: "흐림"}.get(worst),
         "slots": len(today),
     }
+
+
+@router.post(
+    "/field/check",
+    summary="현장 실측 ↔ 엔진 대조 (대표 전용, 2026-08-16)",
+)
+async def field_check(
+    request: Request,
+    body: dict = Body(...),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """실측값을 받아 **같은 순간 같은 좌표의 엔진 전체 산출**과 맞대고, 짝을 DB에 남긴다.
+
+    현장실측 도구(climax_field)의 수동 대조를 자동화한 것:
+      · 도구가 실측(기온·습도·풍속·흑구·표면온도·계산 PET)을 POST
+      · 서버가 실물 파이프라인(orchestrator)을 그 좌표에서 돌려 산출 전체를 응답
+      · 실측·산출 짝을 field_check 테이블에 적재 → PWI 풍속 보정, MRT/Tsurf 검증,
+        계수 교정의 원천 데이터가 자동 축적된다
+
+    접근 통제: .env 의 FIELD_KEY 와 X-Field-Key 헤더가 일치해야 한다.
+    FIELD_KEY 미설정이면 404 — 일반 사용자에겐 엔드포인트 존재 자체가 안 보인다.
+    """
+    s = get_settings()
+    if not s.field_key or x_field_key != s.field_key:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    try:
+        lat = float(body["lat"])
+        lon = float(body["lon"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="lat/lon 필요")
+    meas: dict = body.get("meas") or {}
+    note: str | None = body.get("note")
+
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(status_code=503, detail="엔진 미기동")
+
+    result, telemetry = await orchestrator.compute_personalized(
+        lat, lon, bio=Biometrics(), archive_consent=False,
+    )
+    base = result.comfort  # ComfortResult (PET/UTCI 입력 echo 포함)
+    est = {
+        "pvpti": round(result.pvpti, 2),
+        "risk": result.risk_level,
+        "index": base.index,
+        "mrt": round(base.tr, 2),          # 엔진 Tmrt
+        "ta": round(base.tdb, 2),          # 엔진이 쓴 기온(기상청)
+        "rh": round(base.rh, 1),
+        "u_p": round(base.v_input, 2),     # 보행자 풍속 (클램프 전)
+        "weather_source": telemetry.weather_source,
+    }
+
+    # 잔차 — 실측이 있는 항목만
+    resid = {}
+    for k_meas, k_est in (("ta", "ta"), ("rh", "rh"), ("wind_ms", "u_p"),
+                          ("pet", "pvpti"), ("mrt", "mrt")):
+        if meas.get(k_meas) is not None and est.get(k_est) is not None:
+            resid[k_est] = round(est[k_est] - float(meas[k_meas]), 2)
+
+    archive = getattr(request.app.state, "archive", None)
+    if archive is not None:
+        archive.record_field_check(lat=lat, lon=lon, meas=meas, est=est, note=note)
+
+    return {"est": est, "residual": resid, "saved": archive is not None}
 
 
 @router.get(

@@ -722,6 +722,32 @@ class VPTIOrchestrator:
         )
         when = timestamp or datetime.now(timezone.utc)
 
+        # 직달일사 태양방향 차폐 (2026-08-16) — SVF는 등방이라 "태양이 저 건물
+        # 뒤인가"를 못 본다. 건물 폴리곤(V-World/OSM, 30일 캐시) + 태양 방위로
+        # 판정해, 그늘이면 직달(DNI)만 차단한다(산란·장파는 SVF가 이미 처리).
+        # 실패·타임아웃(2초)이면 1.0 = 기존과 동일 — 서비스에 영향 없음.
+        direct_shade = 1.0
+        shade_note: str | None = None
+        try:
+            from vpti_core.solar import estimate_solar
+            from app.services.geo import sun_blocked_outdoor
+
+            sun = estimate_solar(clat, clon, when, sky_code=sky_code,
+                                 cloud_fraction=cloud_fraction)
+            if sun.is_daytime:
+                blocked, shade_note = await asyncio.wait_for(
+                    sun_blocked_outdoor(
+                        clat, clon,
+                        sun.solar_azimuth_deg, sun.solar_elevation_deg,
+                    ),
+                    timeout=2.0,
+                )
+                if blocked:
+                    direct_shade = 0.0
+                    logger.info("[shade] {} — 직달 차단", shade_note)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[shade] 판정 실패({}) → 미차폐 가정", type(e).__name__)
+
         t_idx = time.perf_counter()
         result = compute_pvpti(
             bio=bio,
@@ -735,6 +761,7 @@ class VPTIOrchestrator:
             when=when,
             sky_code=sky_code,               # 예보 SKY(폴백 경로)
             cloud_fraction=cloud_fraction,   # ASOS 실측 운량 — 있으면 SKY보다 우선
+            direct_shade=direct_shade,       # 태양방향 건물 차폐 (그늘이면 0.0)
         )
         index_ms = (time.perf_counter() - t_idx) * 1000
 

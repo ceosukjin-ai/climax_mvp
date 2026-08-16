@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     # 측정 이력 적재(핫스팟 자산). 일반 사용자 대상 수집은 동의 화면·방침 개정 후 켤 것.
     archive_enabled: bool = True
 
+    # 현장 실측 대조 API 접근키 (2026-08-16) — 대표 전용 검증 도구용.
+    # 비어 있으면 /field/check 엔드포인트가 404 (일반 사용자에겐 존재 자체가 안 보임).
+    # .env.prod 에 FIELD_KEY=<긴 임의 문자열> 로 설정.
+    field_key: str = ""
+
     # NCP Object Storage
     ncp_object_access_key: str = ""
     ncp_object_secret_key: str = ""

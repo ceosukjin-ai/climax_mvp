@@ -131,6 +131,7 @@ def estimate_ground_temp(
     wind_ms: float,
     eps_sky: float,
     config: MRTConfig = DEFAULT_CONFIG.mrt,
+    direct_shade: float = 1.0,   # 태양방향 건물 차폐 시 0.0 — 직달만 차단 (2026-08-16)
 ) -> float:
     """표면 에너지수지로 지표면 온도 Tsurf 산출 (✅ 표준 미기상 에너지평형).
 
@@ -149,7 +150,7 @@ def estimate_ground_temp(
     """
     beta = math.radians(max(solar.solar_elevation_deg, 0.0))
     svf_c = min(max(svf, 0.0), 1.0)
-    s_down = max(solar.dni * math.sin(beta) + solar.dhi * svf_c, 0.0)
+    s_down = max(solar.dni * math.sin(beta) * direct_shade + solar.dhi * svf_c, 0.0)
     sw_abs = (1.0 - min(max(ground_albedo, 0.0), 1.0)) * s_down
     avail_sw = sw_abs * (1.0 - min(max(config.ground_storage_fraction, 0.0), 1.0))
 
@@ -184,8 +185,13 @@ def compute_mrt(
     ground_emissivity: float,
     wind_ms: float = 0.0,
     config: MRTConfig = DEFAULT_CONFIG.mrt,
+    direct_shade: float = 1.0,   # 태양방향 건물 차폐 (2026-08-16): 1.0=직사 노출, 0.0=그늘
 ) -> MRTResult:
     """6방향 복사속 적분으로 평균복사온도 Tmrt 산출 (VDI 3787 Part 2).
+
+    direct_shade — SVF는 등방(하늘이 얼마나 보이나)이라 "지금 태양이 건물 뒤인가"라는
+    **방향** 정보를 담지 못한다. 건물 폴리곤 + 태양 방위로 판정한 차폐 계수를 받아
+    직달 성분(사람 몸·지면)에만 곱한다. 산란·반사·장파는 SVF가 이미 처리하므로 불변.
 
     Args:
         solar: 일사 추정 결과(②의 입력, W/m²).
@@ -222,7 +228,7 @@ def compute_mrt(
 
     # --- 단파 ---
     fp = fanger_projected_area_factor(solar.solar_elevation_deg)
-    sw_direct = a_k * fp * solar.dni
+    sw_direct = a_k * fp * solar.dni * direct_shade
 
     sw_diffuse = 0.0   # 천공 산란 (DHI) — 천공시계 비례
     sw_reflected = 0.0  # 지면 반사 (albedo·GHI) — 지면시계 비례
@@ -236,7 +242,7 @@ def compute_mrt(
 
     tsurf = estimate_ground_temp(
         air_temp_c, solar, ground_albedo, ground_emissivity,
-        svf, gvi, wind_ms, eps_sky, config,
+        svf, gvi, wind_ms, eps_sky, config, direct_shade,
     )
     l_surf_flux = ground_emissivity * STEFAN_BOLTZMANN * (tsurf + KELVIN) ** 4
 

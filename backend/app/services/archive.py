@@ -67,6 +67,20 @@ CREATE TABLE IF NOT EXISTS engine_check (
     note          TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_engine_check_time ON engine_check (observed_at DESC);
+
+-- 현장 실측 ↔ 엔진 산출 대조 (2026-08-16, 대표 전용 검증 도구)
+-- 현장에서 잰 값(기온·습도·풍속·흑구·표면온도·PET)과, 같은 순간 같은 좌표의
+-- 엔진 전체 산출을 짝으로 남긴다 → PWI 풍속 보정·MRT 검증·계수 교정의 원천 데이터.
+CREATE TABLE IF NOT EXISTS field_check (
+    id           BIGSERIAL PRIMARY KEY,
+    observed_at  TIMESTAMPTZ NOT NULL,
+    lat          DOUBLE PRECISION NOT NULL,
+    lon          DOUBLE PRECISION NOT NULL,
+    meas         JSONB,     -- 실측: {ta, rh, wind_ms, globe_c, surface_c, pet, ...}
+    est          JSONB,     -- 엔진: {pvpti, mrt, tsurf, u_p, ta, rh, svf, gvi, cloud, ...}
+    note         TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_field_check_time ON field_check (observed_at DESC);
 """
 
 
@@ -118,6 +132,11 @@ class Archive:
             return
         asyncio.create_task(self._insert_engine_check(kw))
 
+    def record_field_check(self, **kw) -> None:
+        if not self._ready:
+            return
+        asyncio.create_task(self._insert_field_check(kw))
+
     async def _insert_measurement(self, kw: dict) -> None:
         kw.setdefault("observed_at", datetime.now(timezone.utc))
         kw["lat"] = round(float(kw["lat"]), COORD_PRECISION)
@@ -138,6 +157,23 @@ class Archive:
         sql = (f"INSERT INTO engine_check ({', '.join(cols)}) "
                f"VALUES ({', '.join(':' + c for c in cols)})")
         await self._run(sql, vals, "engine_check")
+
+    async def _insert_field_check(self, kw: dict) -> None:
+        import json as _json
+
+        kw.setdefault("observed_at", datetime.now(timezone.utc))
+        vals = {
+            "observed_at": kw["observed_at"],
+            "lat": round(float(kw["lat"]), COORD_PRECISION),
+            "lon": round(float(kw["lon"]), COORD_PRECISION),
+            "meas": _json.dumps(kw.get("meas") or {}, ensure_ascii=False),
+            "est": _json.dumps(kw.get("est") or {}, ensure_ascii=False),
+            "note": kw.get("note"),
+        }
+        sql = ("INSERT INTO field_check (observed_at, lat, lon, meas, est, note) "
+               "VALUES (:observed_at, :lat, :lon, CAST(:meas AS JSONB), "
+               "CAST(:est AS JSONB), :note)")
+        await self._run(sql, vals, "field_check")
 
     async def _run(self, sql: str, vals: dict, what: str) -> None:
         try:

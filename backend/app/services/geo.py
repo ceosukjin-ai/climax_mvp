@@ -156,16 +156,9 @@ async def building_geometry(
             return hit[1]
 
     result: BuildingGeometry | None = None
-    # 리버스지오코딩과 같은 방식 — 국내 공식 데이터(V-World)를 먼저, 실패하면 OSM.
-    for name, fn in (("V-World", _rings_from_vworld), ("OSM", _rings_from_osm)):
-        try:
-            rings = await fn(lat, lon)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"building_geometry[{name}] failed ({type(e).__name__}): {e}")
-            continue
-        best = _pick_ring(rings, name_hint, floors_hint)
-        if best is None:
-            continue
+    rings, src = await _rings_cached(lat, lon)
+    best = _pick_ring(rings, name_hint, floors_hint) if rings else None
+    if best is not None:
         axis, elong = _principal_axis(best)
         result = BuildingGeometry(
             long_axis_deg=round(axis, 1),
@@ -173,13 +166,79 @@ async def building_geometry(
             facade_b_deg=round((axis + 270.0) % 360.0, 1),
             elongation=round(elong, 2),
             is_slab=elong >= MIN_ELONGATION,
-            source=name,
+            source=src,
             neighbors=_collect_neighbors(rings, best),
         )
-        break
 
     _CACHE[key] = (time.time(), result)
     return result
+
+
+# 원시 폴리곤 캐시 — building_geometry(실내)와 sun_blocked_outdoor(실외)가 공유.
+_RINGS_CACHE: dict[
+    tuple[float, float],
+    tuple[float, list[tuple[list[tuple[float, float]], dict]] | None, str],
+] = {}
+
+
+async def _rings_cached(
+    lat: float, lon: float
+) -> tuple[list[tuple[list[tuple[float, float]], dict]], str]:
+    """건물 폴리곤 조회 + 캐시. V-World 우선, 실패 시 OSM. 실패는 짧게 캐시."""
+    key = (round(lat, 4), round(lon, 4))
+    hit = _RINGS_CACHE.get(key)
+    if hit is not None:
+        ttl = _CACHE_TTL_SEC if hit[1] else _NEG_CACHE_TTL_SEC
+        if time.time() - hit[0] < ttl:
+            return hit[1] or [], hit[2]
+
+    for name, fn in (("V-World", _rings_from_vworld), ("OSM", _rings_from_osm)):
+        try:
+            rings = await fn(lat, lon)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"building rings[{name}] failed ({type(e).__name__}): {e}")
+            continue
+        if rings:
+            _RINGS_CACHE[key] = (time.time(), rings, name)
+            return rings, name
+    _RINGS_CACHE[key] = (time.time(), None, "")
+    return [], ""
+
+
+async def sun_blocked_outdoor(
+    lat: float,
+    lon: float,
+    sun_azimuth_deg: float,
+    sun_elevation_deg: float,
+    eye_height_m: float = 1.5,
+) -> tuple[bool, str | None]:
+    """실외 보행자 기준 — 지금 태양이 건물 뒤에 있는가 (2026-08-16).
+
+    실외 MRT의 오랜 공백: SVF는 등방이라 "태양 방향의 건물"을 못 본다.
+    건물 그늘에 서 있어도 직달일사가 통째로 들어가던 것을, 실내 이웃차폐(8/15)와
+    같은 폴리곤·같은 기하로 판정한다. True면 직달(DNI) 차단 — 산란·장파는 그대로.
+
+    실내와 다른 점: **모든 건물이 차폐 후보**다 (실내는 자기 건물을 방위 계산에
+    쓰므로 이웃에서 제외하지만, 보행자에겐 바로 옆 건물이 가장 큰 그늘이다).
+    층수를 모르는 건물은 넣지 않는다 — 그림자 지어내기 금지.
+    """
+    if sun_elevation_deg <= 0.0:
+        return False, None
+    rings, _src = await _rings_cached(lat, lon)
+    if not rings:
+        return False, None
+    # GPS가 건물 외곽선 안으로 튄 경우 그 건물은 판정 불가 — 제외.
+    outside = [(r, p) for r, p in rings if not _point_in_ring(0.0, 0.0, r)]
+    for n in _collect_neighbors(outside, home_ring=None):
+        d_az = abs(((sun_azimuth_deg - n.az_deg + 180) % 360) - 180)
+        if d_az > n.half_deg + 2.0:
+            continue
+        rise = n.height_m - eye_height_m
+        if rise <= 0:
+            continue
+        if sun_elevation_deg < math.degrees(math.atan2(rise, n.dist_m)):
+            return True, f"{n.label} 그늘"
+    return False, None
 
 
 def _dist_to_ring(px: float, py: float, ring: list[tuple[float, float]]) -> float:
@@ -287,7 +346,7 @@ async def _rings_from_vworld(
 
 def _collect_neighbors(
     rings: list[tuple[list[tuple[float, float]], dict]],
-    home_ring: list[tuple[float, float]],
+    home_ring: list[tuple[float, float]] | None,
 ) -> list[Neighbor]:
     """이웃 건물들의 방위·각도폭·거리·높이 — 차폐 계산 재료 (2026-08-15).
 
