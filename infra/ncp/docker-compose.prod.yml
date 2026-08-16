@@ -25,6 +25,8 @@ services:
       KMA_APIHUB_KEY: ${KMA_APIHUB_KEY:-}
       VWORLD_API_KEY: ${VWORLD_API_KEY:-}
       BUILDING_API_KEY: ${BUILDING_API_KEY:-}
+      # 현장 대조 도구 접근키 (2026-08-16, 대표 전용) — 없으면 /field/check 404
+      FIELD_KEY: ${FIELD_KEY:-}
 
       NCP_OBJECT_ACCESS_KEY: ${NCP_OBJECT_ACCESS_KEY:-}
       NCP_OBJECT_SECRET_KEY: ${NCP_OBJECT_SECRET_KEY:-}
