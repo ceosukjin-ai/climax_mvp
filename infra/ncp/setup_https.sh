@@ -200,6 +200,23 @@ nginx -t || { restore_backup_conf; die "nginx 설정 오류"; }
 systemctl reload nginx
 ok "HTTP + ACME 경로 준비 완료"
 
+# --- 자체 점검: 인증 파일을 진짜로 내주는지 미리 확인 ---
+TOKEN="climax-selftest-$$"
+mkdir -p "$WEBROOT/.well-known/acme-challenge"
+echo "$TOKEN" > "$WEBROOT/.well-known/acme-challenge/$TOKEN"
+SELF="$(curl -s -m 5 -H "Host: ${DOMAIN}" "http://127.0.0.1/.well-known/acme-challenge/${TOKEN}")"
+if [ "$SELF" = "$TOKEN" ]; then
+  ok "인증 파일 자체 점검 통과"
+  WEBROOT_OK=1
+else
+  WEBROOT_OK=0
+  warn "nginx가 인증 파일을 안 내줍니다 — 다른 설정이 ${DOMAIN} 를 가로채는 중일 수 있습니다."
+  echo "     현재 잡혀 있는 server_name 목록:"
+  nginx -T 2>/dev/null | grep -E "^\s*(server_name|listen)" | sed 's/^/       /' | head -20
+  echo "     → webroot 대신 standalone 방식으로 발급을 시도합니다(수 초간 nginx 중지)."
+fi
+rm -f "$WEBROOT/.well-known/acme-challenge/$TOKEN"
+
 # -------------------------------------------------------------------------
 say "3/5 Let's Encrypt 인증서 발급"
 
@@ -209,17 +226,40 @@ if ! command -v certbot >/dev/null; then
 fi
 ok "certbot $(certbot --version 2>&1 | awk '{print $2}')"
 
+issue_webroot() {
+  certbot certonly --webroot -w "$WEBROOT" -d "$DOMAIN" \
+      --email "$EMAIL" --agree-tos --no-eff-email --non-interactive
+}
+issue_standalone() {
+  # nginx를 잠깐 멈추고 certbot이 직접 80포트를 잡는다 (설정 문제를 통째로 우회)
+  echo "  · nginx 잠시 중지 → standalone 발급 → 재시작"
+  systemctl stop nginx
+  certbot certonly --standalone -d "$DOMAIN" \
+      --email "$EMAIL" --agree-tos --no-eff-email --non-interactive
+  RC=$?
+  systemctl start nginx
+  return $RC
+}
+
 if [ -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]; then
   ok "이미 인증서가 있습니다 — 발급 건너뜀"
 else
-  certbot certonly --webroot -w "$WEBROOT" -d "$DOMAIN" \
-      --email "$EMAIL" --agree-tos --no-eff-email --non-interactive || {
-    restore_backup_conf
+  ISSUED=0
+  if [ "${WEBROOT_OK:-0}" = "1" ]; then
+    issue_webroot && ISSUED=1 || warn "webroot 방식 실패 — standalone 으로 재시도합니다"
+  fi
+  if [ "$ISSUED" = "0" ]; then
+    issue_standalone && ISSUED=1
+  fi
+  [ "$ISSUED" = "1" ] || {
+    # 설정은 되돌리지 않는다 — 지금 설정도 기존과 동작이 같고, 재시도가 쉬워진다
     echo
-    die "인증서 발급 실패. 가장 흔한 원인:
-       ① 외부에서 이 서버의 80포트가 안 열림 (NCP ACG 인바운드 80 확인)
-       ② $DOMAIN 이 다른 IP를 가리킴 (현재 $RESOLVED)
-       ③ 발급 한도 초과 — 한 시간 뒤 재시도"
+    die "인증서 발급 실패(두 방식 모두). 확인할 것:
+       ① 외부에서 이 서버의 80포트가 열려 있는가 (NCP ACG 인바운드 80)
+       ② $DOMAIN 이 이 서버를 가리키는가 (현재 $RESOLVED)
+       ③ 앞단에 로드밸런서가 있어 80 요청이 다른 곳으로 가는가
+       ④ 발급 한도 초과 — 한 시간 뒤 재시도
+       자세한 로그: /var/log/letsencrypt/letsencrypt.log"
   }
   ok "인증서 발급 완료"
 fi

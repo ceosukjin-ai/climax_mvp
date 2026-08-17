@@ -29,8 +29,11 @@ SRC="${1:-$(ls -1t "$LOCAL_DIR"/climax_*.dump.age 2>/dev/null | head -1)}"
 [ -r "$KEY" ] || { echo "❌ 개인키가 없습니다: $KEY  — 이 열쇠 없이는 백업을 열 수 없습니다"; exit 1; }
 command -v age >/dev/null 2>&1 || { echo "❌ age 미설치 — brew install age"; exit 1; }
 
-OUT="${SRC%.age}"
-echo "── 복호화: $(basename "$SRC") → $(basename "$OUT")"
+# 평문은 임시 폴더에만 만들고 끝나면 지운다 — 백업 폴더에 평문을 남기지 않는다
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+OUT="$WORK/$(basename "${SRC%.age}")"
+echo "── 복호화: $(basename "$SRC") → 임시폴더"
 age -d -i "$KEY" -o "$OUT" "$SRC" || { echo "❌ 복호화 실패 (열쇠가 맞는지 확인)"; exit 1; }
 echo "✅ 복호화 완료 — $(du -h "$OUT" | cut -f1)"
 
@@ -54,6 +57,7 @@ if [ "$TO_SERVER" = "1" ]; then
   "
 else
   echo
-  echo "복호화된 파일: $OUT"
-  echo "서버에 실제로 되돌리려면:  bash scripts/restore_backup.sh --to-server \"$SRC\""
+  echo "✅ 열쇠 정상 — 이 백업은 복원 가능합니다."
+  echo "   (평문은 임시폴더에만 만들었다가 지웠습니다. 백업 폴더에는 암호문만 남습니다.)"
+  echo "   서버에 실제로 되돌리려면:  bash scripts/restore_backup.sh --to-server \"$SRC\""
 fi
