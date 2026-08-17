@@ -16,6 +16,9 @@ KEY="${CLIMAX_AGE_KEY:-$HOME/.config/climax/backup_key.txt}"
 LOCAL_DIR="${CLIMAX_LOCAL_BACKUP_DIR:-$HOME/ClimaX_backups}"
 SSH_PORT="${CLIMAX_SSH_PORT:-30022}"
 SSH_HOST="${CLIMAX_SSH_HOST:-ubuntu@180.210.77.87}"
+SSH_KEY="${CLIMAX_SSH_KEY:-$HOME/.ssh/climax-was-key.pem}"
+SSH="ssh -p $SSH_PORT"; SCP="scp -P $SSH_PORT"
+[ -f "$SSH_KEY" ] && { SSH="$SSH -i $SSH_KEY"; SCP="$SCP -i $SSH_KEY"; }
 CONTAINER="${CLIMAX_PG_CONTAINER:-climax-postgres}"
 
 TO_SERVER=0
@@ -42,8 +45,8 @@ if [ "$TO_SERVER" = "1" ]; then
   read -r -p "정말 진행하려면 'RESTORE' 를 입력하세요: " ANS
   [ "$ANS" = "RESTORE" ] || { echo "취소했습니다."; exit 0; }
 
-  scp -P "$SSH_PORT" "$OUT" "$SSH_HOST:/tmp/climax_restore.dump" || exit 1
-  ssh -p "$SSH_PORT" "$SSH_HOST" "
+  $SCP "$OUT" "$SSH_HOST:/tmp/climax_restore.dump" || exit 1
+  $SSH "$SSH_HOST" "
     docker cp /tmp/climax_restore.dump $CONTAINER:/tmp/r.dump &&
     docker exec $CONTAINER pg_restore -U climax -d climax --clean --if-exists /tmp/r.dump &&
     docker exec $CONTAINER rm -f /tmp/r.dump && rm -f /tmp/climax_restore.dump &&

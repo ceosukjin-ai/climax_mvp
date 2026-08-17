@@ -16,6 +16,9 @@ set -uo pipefail
 
 SSH_PORT="${CLIMAX_SSH_PORT:-30022}"
 SSH_HOST="${CLIMAX_SSH_HOST:-ubuntu@180.210.77.87}"
+SSH_KEY="${CLIMAX_SSH_KEY:-$HOME/.ssh/climax-was-key.pem}"
+SSH="ssh -p $SSH_PORT"
+[ -f "$SSH_KEY" ] && SSH="$SSH -i $SSH_KEY"
 REMOTE_DIR="${CLIMAX_REMOTE_BACKUP_DIR:-/home/ubuntu/climax_backups}"
 LOCAL_DIR="${CLIMAX_LOCAL_BACKUP_DIR:-$HOME/ClimaX_backups}"
 KEY="${CLIMAX_AGE_KEY:-$HOME/.config/climax/backup_key.txt}"
@@ -27,17 +30,17 @@ log() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
 
 log "── 회수 시작 ($SSH_HOST:$REMOTE_DIR → $LOCAL_DIR)"
 
-ssh -p "$SSH_PORT" -o BatchMode=yes -o ConnectTimeout=15 "$SSH_HOST" true 2>>"$LOG" \
-  || { log "❌ ssh 접속 실패 — 키 로그인 설정 확인 (ssh-copy-id -p $SSH_PORT $SSH_HOST)"; exit 1; }
+$SSH -o BatchMode=yes -o ConnectTimeout=15 "$SSH_HOST" true 2>>"$LOG" \
+  || { log "❌ ssh 접속 실패 — 키 로그인 설정 확인 (ssh-copy-id -i $SSH_KEY -p $SSH_PORT $SSH_HOST)"; exit 1; }
 
 # 서버가 백업에 실패한 흔적이 있으면 먼저 알린다
-if ssh -p "$SSH_PORT" "$SSH_HOST" "test -f $REMOTE_DIR/LAST_FAILURE" 2>/dev/null; then
+if $SSH "$SSH_HOST" "test -f $REMOTE_DIR/LAST_FAILURE" 2>/dev/null; then
   log "⚠️  서버 쪽 백업이 실패한 기록이 있음:"
-  ssh -p "$SSH_PORT" "$SSH_HOST" "cat $REMOTE_DIR/LAST_FAILURE" | tee -a "$LOG"
+  $SSH "$SSH_HOST" "cat $REMOTE_DIR/LAST_FAILURE" | tee -a "$LOG"
 fi
 
 # 새 파일만 받아온다(이미 받은 건 건너뜀)
-rsync -avz --ignore-existing -e "ssh -p $SSH_PORT" \
+rsync -avz --ignore-existing -e "$SSH" \
   "$SSH_HOST:$REMOTE_DIR/climax_*" "$LOCAL_DIR/" >>"$LOG" 2>&1 \
   || { log "❌ rsync 실패 (로그: $LOG)"; exit 1; }
 
