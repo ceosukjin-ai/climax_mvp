@@ -49,8 +49,12 @@ RECIPIENT=""
 if [ "$ALLOW_PLAINTEXT" != "1" ]; then
   command -v age >/dev/null 2>&1 || fail "age 미설치 — sudo apt-get install -y age"
   [ -r "$RECIPIENT_FILE" ] || fail "공개키 파일 없음: $RECIPIENT_FILE (맥에서 age-keygen 후 공개키 한 줄만 넣을 것)"
-  RECIPIENT="$(grep -m1 '^age1' "$RECIPIENT_FILE" | tr -d '[:space:]')"
-  [ -n "$RECIPIENT" ] || fail "$RECIPIENT_FILE 에서 age1... 공개키를 찾지 못함"
+  # 줄 앞에 '# public key:' 같은 게 붙어 있어도 공개키만 뽑아낸다
+  RECIPIENT="$(grep -o 'age1[0-9a-z]\{50,\}' "$RECIPIENT_FILE" | head -1)"
+  [ -n "$RECIPIENT" ] || fail "$RECIPIENT_FILE 에서 age1... 공개키를 찾지 못함 (현재 내용: $(head -c 80 "$RECIPIENT_FILE"))"
+  # 형식 사전 검증 — 잘린 키/자리표시자를 여기서 잡는다
+  echo "test" | age -r "$RECIPIENT" -o /dev/null 2>/tmp/.age_check \
+    || fail "공개키 형식 오류: $(tr -d '\n' < /tmp/.age_check) — 키=${RECIPIENT:0:16}…(${#RECIPIENT}자, 정상은 62자)"
 else
   OUT="$BACKUP_DIR/climax_${STAMP}.dump"
   log "⚠️  평문 저장 모드 (CLIMAX_ALLOW_PLAINTEXT=1) — 임시로만 쓸 것"
@@ -70,7 +74,8 @@ docker exec -i "$CONTAINER" pg_restore -l > /dev/null 2>>"$LOG" < "$TMP" \
 
 # 3) 암호화 — 공개키로만 잠그므로 서버에는 여는 열쇠가 없다
 if [ -n "$RECIPIENT" ]; then
-  age -r "$RECIPIENT" -o "$OUT" "$TMP" 2>>"$LOG" || fail "age 암호화 실패"
+  ERR="$(age -r "$RECIPIENT" -o "$OUT" "$TMP" 2>&1)" \
+    || { echo "$ERR" >> "$LOG"; rm -f "$OUT"; fail "age 암호화 실패: ${ERR:-원인 미상}"; }
   ENC_SIZE=$(stat -c %s "$OUT" 2>/dev/null || stat -f %z "$OUT")
   [ "$ENC_SIZE" -gt 1024 ] || { rm -f "$OUT"; fail "암호문이 비정상적으로 작음 (${ENC_SIZE}B)"; }
   # age 파일 헤더 확인 — 진짜 암호문인지
