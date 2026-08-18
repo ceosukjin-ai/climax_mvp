@@ -282,6 +282,34 @@ def _pick_ring(
     return best
 
 
+async def nearest_building_parcel_hint(
+    lat: float, lon: float
+) -> tuple[float, float, dict] | None:
+    """가장 가까운 건물 폴리곤의 **중심 좌표(위경도)** 와 속성을 돌려준다 (2026-08-18).
+
+    왜 필요한가: 리버스지오코딩은 '좌표에 가장 가까운 지번'을 준다. 마당·통로·주차장에
+    GPS가 찍히면 건물이 없는 지번이 나오고 건축물대장 조회가 통째로 빈다
+    (부산대 연구실 → "장전동 40", 사방 30m까지 훑어도 실패. 8/18 실측).
+    건물 폴리곤의 **중심**에서 다시 지오코딩하면 '그 건물의 지번'이 나온다.
+
+    같은 V-World 레이어(LT_C_SPBD)를 실내 방위 계산에서 이미 쓰고 있어 추가 비용이 거의 없다.
+    """
+    rings, _src = await _rings_cached(lat, lon)
+    best = _pick_ring(rings) if rings else None
+    if best is None or len(best) < 4:
+        return None
+    props: dict = {}
+    for ring, pr in rings:
+        if ring is best:
+            props = pr
+            break
+    cx = sum(p[0] for p in best) / len(best)
+    cy = sum(p[1] for p in best) / len(best)
+    clat = lat + cy / 110_540.0
+    clon = lon + cx / (111_320.0 * math.cos(math.radians(lat)))
+    return clat, clon, props
+
+
 async def _rings_from_osm(
     lat: float, lon: float
 ) -> list[tuple[list[tuple[float, float]], dict]]:

@@ -206,6 +206,40 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
 
         rows = await _search(parcel)
         matched = parcel
+
+        # ── ②-a 건물 폴리곤 중심으로 재시도 (2026-08-18) ──
+        # 좌표 지번에 건물이 없으면, **건물 쪽에서 지번을 찾는다.**
+        # 실내 방위 계산에 이미 쓰는 V-World 건물 레이어(LT_C_SPBD)에서 가장 가까운
+        # 건물을 잡아 그 폴리곤 중심에서 다시 지오코딩 — '그 건물의 지번'이 나온다.
+        # 사방 찍어보기보다 정확하고 호출도 적다.
+        if not rows:
+            try:
+                from app.services.geo import nearest_building_parcel_hint
+                hint = await nearest_building_parcel_hint(lat, lon)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"건물 폴리곤 조회 실패({type(e).__name__}): {e}")
+                hint = None
+            if hint:
+                clat, clon, props = hint
+                bname = props.get("buld_nm") or props.get("name") or "이름없음"
+                logger.info(
+                    f"건물 폴리곤 중심으로 재시도: {bname} ({clat:.5f},{clon:.5f}) "
+                    f"· 속성키 {sorted(props.keys())[:12]}"
+                )
+                near = None
+                for fn in (_reverse_ncp, _reverse_vworld):
+                    try:
+                        near = await fn(client, clat, clon)
+                    except Exception:  # noqa: BLE001
+                        near = None
+                    if near:
+                        break
+                if near:
+                    found = await _search(near)
+                    if found:
+                        rows, matched = found, near
+                        logger.info(f"건축물대장: 건물 폴리곤 중심에서 발견 — {near[3]}")
+
         if not rows:
             # 2026-08-18 — **주변 지번까지 훑는다.**
             # GPS는 ±수 m~수십 m 오차가 있고, 리버스지오코딩이 주는 것은
@@ -234,7 +268,9 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
                     logger.info(f"건축물대장: 주변 지번에서 발견 — {near[3]} (좌표 지번은 {parcel[3]})")
                     break
         if not rows:
-            logger.info(f"건축물대장 없음: {parcel[3]} — 주변 4방향까지 탐색했으나 건물 없음")
+            logger.info(
+                f"건축물대장 없음: {parcel[3]} — 폴리곤 중심·주변 4방향까지 탐색했으나 실패"
+            )
             return None
         address = matched[3]          # 실제로 대장이 잡힌 지번의 주소로 표시한다
 
