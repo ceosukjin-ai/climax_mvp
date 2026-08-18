@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import asdict, dataclass
 
@@ -97,6 +98,7 @@ async def _reverse_ncp(client: httpx.AsyncClient, lat: float, lon: float) -> _Pa
     """
     s = get_settings()
     if not s.ncp_maps_client_id or not s.ncp_maps_client_secret:
+        logger.warning("리버스지오코딩(NCP) 건너뜀 — NCP_MAPS 키 미설정(.env.prod 확인)")
         return None
     r = await client.get(NCP_REVERSE_URL, params={
         "coords": f"{lon},{lat}", "output": "json", "orders": "addr",
@@ -171,15 +173,14 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
                 break
         if not parcel:
             return None
-        bjd_code, bun, ji, address, plat_gb = parcel
 
         # ── ② 건축HUB 건축물대장 표제부: 연식·층수·구조·지붕 ──
-        async def _rows_for(pg: str) -> list | None:
+        async def _rows(bjd: str, bun_: str, ji_: str, pg: str) -> list | None:
             rb = await client.get(HUB_URL, params={
                 "serviceKey": s.building_api_key,
-                "sigunguCd": bjd_code[:5], "bjdongCd": bjd_code[5:10],
+                "sigunguCd": bjd[:5], "bjdongCd": bjd[5:10],
                 "platGbCd": pg,
-                "bun": bun, "ji": ji,
+                "bun": bun_, "ji": ji_,
                 "numOfRows": "100", "_type": "json",
             })
             rb.raise_for_status()
@@ -192,16 +193,50 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
                 r = [r]
             return r or None
 
-        rows = await _rows_for(plat_gb)
-        if not rows:
-            # 리버스지오코딩의 대지구분이 틀릴 수 있다 — 반대쪽도 한 번 본다.
-            other = "0" if plat_gb == "1" else "1"
-            rows = await _rows_for(other)
-            if rows:
-                logger.info(f"건축물대장: platGbCd {plat_gb}→{other} 재시도 성공 ({address})")
-        if not rows:
-            logger.info(f"건축물대장 없음: {address} (platGbCd {plat_gb}/{other})")
+        async def _search(pc: _Parcel) -> list | None:
+            """한 지번에 대해 대지구분·부번 변형까지 훑는다."""
+            bjd, bun_, ji_, _addr, pg = pc
+            other = "0" if pg == "1" else "1"
+            for g in (pg, other):                       # 대지 ↔ 산
+                for jj in ([ji_] if ji_ == "0000" else [ji_, "0000"]):  # 부번 있는 것 → 본번만
+                    found = await _rows(bjd, bun_, jj, g)
+                    if found:
+                        return found
             return None
+
+        rows = await _search(parcel)
+        matched = parcel
+        if not rows:
+            # 2026-08-18 — **주변 지번까지 훑는다.**
+            # GPS는 ±수 m~수십 m 오차가 있고, 리버스지오코딩이 주는 것은
+            # '내가 있는 건물의 지번'이 아니라 '좌표에 가장 가까운 지번'이다.
+            # 마당·도로·주차장·캠퍼스 통로에 찍히면 그 지번에는 건물이 없다
+            # (부산대 연구실 → "장전동 40", 대장 없음. 8/18 실측).
+            # 실패했을 때만 도는 경로라 평상시 비용은 0이다.
+            seen = {(parcel[0], parcel[1], parcel[2])}
+            dlat = 30.0 / 111_320.0
+            dlon = 30.0 / (111_320.0 * max(0.2, math.cos(math.radians(lat))))
+            for dy, dx in ((dlat, 0.0), (-dlat, 0.0), (0.0, dlon), (0.0, -dlon)):
+                near: _Parcel | None = None
+                for fn in (_reverse_ncp, _reverse_vworld):
+                    try:
+                        near = await fn(client, lat + dy, lon + dx)
+                    except Exception:  # noqa: BLE001
+                        near = None
+                    if near:
+                        break
+                if not near or (near[0], near[1], near[2]) in seen:
+                    continue
+                seen.add((near[0], near[1], near[2]))
+                found = await _search(near)
+                if found:
+                    rows, matched = found, near
+                    logger.info(f"건축물대장: 주변 지번에서 발견 — {near[3]} (좌표 지번은 {parcel[3]})")
+                    break
+        if not rows:
+            logger.info(f"건축물대장 없음: {parcel[3]} — 주변 4방향까지 탐색했으나 건물 없음")
+            return None
+        address = matched[3]          # 실제로 대장이 잡힌 지번의 주소로 표시한다
 
         # 한 지번에 여러 동(아파트 단지 등) — 가장 높은 동을 대표로
         def _floors(r: dict) -> int:
