@@ -212,6 +212,7 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
         # 실내 방위 계산에 이미 쓰는 V-World 건물 레이어(LT_C_SPBD)에서 가장 가까운
         # 건물을 잡아 그 폴리곤 중심에서 다시 지오코딩 — '그 건물의 지번'이 나온다.
         # 사방 찍어보기보다 정확하고 호출도 적다.
+        poly_props: dict = {}
         if not rows:
             try:
                 from app.services.geo import nearest_building_parcel_hint
@@ -220,25 +221,39 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
                 logger.warning(f"건물 폴리곤 조회 실패({type(e).__name__}): {e}")
                 hint = None
             if hint:
-                clat, clon, props = hint
-                bname = props.get("buld_nm") or props.get("name") or "이름없음"
-                logger.info(
-                    f"건물 폴리곤 중심으로 재시도: {bname} ({clat:.5f},{clon:.5f}) "
-                    f"· 속성키 {sorted(props.keys())[:12]}"
-                )
-                near = None
-                for fn in (_reverse_ncp, _reverse_vworld):
-                    try:
-                        near = await fn(client, clat, clon)
-                    except Exception:  # noqa: BLE001
-                        near = None
-                    if near:
-                        break
-                if near:
-                    found = await _search(near)
+                clat, clon, poly_props = hint
+                bname = poly_props.get("buld_nm") or poly_props.get("name") or "이름없음"
+                logger.info(f"건물 폴리곤: {bname} ({clat:.5f},{clon:.5f})")
+
+                # ① 건물관리번호(bd_mgt_sn)에서 지번을 직접 뽑는다 — 가장 정확 (2026-08-18).
+                #    25자리 = 법정동코드10 + 대지구분1 + 본번4 + 부번4 + 일련번호6.
+                #    지오코딩을 아예 건너뛰므로 "가장 가까운 지번" 문제가 원천적으로 없다.
+                mgt = str(poly_props.get("bd_mgt_sn") or "").strip()
+                if len(mgt) >= 19 and mgt[:19].isdigit():
+                    pnu: _Parcel = (mgt[0:10], mgt[11:15], mgt[15:19],
+                                    f"{bname} (건물관리번호 {mgt[:19]})", mgt[10:11])
+                    found = await _search(pnu)
                     if found:
-                        rows, matched = found, near
-                        logger.info(f"건축물대장: 건물 폴리곤 중심에서 발견 — {near[3]}")
+                        rows, matched = found, pnu
+                        logger.info(f"건축물대장: 건물관리번호로 발견 — {pnu[3]}")
+                    else:
+                        logger.info(f"건축물대장: 건물관리번호 {mgt[:19]} 로도 없음")
+
+                # ② 그래도 없으면 폴리곤 중심 좌표로 다시 지오코딩
+                if not rows:
+                    near = None
+                    for fn in (_reverse_ncp, _reverse_vworld):
+                        try:
+                            near = await fn(client, clat, clon)
+                        except Exception:  # noqa: BLE001
+                            near = None
+                        if near:
+                            break
+                    if near:
+                        found = await _search(near)
+                        if found:
+                            rows, matched = found, near
+                            logger.info(f"건축물대장: 건물 폴리곤 중심에서 발견 — {near[3]}")
 
         if not rows:
             # 2026-08-18 — **주변 지번까지 훑는다.**
@@ -268,8 +283,24 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
                     logger.info(f"건축물대장: 주변 지번에서 발견 — {near[3]} (좌표 지번은 {parcel[3]})")
                     break
         if not rows:
+            # 대장은 없어도 **건물은 특정했다면** 그 정보만이라도 쓴다 (2026-08-18).
+            # 층수(gro_flo_co)만 있어도 실내 체감의 층 보정이 살아나고, 화면에 건물명이 뜬다.
+            # 대장이 없는 건물(대학·관공서 일부·미등재 신축)을 통째로 버릴 이유가 없다.
+            nm = poly_props.get("buld_nm") or poly_props.get("name")
+            try:
+                pfloors = int(poly_props.get("gro_flo_co") or 0) or None
+            except (TypeError, ValueError):
+                pfloors = None
+            if nm or pfloors:
+                logger.info(f"건축물대장 없음 — 건물 도형 정보로 대체: {nm} / {pfloors}층")
+                return BuildingRisk(
+                    address=parcel[3], building_name=nm, built_year=None,
+                    floors=pfloors, structure=None, roof=None, purpose=None,
+                    score=0, level="",
+                    reasons=["건축물대장이 없어 건물 모양·층수 정보만 사용했어요"],
+                )
             logger.info(
-                f"건축물대장 없음: {parcel[3]} — 폴리곤 중심·주변 4방향까지 탐색했으나 실패"
+                f"건축물대장 없음: {parcel[3]} — 폴리곤·주변 4방향까지 탐색했으나 실패"
             )
             return None
         address = matched[3]          # 실제로 대장이 잡힌 지번의 주소로 표시한다
