@@ -801,9 +801,21 @@ async def building_risk_at(
     from app.services.indoor import compute_indoor
 
     b = await building_risk(lat, lon)
+    # 2026-08-18 — 건물 정보가 없다고 **404로 끊지 않는다.**
+    # 실내 체감의 주 입력은 외기 기온·일평균·일사·습도이고 건축물대장은 보정 항이다.
+    # 대장이 안 잡히는 곳(산번지·무허가·옥탑·컨테이너·신축 미등재)이야말로 폭염에
+    # 취약한데, 지금까지는 그런 자리에서 실내 축이 통째로 죽었다(앱에는 "서버 응답
+    # 실패"로만 보였다). 표준 건물로 가정해서라도 값을 낸다.
     if b is None:
-        raise HTTPException(status_code=404, detail="건물 정보를 찾을 수 없음")
-    result = to_dict(b)
+        result = {
+            "address": None, "building_name": None, "built_year": None,
+            "floors": None, "structure": None, "roof": None, "purpose": None,
+            "score": 0, "level": None,
+            "reasons": ["건축물대장을 찾지 못해 표준 건물로 가정해 추정했어요"],
+        }
+    else:
+        result = to_dict(b)
+    result["building_found"] = b is not None
     result["est_indoor_c"] = None
     result["indoor_pvpti"] = None
     result["indoor_risk"] = None
@@ -867,7 +879,9 @@ async def building_risk_at(
                 # 건축물대장에서 이미 아는 건물명·층수로 교차 대조 — 긴 아파트 옆의
                 # 작은 상가가 '가장 가까운 건물'로 잡히는 것을 막는다 (2026-08-15 실검증).
                 geom = await building_geometry(
-                    lat, lon, name_hint=b.building_name, floors_hint=b.floors,
+                    lat, lon,
+                    name_hint=b.building_name if b else None,
+                    floors_hint=b.floors if b else None,
                 )
                 facade_gain, facade_note = facade_solar_gain(
                     sun.azimuth_deg, sun.elevation_deg, geom, facing_deg=facing,
@@ -901,14 +915,14 @@ async def building_risk_at(
                 t_mean_today=t_mean,
                 humidity_pct=obs.humidity_pct,
                 cloud_fraction=cloud,
-                building_score=b.score,
-                structure=b.structure,
+                building_score=b.score if b else 0,
+                structure=b.structure if b else None,
                 age=age,
                 conditions=conditions.split(",") if conditions else None,
                 ambient_measured=ambient,
                 humidity_measured=humidity,
                 floor=floor,
-                total_floors=b.floors,
+                total_floors=b.floors if b else None,
                 lat=lat,          # 실제 태양 위치로 일사 계산 (2026-08-14)
                 lon=lon,
                 facade_gain=facade_gain,

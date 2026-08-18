@@ -81,7 +81,11 @@ async def building_risk(lat: float, lon: float) -> BuildingRisk | None:
 
 
 # 좌표 → (법정동코드 10자리, 본번, 부번, 주소문자열)
-_Parcel = tuple[str, str, str, str | None]
+# (법정동코드, 본번, 부번, 주소, 대지구분)
+# 대지구분(platGbCd): "0"=대지, "1"=산. 2026-08-18 추가 —
+# 이걸 안 보내면 **산번지 건물은 건축물대장이 통째로 안 잡힌다**(부산대 장전동 산30 등).
+# 대학·산기슭 주택·요양시설처럼 정작 실내 축이 필요한 곳이 여기 많다.
+_Parcel = tuple[str, str, str, str | None, str]
 
 
 async def _reverse_ncp(client: httpx.AsyncClient, lat: float, lon: float) -> _Parcel | None:
@@ -111,11 +115,13 @@ async def _reverse_ncp(client: httpx.AsyncClient, lat: float, lon: float) -> _Pa
     n2 = (land.get("number2") or "").strip()              # 부번
     if len(bjd_code) < 10 or not n1:
         return None
+    # NCP land.type: "1"=일반 지번, "2"=산 → 건축HUB platGbCd 는 "0"/"1"
+    plat_gb = "1" if str(land.get("type") or "").strip() == "2" else "0"
     reg = it.get("region") or {}
     address = " ".join(
         (reg.get(f"area{i}") or {}).get("name", "") for i in range(1, 5)
-    ).strip() + f" {n1}" + (f"-{n2}" if n2 else "")
-    return bjd_code, n1.zfill(4), (n2 or "0").zfill(4), address or None
+    ).strip() + (" 산" if plat_gb == "1" else "") + f" {n1}" + (f"-{n2}" if n2 else "")
+    return bjd_code, n1.zfill(4), (n2 or "0").zfill(4), address or None, plat_gb
 
 
 async def _reverse_vworld(client: httpx.AsyncClient, lat: float, lon: float) -> _Parcel | None:
@@ -138,9 +144,11 @@ async def _reverse_vworld(client: httpx.AsyncClient, lat: float, lon: float) -> 
     bunji = (st.get("level5") or "").strip()
     if len(bjd_code) < 10 or not bunji:
         return None
+    plat_gb = "1" if "산" in bunji else "0"
     parts = bunji.replace("산", "").split("-")
     return (bjd_code, parts[0].strip().zfill(4),
-            (parts[1].strip() if len(parts) > 1 else "0").zfill(4), item.get("text"))
+            (parts[1].strip() if len(parts) > 1 else "0").zfill(4),
+            item.get("text"), plat_gb)
 
 
 async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
@@ -163,24 +171,36 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
                 break
         if not parcel:
             return None
-        bjd_code, bun, ji, address = parcel
+        bjd_code, bun, ji, address, plat_gb = parcel
 
         # ── ② 건축HUB 건축물대장 표제부: 연식·층수·구조·지붕 ──
-        rb = await client.get(HUB_URL, params={
-            "serviceKey": s.building_api_key,
-            "sigunguCd": bjd_code[:5], "bjdongCd": bjd_code[5:10],
-            "bun": bun, "ji": ji,
-            "numOfRows": "100", "_type": "json",
-        })
-        rb.raise_for_status()
-        body = rb.json().get("response", {}).get("body", {})
-        items = body.get("items") or {}
-        rows = items.get("item") if isinstance(items, dict) else None
-        if rows is None:
-            return None
-        if isinstance(rows, dict):
-            rows = [rows]
+        async def _rows_for(pg: str) -> list | None:
+            rb = await client.get(HUB_URL, params={
+                "serviceKey": s.building_api_key,
+                "sigunguCd": bjd_code[:5], "bjdongCd": bjd_code[5:10],
+                "platGbCd": pg,
+                "bun": bun, "ji": ji,
+                "numOfRows": "100", "_type": "json",
+            })
+            rb.raise_for_status()
+            body = rb.json().get("response", {}).get("body", {})
+            items = body.get("items") or {}
+            r = items.get("item") if isinstance(items, dict) else None
+            if r is None:
+                return None
+            if isinstance(r, dict):
+                r = [r]
+            return r or None
+
+        rows = await _rows_for(plat_gb)
         if not rows:
+            # 리버스지오코딩의 대지구분이 틀릴 수 있다 — 반대쪽도 한 번 본다.
+            other = "0" if plat_gb == "1" else "1"
+            rows = await _rows_for(other)
+            if rows:
+                logger.info(f"건축물대장: platGbCd {plat_gb}→{other} 재시도 성공 ({address})")
+        if not rows:
+            logger.info(f"건축물대장 없음: {address} (platGbCd {plat_gb}/{other})")
             return None
 
         # 한 지번에 여러 동(아파트 단지 등) — 가장 높은 동을 대표로

@@ -200,8 +200,8 @@ class Archive:
                     "ORDER BY observed_at DESC LIMIT 48"
                 ))
                 tsurf = [
-                    {"t": row[0].isoformat(), "obs": float(row[1]),
-                     "est": float(row[2]),
+                    {"t": row[0].isoformat(), "obs": round(float(row[1]), 1),
+                     "est": round(float(row[2]), 1),   # REAL(float4) 변환 꼬리 제거
                      "resid": round(float(row[2]) - float(row[1]), 1)}
                     for row in r
                 ]
