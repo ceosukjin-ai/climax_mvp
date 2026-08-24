@@ -472,6 +472,31 @@ async def vpti_personalized_at(
 
 
 @router.get(
+    "/shelters",
+    summary="무더위쉼터 — 내 위치 주변 (전국 61,017곳, 행정안전부)",
+)
+async def shelters(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    radius: float = Query(3000.0, ge=100.0, le=20000.0, description="반경 m"),
+    limit: int = Query(200, ge=1, le=1000),
+) -> JSONResponse:
+    """앱 안에 부산 1,688곳이 하드코딩돼 있던 것을 대체한다.
+
+    스토어에 올리면 전국에서 내려받는데 부산 데이터만 들고 있으면
+    다른 지역 사용자에게는 쉼터 기능이 통째로 먹통이 된다.
+    """
+    from app.services import shelters as sh
+
+    items = sh.nearby(lat, lon, radius_m=radius, limit=limit)
+    return JSONResponse({
+        "count": len(items), "radius_m": radius,
+        "total_nationwide": sh.count(),
+        "shelters": items,
+    })
+
+
+@router.get(
     "/roads",
     summary="보행 도로망 — 타일 캐시 (쾌적 경로용)",
 )
