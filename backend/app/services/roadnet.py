@@ -75,7 +75,7 @@ def tile_bbox(ty: int, tx: int) -> tuple[float, float, float, float]:
 
 
 def _key(ty: int, tx: int, detail: str) -> str:
-    return f"roads:v1:{detail}:{ty}:{tx}"
+    return f"roads:v2:{detail}:{ty}:{tx}"
 
 
 def _overpass_query(bb: tuple[float, float, float, float], detail: str) -> str:
@@ -102,10 +102,11 @@ async def _fetch_tile(ty: int, tx: int, detail: str) -> list[dict]:
     async with httpx.AsyncClient(timeout=timeout) as client:
         for url in OVERPASS_ENDPOINTS:
             try:
-                resp = await client.post(
-                    url, content=f"data={query}".encode(),
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
+                # ⚠️ 반드시 data= 로 넘겨 httpx 가 URL 인코딩하게 한다.
+                #    직접 f"data={query}" 로 만들어 보내면 질의 안의 공백
+                #    ("out geom qt;")에서 잘려 Overpass 가 **빈 결과**를 돌려준다.
+                #    (2026-08-24: 이 버그로 count=0 이 캐시까지 됐다)
+                resp = await client.post(url, data={"data": query})
                 if resp.status_code != 200:
                     last = RoadNetError(f"{url} → HTTP {resp.status_code}")
                     continue
@@ -113,6 +114,11 @@ async def _fetch_tile(ty: int, tx: int, detail: str) -> list[dict]:
                 els = data.get("elements")
                 if not isinstance(els, list):
                     last = RoadNetError(f"{url} → 형식 오류")
+                    continue
+                if not els:
+                    # 바다·산 한가운데면 정말 빌 수 있지만, 대부분은 질의가 잘못 간 것이다.
+                    # 빈 결과를 캐시하면 그 타일이 영원히 비어 버린다 → 실패로 처리.
+                    last = RoadNetError(f"{url} → 빈 결과")
                     continue
                 return els
             except Exception as e:  # noqa: BLE001
@@ -172,7 +178,8 @@ class RoadNetService:
             if hit is not None:
                 return hit, True
             els = await _fetch_tile(ty, tx, detail)
-            await self._put_cached(k, els)
+            if els:                      # 빈 결과는 절대 저장하지 않는다
+                await self._put_cached(k, els)
             return els, False
 
     async def bbox(
