@@ -19,6 +19,13 @@ services:
 
       GOOGLE_STREETVIEW_API_KEY: ${GOOGLE_STREETVIEW_API_KEY}
       GOOGLE_STREETVIEW_SIGNING_SECRET: ${GOOGLE_STREETVIEW_SIGNING_SECRET:-}
+      # 거리뷰 월 이미지 상한 (1지점=5장). 구글 무료 10,000장 · 초과 1,000장당 $7.
+      # 30,000장 = 월 6,000 신규 지점, 최악의 경우 약 20만원.
+      # ⚠️ 실제 과금은 구글 콘솔에 결제수단이 등록돼 있어야 발생한다.
+      #    없으면 구글이 무료 한도에서 스스로 멈춘다(= 여기 값과 무관하게 안전).
+      # ⚠️ 0 이하로 두지 말 것 — 요금뿐 아니라 약관 3.2.3(a)(ii) '대량 다운로드'로
+      #    읽힐 트래픽까지 열린다. 계정 정지는 요금보다 치명적이다.
+      STREETVIEW_MONTHLY_IMAGE_BUDGET: ${STREETVIEW_MONTHLY_IMAGE_BUDGET:-30000}
       NCP_MAPS_CLIENT_ID: ${NCP_MAPS_CLIENT_ID}
       NCP_MAPS_CLIENT_SECRET: ${NCP_MAPS_CLIENT_SECRET}
       KMA_API_KEY: ${KMA_API_KEY}

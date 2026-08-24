@@ -125,11 +125,18 @@ class CacheService:
     # ===== 좌표 → panoId 매핑 =====
 
     @staticmethod
-    def _location_key(lat: float, lon: float, precision: int = 5) -> str:
+    def _location_key(lat: float, lon: float, precision: int = 4) -> str:
         """위경도 반올림 → 격자 단위 키.
 
         precision=5 → 약 1m 단위, 4 → 약 11m, 3 → 약 110m.
-        VSI 분석 단위 (25m)보다 작게 잡아 안전.
+        VSI 분석 단위(25m)보다 작아야 하므로 4(11m)까지가 안전 범위다.
+
+        ⚠️ 2026-08-24: 5(1m) → 4(11m) 로 넓혔다.
+        1m 격자는 **한 발짝만 움직여도 다른 자리로 봤다.** 그러면 같은 골목에서
+        서로 다른 파노라마가 계속 새로 분석되고, 그게 곧 구글 거리뷰 과금이다
+        (월 1만 장 무료, 초과 1,000장당 $7 · 1지점=5장).
+        11m 격자는 파노라마 간격(약 10m)과 맞아떨어져 정확도 손실이 사실상 없다.
+        좌표→파노라마 조회(메타데이터)는 무제한 무료라 넓혀도 손해가 없다.
         """
         return f"pano:location:{round(lat, precision)}:{round(lon, precision)}"
 

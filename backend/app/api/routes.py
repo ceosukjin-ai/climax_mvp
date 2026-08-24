@@ -472,6 +472,39 @@ async def vpti_personalized_at(
 
 
 @router.get(
+    "/quota", summary="거리영상 월 사용량·잔여 (관리자용)",
+)
+async def imagery_quota(request: Request) -> JSONResponse:
+    """구글 거리뷰 이번 달 사용량. 요금이 나가기 전에 눈으로 볼 수 있어야 한다.
+
+    요금 구조(2026-08 확인): **월 10,000장 무료**, 초과 1,000장당 $7.
+    파노라마 1지점 = 5장이므로 무료로 월 2,000개 신규 지점, 그 뒤 지점당 약 50원.
+    좌표→파노라마 조회(메타데이터)는 무제한 무료라 여기 안 잡힌다.
+    """
+    s = get_settings()
+    cache = getattr(request.app.state, "cache", None)
+    ym = datetime.now(timezone.utc).strftime("%Y%m")
+    used = 0
+    if cache is not None:
+        try:
+            used = await cache.get_imagery_fetch_count(ym)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[quota] 조회 실패: {}", e)
+    budget = s.streetview_monthly_image_budget
+    remain = max(0, budget - used) if budget > 0 else None
+    return JSONResponse({
+        "month": ym,
+        "images_used": used,
+        "images_budget": budget,
+        "images_remaining": remain,
+        "points_used": used // 5,
+        "points_remaining": (remain // 5) if remain is not None else None,
+        "pct": round(used / budget * 100, 1) if budget > 0 else None,
+        "note": "1지점=5장 · 구글 무료 월 10,000장 · 초과 1,000장당 $7",
+    })
+
+
+@router.get(
     "/shelters",
     summary="무더위쉼터 — 내 위치 주변 (전국 61,017곳, 행정안전부)",
 )
