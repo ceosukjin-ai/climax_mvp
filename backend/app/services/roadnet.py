@@ -34,11 +34,17 @@ MAX_TILES = 120
 #      overpass-api.de  200  /  overpass.osm.jp  000(도달 불가)
 #    지리적으로 가깝다는 이유로 osm.jp 를 1순위에 뒀더니 매 요청마다 거기서 먼저
 #    시간을 버렸다. **실측으로 확인된 순서**를 쓴다.
+# Overpass 공개 서버는 IP 당 동시 슬롯이 2개다. 타일을 한꺼번에 쏘면 거절당한다.
+_SLOTS = asyncio.Semaphore(2)
+
+# 예의상 신원을 밝힌다 — 익명 대량요청은 차단 대상이 된다.
+_UA = {"User-Agent": "ClimaX/1.0 (+https://climaxapp.kr) route-tiles"}
+
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",          # 실서버에서 도달 확인 (200)
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.osm.ch/api/interpreter",
-    "https://overpass.osm.jp/api/interpreter",          # 실서버에서 도달 불가 — 마지막
+    # overpass.osm.jp 는 뺐다 — 2026-08-24 실서버 로그: SSL 인증서 도메인 불일치로 100% 실패.
 ]
 
 # 'lite' 는 service(단지 내 도로·주차장 진입로)와 track 을 뺀다 — 용량이 몇 배 줄어든다.
@@ -103,21 +109,31 @@ async def _fetch_tile(ty: int, tx: int, detail: str) -> list[dict]:
         for url in OVERPASS_ENDPOINTS:
             try:
                 # ⚠️ 반드시 data= 로 넘겨 httpx 가 URL 인코딩하게 한다.
-                #    직접 f"data={query}" 로 만들어 보내면 질의 안의 공백
-                #    ("out geom qt;")에서 잘려 Overpass 가 **빈 결과**를 돌려준다.
-                #    (2026-08-24: 이 버그로 count=0 이 캐시까지 됐다)
-                resp = await client.post(url, data={"data": query})
+                #    직접 f"data={query}" 로 만들면 질의 안의 공백("out geom qt;")에서
+                #    잘려 Overpass 가 빈 결과를 돌려준다 (2026-08-24 실측).
+                async with _SLOTS:
+                    resp = await client.post(url, data={"data": query}, headers=_UA)
                 if resp.status_code != 200:
+                    body = resp.text[:200].replace("\n", " ")
                     last = RoadNetError(f"{url} → HTTP {resp.status_code}")
+                    logger.warning("Overpass HTTP {} {} :: {}", resp.status_code, url, body)
                     continue
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except Exception:  # noqa: BLE001
+                    logger.warning("Overpass 비JSON 응답 {} :: {}", url, resp.text[:200])
+                    last = RoadNetError(f"{url} → 비JSON 응답")
+                    continue
                 els = data.get("elements")
                 if not isinstance(els, list):
                     last = RoadNetError(f"{url} → 형식 오류")
                     continue
                 if not els:
-                    # 바다·산 한가운데면 정말 빌 수 있지만, 대부분은 질의가 잘못 간 것이다.
+                    # 바다·산 한가운데면 정말 빌 수 있지만 대부분은 질의가 잘못 간 것이다.
                     # 빈 결과를 캐시하면 그 타일이 영원히 비어 버린다 → 실패로 처리.
+                    # ★ 원인 추적을 위해 응답 앞부분을 반드시 남긴다 (조용히 넘어가면 못 찾는다).
+                    logger.warning("Overpass 빈 결과 {} :: remark={} :: {}",
+                                   url, data.get("remark"), resp.text[:300])
                     last = RoadNetError(f"{url} → 빈 결과")
                     continue
                 return els
