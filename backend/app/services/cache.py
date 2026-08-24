@@ -38,6 +38,13 @@ class PanoAnalysisCache:
     # 기존(구버전) 캐시 항목엔 없으므로 기본값을 둔다(from_bytes 하위호환).
     road_axis_deg: float = 0.0
     road_axis_source: str = "assumed"  # osm | gps | assumed
+    # 거리영상 출처 (2026-08-21) — 약관 대응·원천 교체를 위해 반드시 남긴다.
+    #   gsv       = Google Street View  → 약관 3.2.3(c) 상 파생물 저장·ML 학습 금지
+    #   mapillary = Mapillary (CC BY-SA) → 파생·학습 허용
+    #   own       = 자체 촬영            → 제약 없음
+    # 기존(구버전) 캐시 항목엔 이 필드가 없으므로 기본값 gsv — 실제로 전부 GSV 유래다.
+    # 원천을 교체할 때 이 값으로 재계산 대상을 골라낸다(app/data_policy.py 참조).
+    imagery_source: str = "gsv"
 
     def to_bytes(self) -> bytes:
         return orjson.dumps(asdict(self))
@@ -188,6 +195,30 @@ class CacheService:
             ttl_seconds,
             weather.to_bytes(),
         )
+
+    # ===== 거리영상 호출 월 쿼터 (2026-08-21) =====
+    #
+    # 두 가지를 동시에 막는다:
+    #   ① 구글 무료 한도(월 1만 이미지 요청) 초과 과금
+    #   ② 약관 3.2.3(a)(ii) "bulk download Street View images" — 일괄 스캔이
+    #      실수로 돌더라도 월 상한에서 강제로 멈춘다.
+    # API 워커가 여러 개이므로 프로세스 메모리가 아니라 Redis 카운터를 쓴다.
+
+    @staticmethod
+    def _imagery_quota_key(year_month: str) -> str:
+        return f"quota:imagery:{year_month}"
+
+    async def incr_imagery_fetch(self, year_month: str, n: int = 1) -> int:
+        """이번 달 거리영상 '이미지 요청 수'를 n 만큼 증가시키고 누계를 반환."""
+        key = self._imagery_quota_key(year_month)
+        count = int(await self._client.incrby(key, n))
+        if count <= n:  # 이번 달 첫 호출 — 만료(40일) 설정
+            await self._client.expire(key, 60 * 60 * 24 * 40)
+        return count
+
+    async def get_imagery_fetch_count(self, year_month: str) -> int:
+        raw = await self._client.get(self._imagery_quota_key(year_month))
+        return int(raw) if raw else 0
 
     # ===== 디버깅·관리 =====
 

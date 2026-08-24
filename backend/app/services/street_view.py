@@ -11,6 +11,21 @@ Google Street View Static API 클라이언트.
 - Metadata 호출은 무료 (panoId 확인용)
 - 이미지 호출만 유료 (약 $0.007/장, 5장/포인트 = $0.035/포인트)
 - Redis에 panoId별로 영구 저장 → 재방문 시 0원
+
+⚠️ 약관 경고 (2026-08-21 검토, docs/DATA_LICENSE_POLICY.md 참조)
+------------------------------------------------------------
+Google Maps Platform 약관 3.2.3 은 다음을 금지한다:
+  (a)(i)  파생 콘텐츠의 pre-fetch / index / store
+  (a)(ii) Street View 이미지의 bulk download
+  (c)(v)  스트리트뷰 영상으로부터 도시 단위 인덱스 구축
+          → 우리의 SVF/GVI/BVI 산출·영구 저장이 여기에 해당한다
+  (c)(vii) Google Maps Content 를 ML 모델 학습·검증·파인튜닝에 사용
+          → 위성 학생 모델의 교사 라벨로 쓰는 것이 여기에 해당한다
+명시적으로 허용된 것은 **panoId 캐싱 뿐**이다(Service Specific Terms A.3).
+
+따라서 이 모듈로 만든 데이터에는 반드시 imagery_source="gsv" 태그를 붙이고,
+ML 학습 경로에서는 app/data_policy.py 가 이를 걸러낸다. 원천은 Mapillary·
+자체 촬영으로 교체 예정이며, 그때 이 태그로 재계산 대상을 식별한다.
 """
 from __future__ import annotations
 
@@ -101,6 +116,11 @@ class GoogleStreetViewClient:
             if meta.status == "OK":
                 result = await client.fetch_five_views(meta)
     """
+
+    # 이 클라이언트가 만들어내는 데이터의 출처 태그.
+    # 캐시(PanoAnalysisCache.imagery_source)·DB(measurement.imagery_src)에 함께 남겨,
+    # 원천 교체 시 GSV 유래 데이터만 골라 폐기·재계산할 수 있게 한다.
+    IMAGERY_SOURCE = "gsv"
 
     def __init__(
         self,

@@ -471,22 +471,152 @@ async def vpti_personalized_at(
     )
 
 
-@router.get("/geocode", summary="주소/장소 → 좌표 (NCP 주소 + OSM 장소명)")
+@router.get(
+    "/roads",
+    summary="보행 도로망 — 타일 캐시 (쾌적 경로용)",
+)
+async def roads(
+    request: Request,
+    bbox: str = Query(..., description="minLat,minLon,maxLat,maxLon"),
+    detail: str = Query("lite", pattern="^(lite|full)$",
+                        description="lite=단지내 도로 제외(빠름) / full=골목 포함"),
+) -> JSONResponse:
+    """앱이 공개 Overpass 를 직접 부르던 것을 대신한다.
+
+    같은 OSM 원본이라 **정확도는 그대로**고, 바뀌는 건 "누가 몇 번 받느냐"뿐이다.
+    타일(0.02도 ≈ 2km)마다 한 번만 받아 영구 보관하므로, 그 동네 첫 요청만
+    기다리고 그 뒤 모든 사용자는 즉시 받는다.
+    """
+    from app.services.roadnet import RoadNetError, RoadNetService
+
+    try:
+        parts = [float(v) for v in bbox.split(",")]
+        if len(parts) != 4:
+            raise ValueError
+        min_lat, min_lon, max_lat, max_lon = parts
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="bbox 형식이 잘못됐습니다. minLat,minLon,maxLat,maxLon",
+        ) from None
+    if not (-90 <= min_lat < max_lat <= 90 and -180 <= min_lon < max_lon <= 180):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="bbox 범위가 잘못됐습니다.")
+
+    svc = getattr(request.app.state, "roadnet", None)
+    if svc is None:
+        svc = RoadNetService(getattr(request.app.state, "cache", None))
+        request.app.state.roadnet = svc
+
+    t0 = _time.perf_counter()
+    try:
+        out = await svc.bbox(min_lat, min_lon, max_lat, max_lon, detail=detail)
+    except RoadNetError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY,
+                            detail=str(e)) from e
+    out["meta"]["elapsed_ms"] = round((_time.perf_counter() - t0) * 1000)
+    logger.info("roads {} detail={} tiles={} hits={} {}ms",
+                bbox, detail, out["meta"]["tiles"], out["meta"]["cache_hits"],
+                out["meta"]["elapsed_ms"])
+    return JSONResponse(out)
+
+
+@router.get(
+    "/places/search",
+    summary="장소 검색 — 상호·건물명·주소로 후보 목록 (카카오 로컬)",
+)
+async def places_search(
+    query: str = Query(..., min_length=1, description="상호·건물명·주소 (예: 서면 스타벅스)"),
+    lat: float | None = Query(None, ge=-90.0, le=90.0, description="현재 위치 위도(가까운 순 정렬)"),
+    lon: float | None = Query(None, ge=-180.0, le=180.0, description="현재 위치 경도"),
+    size: int = Query(10, ge=1, le=15, description="후보 개수"),
+) -> JSONResponse:
+    """목적지 후보를 **여러 개** 돌려준다 — 앱은 이걸 리스트로 그려 고르게 한다.
+
+    기존 /geocode 는 답을 하나만 주고 못 찾으면 404였다. 사람은 주소를 외우지 않으므로
+    "한 방에 정확히 맞히기"가 아니라 "후보를 보여주고 고르게 하기"가 맞는 구조다.
+
+    lat/lon 을 함께 주면 가까운 곳이 위로 온다. 결과가 없어도 404가 아니라 빈 목록이다
+    (사용자가 아직 타이핑 중일 수 있다 — 자동완성에서 404는 오류로 보인다).
+    """
+    from app.services.place_search import search_places
+
+    s = get_settings()
+    places = await search_places(
+        s.kakao_rest_api_key, query, lat=lat, lon=lon, size=size
+    )
+
+    # 카카오 키가 없거나 결과가 비면 기존 경로(OSM 장소명)로 한 번 더 시도 — 하위호환
+    if not places:
+        from app.services.ncp_directions import nominatim_geocode
+
+        fallback = await nominatim_geocode(query)
+        if fallback is not None:
+            flat, flon, flabel = fallback
+            places = [{
+                "name": query, "address": flabel, "category": "",
+                "lat": flat, "lon": flon, "distance_m": None, "source": "osm",
+            }]
+
+    return JSONResponse({"query": query, "count": len(places), "places": places})
+
+
+@router.get(
+    "/reverse-geocode",
+    summary="좌표 → 주소 이름표 (지도에서 찍은 지점용)",
+)
+async def reverse_geocode_at(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+) -> JSONResponse:
+    """지도에서 찍은 지점의 표시용 이름을 만든다.
+
+    ⚠️ 이름을 못 찾아도 **200과 함께 기본 이름을 돌려준다.** 경로 계산은 좌표만으로
+    가능하므로, 이름 조회 실패가 목적지 선택을 취소시키면 안 된다 —
+    "지도에서 선택한 지점을 못 찾았습니다"가 뜨던 원인이 바로 그 구조였다.
+    """
+    from app.services.place_search import reverse_geocode
+
+    s = get_settings()
+    label = await reverse_geocode(s.kakao_rest_api_key, lat, lon)
+    return JSONResponse({
+        "lat": lat, "lon": lon,
+        "address": label or "지도에서 선택한 지점",
+        "resolved": label is not None,
+    })
+
+
+@router.get("/geocode", summary="주소/장소 → 좌표 (카카오 → NCP 주소 → OSM 순)")
 async def geocode(
     request: Request,
     query: str = Query(..., min_length=1, description="검색할 주소 또는 장소명"),
+    lat: float | None = Query(None, ge=-90.0, le=90.0, description="현재 위치(가까운 순)"),
+    lon: float | None = Query(None, ge=-180.0, le=180.0),
 ) -> JSONResponse:
-    """목적지 문자열 → 좌표.
+    """목적지 문자열 → 좌표 1건. (구버전 앱 호환용 — 신규 화면은 /places/search 사용)
 
-    1순위 NCP Geocoding(주소 정밀), 없으면 2순위 Nominatim(장소명: 부산대학교 등).
+    1순위 카카오 로컬(상호·건물명), 2순위 NCP Geocoding(주소 정밀), 3순위 OSM.
     """
     from app.services.ncp_directions import nominatim_geocode
+    from app.services.place_search import search_places
 
+    s = get_settings()
+
+    # 1) 카카오 — 상호·건물명이 여기서 잡힌다
+    places = await search_places(s.kakao_rest_api_key, query, lat=lat, lon=lon, size=1)
+    if places:
+        p = places[0]
+        return JSONResponse({
+            "lat": p["lat"], "lon": p["lon"],
+            "address": p["address"] or p["name"],
+            "name": p["name"],
+            "source": p["source"],
+        })
+
+    # 2) NCP 주소 검색
     directions = getattr(request.app.state, "directions", None)
     result = None
     source = None
-
-    # 1) NCP 주소 검색 (있을 때)
     if directions is not None:
         try:
             result = await directions.geocode(query)
@@ -495,7 +625,7 @@ async def geocode(
         except Exception as e:  # noqa: BLE001
             logger.warning("NCP geocode 실패(무시): {}", e)
 
-    # 2) 장소명 폴백 (OSM Nominatim)
+    # 3) 장소명 폴백 (OSM Nominatim)
     if result is None:
         result = await nominatim_geocode(query)
         if result is not None:
@@ -506,8 +636,9 @@ async def geocode(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="위치를 찾을 수 없습니다. 장소명이나 주소를 조금 더 구체적으로 입력해 보세요.",
         )
-    lat, lon, label = result
-    return JSONResponse({"lat": lat, "lon": lon, "address": label, "source": source})
+    glat, glon, label = result
+    return JSONResponse({"lat": glat, "lon": glon, "address": label,
+                         "name": label, "source": source})
 
 
 @router.get(
@@ -553,27 +684,54 @@ async def route_vpti(
 
     samples = sample_path(path, max_points=max_points)
 
+    # 지점별 계산. 거리뷰가 없는 지점(골목·아파트 단지 안 등)은 흔하다 —
+    # 예전에는 그런 지점을 건너뛰다가 전부 실패하면 502로 요청 자체를 버렸다.
+    # 그 결과 "경로를 찾을 수 없다"가 뜨고 지도에 선도 안 그려졌다.
+    # 이제는 **경로는 항상 돌려주고**, 계산이 안 된 지점만 비워둔 뒤 이웃 값으로 메운다.
     points: list[dict] = []
+    n_missing = 0
     for (lat, lon) in samples:
         try:
             result, _ = await orchestrator.compute(lat=lat, lon=lon)
         except StreetViewNotFound:
-            continue  # 거리뷰 없는 지점은 건너뜀
+            n_missing += 1
+            points.append({"lat": round(lat, 6), "lon": round(lon, 6),
+                           "vpti": None, "estimated": False})
+            continue
         except Exception as e:  # noqa: BLE001
             logger.warning("경로 지점 계산 실패({},{}): {}", lat, lon, e)
+            n_missing += 1
+            points.append({"lat": round(lat, 6), "lon": round(lon, 6),
+                           "vpti": None, "estimated": False})
             continue
         d = result.as_dict()
         points.append({
             "lat": round(lat, 6), "lon": round(lon, 6),
             "vpti": d["vpti"], "risk_level": d["risk_level"],
             "contributions": d["contributions"], "action_guide": d["action_guide"],
+            "estimated": False,
         })
 
-    if not points:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="경로 상에서 계산 가능한 지점이 없습니다(거리뷰 부재 등).",
-        )
+    # 빈 지점을 가장 가까운 계산된 지점 값으로 채운다(estimated=True 로 표시).
+    # 체감기후는 수십 m 스케일에서 연속적이므로 이웃 대입이 무근거한 창작은 아니다.
+    # 다만 앱은 이 표시를 받아 "추정" 으로 그려야 한다 — 실측과 같게 보이면 안 된다.
+    computed_idx = [i for i, p in enumerate(points) if p.get("vpti") is not None]
+    if computed_idx:
+        for i, p in enumerate(points):
+            if p.get("vpti") is not None:
+                continue
+            j = min(computed_idx, key=lambda k: abs(k - i))
+            src = points[j]
+            p.update({
+                "vpti": src["vpti"], "risk_level": src["risk_level"],
+                "contributions": src["contributions"],
+                "action_guide": src["action_guide"],
+                "estimated": True,
+            })
+    else:
+        # 경로 전체에 거리뷰가 하나도 없는 경우. 그래도 경로선과 기상은 돌려준다 —
+        # 앱이 "경로를 못 찾았다"고 말하는 것보다 훨씬 낫다.
+        logger.warning("경로 전 구간 거리뷰 부재 ({} 지점)", len(points))
 
     # 기상(계절/기온/습도) + 강수 컨텍스트
     weather_meta = {}
@@ -588,20 +746,29 @@ async def route_vpti(
     except Exception as e:  # noqa: BLE001
         logger.warning("경로 기상/강수 부착 실패: {}", e)
 
-    vs = [p["vpti"] for p in points]
+    vs = [p["vpti"] for p in points if p.get("vpti") is not None]
+    summary = (
+        {
+            "vpti_min": round(min(vs), 2), "vpti_max": round(max(vs), 2),
+            "vpti_avg": round(sum(vs) / len(vs), 2),
+        }
+        if vs
+        else {"vpti_min": None, "vpti_max": None, "vpti_avg": None}
+    )
     profile = {
         "meta": {
             "origin": {"lat": olat, "lon": olon, "name": "현재 위치"},
             "dest": {"lat": dlat, "lon": dlon, "name": "목적지"},
             "n_points": len(points), "sample": False,
+            # 몇 개 지점이 실제로 계산됐는지 — 앱이 "일부 구간은 추정" 을 표시할 근거
+            "n_computed": len(vs),
+            "n_estimated": sum(1 for p in points if p.get("estimated")),
+            "coverage": "none" if not vs else ("full" if n_missing == 0 else "partial"),
             "note": "실시간 경로 — NCP 길찾기 + 지점별 VPTI",
             "weather": weather_meta,
             "precipitation": precipitation,
         },
-        "summary": {
-            "vpti_min": round(min(vs), 2), "vpti_max": round(max(vs), 2),
-            "vpti_avg": round(sum(vs) / len(vs), 2),
-        },
+        "summary": summary,
         "points": points,
     }
     return JSONResponse(profile)

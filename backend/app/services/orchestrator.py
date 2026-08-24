@@ -56,6 +56,7 @@ from app.services.kma import (
 )
 from app.services.road_axis import get_road_axis
 from app.services.street_view import (
+    VIEW_CONFIG,
     GoogleStreetViewClient,
     StreetViewFetchResult,
     StreetViewNotFound,
@@ -93,6 +94,14 @@ ASOS_CACHE_TTL_SEC = 20 * 60
 ASOS_FAIL_TTL_SEC = 5 * 60
 ASOS_MAX_DISTANCE_KM = 50.0      # 이보다 먼 관측소의 운량은 국지성 때문에 미사용
 ASOS_MAX_AGE_SEC = 2.5 * 3600    # 관측이 이보다 오래되면 미사용(예보 폴백)
+
+# ===== 거리영상 호출 월 상한 (2026-08-21) =====
+# 단위는 **이미지 요청 수**(파노라마 1지점 = 5-view = 5요청).
+# 구글 무료 한도가 SKU당 월 1만 요청이므로 9,000에서 먼저 멈춘다 →
+#  ① 초과 과금 차단  ② 약관 3.2.3(a)(ii) bulk download 로 읽힐 트래픽 차단.
+# 0 이하면 상한 없음(개발용).
+IMAGERY_MONTHLY_BUDGET_DEFAULT = 9_000
+IMAGERY_BUDGET_WARN_RATIO = 0.9
 
 # prefetch(앞 미리 분석): 진행 방향 앞 지점을 백그라운드로 미리 캐시해 도착 시 hit.
 PREFETCH_DISTANCES_M = (25.0, 50.0)   # 앞 2지점만 — 2코어 서버 부담 보호
@@ -153,6 +162,7 @@ class VPTIOrchestrator:
         segformer: "SegFormerService",
         asos: ASOSClient | None = None,
         archive=None,          # app.services.archive.Archive — 측정 이력 적재(선택)
+        imagery_monthly_budget: int = IMAGERY_MONTHLY_BUDGET_DEFAULT,
     ) -> None:
         self.cache = cache
         self.street_view = street_view
@@ -160,6 +170,7 @@ class VPTIOrchestrator:
         self.segformer = segformer
         self.asos = asos
         self.archive = archive
+        self.imagery_monthly_budget = imagery_monthly_budget
         # 하늘상태(SKY) 인메모리 캐시: (nx,ny) → (sky_code|None, 만료 monotonic)
         self._sky_cache: dict[tuple[int, int], tuple[int | None, float]] = {}
         # ASOS 실측 인메모리 캐시: station_id → (ASOSObservation|None, 만료 monotonic)
@@ -224,6 +235,8 @@ class VPTIOrchestrator:
             return cached, True, 0.0, 0.0
 
         # 캐시 miss: Street View fetch + SegFormer 추론
+        # ⚠️ 신규 다운로드 전 월 상한 확인 — 과금 차단 + bulk download 방지.
+        await self._check_imagery_budget()
         logger.info("Pano cache MISS, fetching and analyzing: {}", pano_id)
 
         sv_start = time.perf_counter()
@@ -238,6 +251,43 @@ class VPTIOrchestrator:
 
         await self.cache.set_pano_analysis(analysis)
         return analysis, False, sv_ms, seg_ms
+
+    async def _check_imagery_budget(self) -> None:
+        """이번 달 거리영상 이미지 요청 상한 확인. 초과면 신규 분석을 거부한다.
+
+        왜 있나 (2026-08-21 법적 리스크 검토):
+          ① 구글 무료 한도(SKU당 월 1만 요청)를 넘기면 즉시 과금이다.
+          ② 같은 트래픽이 약관 3.2.3(a)(ii)가 금지하는 "bulk download Street View
+             images"로 읽힌다. 일괄 스캔 스크립트가 실수로 돌아도 여기서 멈춘다.
+
+        이미 캐시된 지점의 측정은 영향을 받지 않는다(신규 다운로드만 막는다).
+        카운터(Redis) 장애 시에는 서비스를 죽이지 않고 그냥 통과시킨다.
+        """
+        budget = self.imagery_monthly_budget
+        if budget <= 0:
+            return
+        ym = datetime.now(timezone.utc).strftime("%Y%m")
+        n_images = len(VIEW_CONFIG)   # 파노라마 1지점 = 5-view
+        try:
+            count = int(await self.cache.incr_imagery_fetch(ym, n_images))
+        except Exception as e:  # noqa: BLE001
+            # Redis 장애·미구현 캐시(테스트 목) 모두 여기로 — 서비스를 죽이지 않는다.
+            logger.warning("[quota] 거리영상 카운터 실패(계속 진행): {}", e)
+            return
+
+        if count > budget:
+            logger.error(
+                "[quota] {} 거리영상 요청 {}/{} — 상한 초과, 신규 분석 중단",
+                ym, count, budget,
+            )
+            raise StreetViewNotFound(
+                "이번 달 거리 이미지 분석 한도에 도달했어요. 이미 분석된 곳은 "
+                "그대로 측정되고, 새로운 지점은 다음 달 1일에 다시 열려요."
+            )
+        if count - n_images < budget * IMAGERY_BUDGET_WARN_RATIO <= count:
+            logger.warning(
+                "[quota] {} 거리영상 요청 {}/{} — 무료 한도 90% 도달", ym, count, budget
+            )
 
     async def _fetch_with_metadata(
         self, pano_id: str, lat: float, lon: float
@@ -323,6 +373,9 @@ class VPTIOrchestrator:
             computed_at=datetime.now(timezone.utc).isoformat() + "Z",
             road_axis_deg=road.road_axis_deg,
             road_axis_source=road.source,
+            # 이 지표가 어느 영상에서 나왔는지 반드시 남긴다 (2026-08-21).
+            # 원천 교체(Mapillary/자체촬영) 시 GSV 유래만 골라 폐기·재계산한다.
+            imagery_source=getattr(self.street_view, "IMAGERY_SOURCE", "gsv"),
         )
 
     # ===== 기상 조회 =====
@@ -802,6 +855,8 @@ class VPTIOrchestrator:
                 cloud_src=cloud_source,
                 indoor=False,
                 source="app",
+                # 공간지표(svf/gvi/bvi)의 영상 출처 — ML 학습 대상 선별에 쓴다.
+                imagery_src=pano_analysis.imagery_source,
             )
 
         logger.info(

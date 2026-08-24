@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     google_streetview_signing_secret: str = ""
     ncp_maps_client_id: str = ""
     ncp_maps_client_secret: str = ""
+    # 카카오 로컬(장소·주소·역지오코딩) REST API 키 — https://developers.kakao.com
+    # 목적지 "상호" 검색의 1순위. 비어 있으면 기존 NCP 주소검색 + OSM 폴백으로만 동작(하위호환).
+    kakao_rest_api_key: str = ""
     kma_api_key: str = ""
     kma_base_url: str = "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
     # 기상청 API허브(apihub.kma.go.kr) 회원 인증키 — ASOS 실시간(일사·전운량·지면온도).
@@ -51,6 +54,12 @@ class Settings(BaseSettings):
     # 건물 열취약 판정 (실내축 2단계) — V-World 리버스지오코딩 + 건축HUB 건축물대장
     vworld_api_key: str = ""
     building_api_key: str = ""
+
+    # 거리영상(Street View) 월 호출 상한 — **이미지 요청 수** 기준.
+    # 파노라마 1지점 = 5-view = 5요청. 구글 무료 한도가 SKU당 월 1만이라 9,000에서 멈춘다.
+    # ① 초과 과금 차단 ② 약관 3.2.3(a)(ii) bulk download 로 읽힐 트래픽 차단.
+    # 0 이하 = 상한 없음(개발용). 운영에서는 반드시 양수로 둘 것.
+    streetview_monthly_image_budget: int = 9000
 
     # 측정 이력 적재(핫스팟 자산). 일반 사용자 대상 수집은 동의 화면·방침 개정 후 켤 것.
     archive_enabled: bool = True
@@ -77,7 +86,11 @@ class Settings(BaseSettings):
     vsi_weight_bvi: float = Field(default=0.2, ge=0.0, le=1.0)
 
     # CORS
-    cors_origins: str = "http://localhost:3000"
+    # 쾌적경로 데모 HTML은 앱 번들 안에서 file:// 로 뜬다 → Origin 헤더가 "null" 이다.
+    # 장소검색·역지오코딩은 사용자 데이터가 없는 공개 읽기 API라 null 허용이 안전하다.
+    cors_origins: str = (
+        "http://localhost:3000,https://climaxapp.kr,https://www.climaxapp.kr,null"
+    )
 
     @field_validator("cors_origins")
     @classmethod

@@ -100,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 segformer=segformer,
                 asos=asos_client,
                 archive=archive,
+                imagery_monthly_budget=settings.streetview_monthly_image_budget,
             )
             logger.info("Orchestrator ready")
 

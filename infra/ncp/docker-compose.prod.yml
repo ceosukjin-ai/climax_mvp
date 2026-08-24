@@ -23,6 +23,8 @@ services:
       NCP_MAPS_CLIENT_SECRET: ${NCP_MAPS_CLIENT_SECRET}
       KMA_API_KEY: ${KMA_API_KEY}
       KMA_APIHUB_KEY: ${KMA_APIHUB_KEY:-}
+      # 목적지 장소(상호) 검색 + 지도 탭 지점 이름 — 카카오 로컬
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:-}
       VWORLD_API_KEY: ${VWORLD_API_KEY:-}
       BUILDING_API_KEY: ${BUILDING_API_KEY:-}
       # 현장 대조 도구 접근키 (2026-08-16, 대표 전용) — 없으면 /field/check 404
@@ -35,7 +37,9 @@ services:
       SEGFORMER_MODEL_NAME: ${SEGFORMER_MODEL_NAME:-nvidia/segformer-b0-finetuned-ade-512-512}
       SEGFORMER_DEVICE: ${SEGFORMER_DEVICE:-cpu}
 
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      # 쾌적경로 데모는 앱 번들 안에서 file:// 로 떠서 Origin 이 "null" 이다.
+      # 여기 없으면 앱에서 장소검색 fetch 가 CORS 로 막힌다.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,https://climaxapp.kr,https://www.climaxapp.kr,null}
     ports:
       - "8000:8000"
     volumes:

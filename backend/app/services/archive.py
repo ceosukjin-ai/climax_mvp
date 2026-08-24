@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS measurement (
     cloud       REAL,                        -- 전운량 [0,1]
     cloud_src   TEXT,                        -- 실측(일사)/실측(운량)/예보
     indoor      BOOLEAN DEFAULT FALSE,
-    source      TEXT DEFAULT 'app'           -- app / test / batch
+    source      TEXT DEFAULT 'app',          -- app / test / batch
+    imagery_src TEXT                         -- 공간지표(svf/gvi/bvi)의 영상 출처
+                                             -- gsv / mapillary / own — app/data_policy.py
 );
 CREATE INDEX IF NOT EXISTS ix_measurement_time ON measurement (observed_at DESC);
 CREATE INDEX IF NOT EXISTS ix_measurement_cell ON measurement (lat, lon);
@@ -83,6 +85,14 @@ CREATE TABLE IF NOT EXISTS field_check (
 CREATE INDEX IF NOT EXISTS ix_field_check_time ON field_check (observed_at DESC);
 """
 
+# 이미 만들어진 테이블에 컬럼을 덧붙이는 변경분. DDL 과 분리해 둔다 —
+# CREATE TABLE IF NOT EXISTS 는 기존 테이블의 스키마를 갱신하지 않기 때문.
+# ALTER … IF NOT EXISTS 이므로 몇 번 실행돼도 안전하다.
+MIGRATIONS = """
+ALTER TABLE measurement ADD COLUMN IF NOT EXISTS imagery_src TEXT;
+CREATE INDEX IF NOT EXISTS ix_measurement_imagery ON measurement (imagery_src);
+"""
+
 
 class Archive:
     """측정 이력 적재기. DB 가 없거나 꺼져 있으면 조용히 아무것도 하지 않는다."""
@@ -108,6 +118,8 @@ class Archive:
                 await conn.execute(text("SELECT pg_advisory_xact_lock(:k)"),
                                    {"k": 8_150_811})     # 이 앱 전용 임의 상수
                 for stmt in filter(None, (x.strip() for x in DDL.split(";"))):
+                    await conn.execute(text(stmt))
+                for stmt in filter(None, (x.strip() for x in MIGRATIONS.split(";"))):
                     await conn.execute(text(stmt))
             self._ready = True
             logger.info("[archive] 준비 완료 — 측정 이력 적재 시작")
@@ -143,7 +155,8 @@ class Archive:
         kw["lon"] = round(float(kw["lon"]), COORD_PRECISION)
         cols = ("observed_at", "lat", "lon", "pvpti", "risk_level", "air_temp",
                 "humidity", "wind_ms", "mrt", "svf", "gvi", "bvi",
-                "cloud", "cloud_src", "indoor", "source")
+                "cloud", "cloud_src", "indoor", "source", "imagery_src")
+        kw.setdefault("imagery_src", "gsv")   # 미지정이면 보수적으로 GSV 취급
         vals = {c: kw.get(c) for c in cols}
         sql = (f"INSERT INTO measurement ({', '.join(cols)}) "
                f"VALUES ({', '.join(':' + c for c in cols)})")
@@ -258,6 +271,58 @@ class Archive:
         except Exception as e:  # noqa: BLE001
             logger.warning("[archive] 집계 조회 실패: {}: {}", type(e).__name__, e)
             return []
+
+    # ── 학습 데이터셋 조회 (약관 필터 적용, 2026-08-21) ──────
+    async def ml_dataset(self, hours: int | None = None,
+                         limit: int = 100_000) -> list[dict]:
+        """머신러닝 학습에 **써도 되는** 측정 행만 반환한다.
+
+        위성 학생 모델(교사·학생 지식증류)은 반드시 이 메서드로 데이터를 받아야 한다.
+        Google Street View 유래 공간지표는 약관 3.2.3(c)(vii)에 의해 모델 학습·
+        테스트·검증·파인튜닝에 사용할 수 없으므로 SQL 단계에서 배제한다.
+
+        원천을 Mapillary·자체 촬영으로 교체하기 전까지는 **빈 목록이 정상**이다.
+        (그래서 조용히 0건을 돌려주지 않고 로그로 남긴다.)
+        """
+        if not self._ready:
+            return []
+        from app.data_policy import ML_TRAINABLE_SOURCES
+
+        allowed = sorted(ML_TRAINABLE_SOURCES)
+        sql = """
+        SELECT observed_at, lat, lon, pvpti, air_temp, humidity, wind_ms, mrt,
+               svf, gvi, bvi, cloud, cloud_src, imagery_src
+        FROM measurement
+        WHERE pvpti IS NOT NULL AND indoor = FALSE
+          AND imagery_src = ANY(:allowed)
+        """
+        params: dict = {"allowed": allowed, "limit": limit}
+        if hours is not None:
+            sql += " AND observed_at > NOW() - make_interval(hours => :hours)"
+            params["hours"] = hours
+        sql += " ORDER BY observed_at DESC LIMIT :limit"
+        try:
+            async with self._session() as s:
+                rows = [dict(r) for r in
+                        (await s.execute(text(sql), params)).mappings()]
+            total = await self._count_measurements()
+            logger.info(
+                "[archive] ML 학습 가능 측정 {}건 / 전체 {}건 "
+                "(허용 출처 {} — GSV 유래는 약관상 학습 불가로 제외)",
+                len(rows), total, allowed,
+            )
+            return rows
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[archive] ml_dataset 조회 실패: {}: {}", type(e).__name__, e)
+            return []
+
+    async def _count_measurements(self) -> int:
+        try:
+            async with self._session() as s:
+                r = await s.execute(text("SELECT COUNT(*) FROM measurement"))
+                return int(r.scalar() or 0)
+        except Exception:  # noqa: BLE001
+            return -1
 
     async def stats(self) -> dict:
         """적재 현황 — 데이터가 실제로 쌓이는지 눈으로 확인하는 용도."""
