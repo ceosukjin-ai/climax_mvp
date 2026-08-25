@@ -11,6 +11,7 @@ VPTI REST API 라우트.
 """
 from __future__ import annotations
 
+import math as _math
 import time as _time
 
 from datetime import datetime, timedelta, timezone
@@ -577,6 +578,86 @@ async def roads(
                 bbox, detail, out["meta"]["tiles"], out["meta"]["cache_hits"],
                 out["meta"]["elapsed_ms"])
     return JSONResponse(out)
+
+
+@router.get(
+    "/dog/course",
+    summary="개 기준 산책 코스 추천 — 출발점으로 되돌아오는 순환 코스 3개",
+)
+async def dog_course(
+    request: Request,
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    minutes: int = Query(30, ge=10, le=120, description="목표 산책 시간(분)"),
+    air_c: float = Query(..., description="기온 °C"),
+    ghi: float = Query(0.0, ge=0.0, le=1400.0, description="유효 일사 W/m² (축열 반영값이면 더 좋음)"),
+    wind_ms: float = Query(1.0, ge=0.0, le=40.0),
+    rh: float = Query(60.0, ge=0.0, le=100.0),
+    rain: bool = Query(False),
+    withers_cm: float = Query(45.0, ge=10.0, le=100.0, description="개 체고(cm)"),
+    vuln_offset_c: float = Query(0.0, ge=-5.0, le=10.0, description="개체 취약도 오프셋 °C"),
+) -> JSONResponse:
+    """도로망 위에서 **개 기준으로 가장 시원한 순환 코스**를 찾아준다.
+
+    왜 서버가 하나 (2026-08-25):
+      코스 계산은 도로망을 받아 다익스트라를 도는 무거운 일이다. 폰에서 하면 배터리를
+      먹고 느리며, iOS(Swift)와 안드로이드(Kotlin)에 같은 로직을 두 벌 유지해야 한다.
+      서버가 계산하면 두 앱이 **같은 답**을 보고, 알고리즘 개선이 **앱 심사 없이** 반영된다.
+
+    ⚠️ 점수 일관성: 구간 비용 = WBGT(개 높이) + 취약도오프셋 + max(0, 노면온도 − 44).
+       시간대 화면(WalkWindow)과 같은 식이라 두 화면이 다른 말을 하지 않는다.
+
+    ⚠️ 근거의 층위: 노면 재질·그늘은 OSM 태그에서 **읽고**, 태그가 없으면 도로 유형으로
+       **추정**한다. 추정 비율은 `surface_known_ratio` 로 함께 돌려주니 화면에 밝힐 것.
+    """
+    from app.services import dog_course as dc
+    from app.services.roadnet import RoadNetError, RoadNetService
+
+    # 목표 거리 = 시간 × 산책 속도. 도로망은 그 절반 반경이면 충분하다.
+    target_m = minutes / 60.0 * dc.WALK_SPEED_KMH * 1000.0
+    span_deg = max(target_m * 0.6, 500.0) / 111_000.0
+    lon_span = span_deg / max(0.2, _math.cos(_math.radians(lat)))
+
+    svc = getattr(request.app.state, "roadnet", None)
+    if svc is None:
+        svc = RoadNetService(getattr(request.app.state, "cache", None))
+        request.app.state.roadnet = svc
+
+    t0 = _time.perf_counter()
+    try:
+        roads = await svc.bbox(lat - span_deg, lon - lon_span,
+                               lat + span_deg, lon + lon_span, detail="full")
+    except RoadNetError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+    cond = dc.Conditions(air_c=air_c, ghi=ghi, wind_ms=wind_ms, rh=rh,
+                         rain=rain, withers_cm=withers_cm, vuln_offset_c=vuln_offset_c)
+    graph = dc.build_graph(roads.get("elements", []), cond)
+    near = dc.nearest(graph, lat, lon)
+    if near is None or graph.edge_count <= 10:
+        return JSONResponse({
+            "courses": [], "count": 0,
+            "reason": "주변에서 걸을 수 있는 길을 찾지 못했어요.",
+            "meta": {"edges": graph.edge_count,
+                     "elapsed_ms": round((_time.perf_counter() - t0) * 1000)},
+        })
+
+    start, snap_m = near
+    courses = dc.find_courses(graph, start, target_m)
+    elapsed = round((_time.perf_counter() - t0) * 1000)
+    logger.info("dog/course {},{} {}분 edges={} courses={} {}ms",
+                lat, lon, minutes, graph.edge_count, len(courses), elapsed)
+    return JSONResponse({
+        "courses": courses,
+        "count": len(courses),
+        "target_meters": round(target_m),
+        "meta": {
+            "edges": graph.edge_count,
+            "nodes": len(graph.coords),
+            "snap_m": round(snap_m),
+            "elapsed_ms": elapsed,
+        },
+    })
 
 
 @router.get(
