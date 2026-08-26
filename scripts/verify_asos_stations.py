@@ -68,7 +68,12 @@ def load_table() -> dict[int, tuple[float, float]]:
 
 def fetch_official(auth_key: str) -> dict[int, tuple[str, float, float]]:
     """기상청 지상관측(SFC) 지점정보 전체."""
-    q = urllib.parse.urlencode({"inf": "SFC", "stn": "", "authKey": auth_key})
+    # ⚠️ tm(기준시각)이 없으면 403 이 난다 — API허브 문서의 샘플 URL 형식을 그대로 따른다.
+    #    2026-08-26 첫 시도에서 tm 을 빼고 불렀다가 403 을 활용신청 문제로 오진했다.
+    kst = datetime.now(timezone.utc) + timedelta(hours=9)
+    tm = (kst - timedelta(hours=3)).strftime("%Y%m%d%H") + "00"
+    q = urllib.parse.urlencode(
+        {"inf": "SFC", "stn": "", "tm": tm, "help": "1", "authKey": auth_key})
     with urllib.request.urlopen(f"{STN_INF_URL}?{q}", timeout=20) as r:
         text = r.read().decode("euc-kr", errors="replace")
 
