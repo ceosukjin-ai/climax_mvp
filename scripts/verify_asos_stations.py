@@ -192,11 +192,20 @@ def main() -> int:
         else:
             print(f"OK       {stn:>4} {name:<8} {d:4.1f}km")
 
+    # 표에 없는 지점 — 없어도 서비스는 돌지만, 그 일대는 최근접 관측소를 놓친다.
+    missing = sorted(set(official) - set(table))
+    if missing:
+        print()
+        print(f"— 우리 표에 없는 지점 {len(missing)}곳 (넣으면 그 일대 정확도가 오른다):")
+        for stn in missing:
+            name, olat, olon = official[stn]
+            print(f"   {stn:>4}: ({olat:.5f}, {olon:.5f}),   # {name}")
+
     print()
     if bad:
         print(f"문제 {bad}건 — 고치고 다시 돌리세요. 배포하지 마십시오.")
         return 1
-    print("전부 일치합니다. 배포해도 됩니다.")
+    print("좌표는 전부 일치합니다. 배포해도 됩니다.")
     return 0
 
 
