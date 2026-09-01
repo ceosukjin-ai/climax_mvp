@@ -25,9 +25,15 @@ COPY requirements.txt .
 # 기존 pip를 지우고 새 pip를 /install에 설치해버려서 PATH에서 사라지고,
 # 다음 pip 호출이 "pip: not found" (exit 127)로 죽습니다.
 # 업그레이드는 prefix 없이, 패키지 설치만 --prefix로. 호출은 python -m pip 사용.
+# torch 는 CPU 전용 휠로 설치한다. **버전을 requirements.txt 와 똑같이 고정해야 한다.**
+#
+# 고정하지 않으면: 여기서 최신 CPU torch 가 깔리고 → 다음 줄의 requirements.txt 가
+# torch==2.5.0 을 요구하면서 **PyPI 에서 CUDA 판을 다시 받는다**(nvidia-* 약 3GB).
+# CPU 서버인데 CUDA 라이브러리가 이미지에 들어가고, 빌드가 디스크를 터뜨린다.
+# (2026-09-01 배포 실패: libcublasLt.so.12 추출 중 no space left on device)
 RUN python -m pip install --upgrade pip && \
     python -m pip install --prefix=/install \
-        torch --index-url https://download.pytorch.org/whl/cpu && \
+        torch==2.5.0 --index-url https://download.pytorch.org/whl/cpu && \
     python -m pip install --prefix=/install -r requirements.txt
 
 
