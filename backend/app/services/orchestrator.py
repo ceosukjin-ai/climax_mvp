@@ -161,6 +161,7 @@ class VPTIOrchestrator:
         kma: KMAClient,
         segformer: "SegFormerService",
         asos: ASOSClient | None = None,
+        aws_obs=None,          # app.services.aws_obs.AWSObsClient — 강수 판정용(선택)
         archive=None,          # app.services.archive.Archive — 측정 이력 적재(선택)
         imagery_monthly_budget: int = IMAGERY_MONTHLY_BUDGET_DEFAULT,
     ) -> None:
@@ -169,12 +170,16 @@ class VPTIOrchestrator:
         self.kma = kma
         self.segformer = segformer
         self.asos = asos
+        self.aws_obs = aws_obs
         self.archive = archive
         self.imagery_monthly_budget = imagery_monthly_budget
         # 하늘상태(SKY) 인메모리 캐시: (nx,ny) → (sky_code|None, 만료 monotonic)
         self._sky_cache: dict[tuple[int, int], tuple[int | None, float]] = {}
         # ASOS 실측 인메모리 캐시: station_id → (ASOSObservation|None, 만료 monotonic)
         self._asos_cache: dict[int, tuple[ASOSObservation | None, float]] = {}
+        # 좌표 단위 강수 판정 (격자 보간 + 관측 사실 + 접근 판정) — 2026-09-01
+        from app.services.rain import RainService
+        self.rain = RainService(kma=kma, asos=asos, aws=aws_obs)
 
     # ===== panoId 해석 =====
 
@@ -1016,16 +1021,47 @@ class VPTIOrchestrator:
     # ===== 강수 컨텍스트 (VPTI와 분리된 외부 예보 레이어) =====
 
     async def get_precipitation_outlook(self, lat: float, lon: float) -> dict:
-        """현재 강수 + 0~6시간 강수 전망.
+        """현재 강수 + 0~6시간 강수 전망 (2026-09-01 좌표 단위로 개선).
 
-        비는 거리 기하로 예측 불가 → 순수 KMA 외부 데이터로만 다루고, VPTI 숫자에는
-        섞지 않는다(별도 컨텍스트 레이어). 정확도를 위해 단기예보 POP 대신 초단기예보
-        (0~6h)를 사용한다.
+        예전에는 최근접 격자 하나의 초단기예보를 그대로 썼다. 이제 app.services.rain
+        이 인접 격자를 보간하고, '지금 비가 오나'는 관측(초단기실황 + 주변 관측소 실측)
+        으로 답하며, 바람 불어오는 쪽에 비가 있으면 도착시간 범위를 함께 준다.
+
+        **기존 응답 키는 하나도 빼지 않았다** — 구버전 앱은 새 필드를 무시하면 그만이다.
+        rain 파이프라인이 실패하면 예전 방식(최근접 격자 초단기예보)으로 되돌아간다.
         """
-        # 현재 강수량은 이미 캐시된 실황에서 재사용
+        from app.services import rain as rain_mod
+
+        try:
+            r = await self.rain.rain_at(lat, lon)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("좌표 강수 판정 실패 — 최근접 격자 예보로 폴백: {}", e)
+            return await self._legacy_precipitation_outlook(lat, lon)
+
+        payload = rain_mod.to_dict(r)
+        onset_hours = None
+        if r.onset_at is not None:
+            onset_hours = max(0, round(
+                (r.onset_at - datetime.now(KST)).total_seconds() / 3600
+            ))
+        max_precip = max(
+            [r.now_precip_mm] + [h.precip_mm for h in r.timeline] or [0.0]
+        )
+        rain_expected = r.raining_now or r.onset_at is not None or r.approaching is not None
+
+        # --- 구버전 앱이 읽는 키 (형태·의미 그대로 유지) ---
+        payload.update({
+            "rain_expected_6h": rain_expected,
+            "onset_in_hours": onset_hours,
+            "max_precip_mm": round(max_precip, 1),
+            "umbrella_recommended": rain_expected,
+        })
+        return payload
+
+    async def _legacy_precipitation_outlook(self, lat: float, lon: float) -> dict:
+        """폴백 — 2026-09-01 이전 방식(최근접 격자 초단기예보)."""
         weather, _, _, _ = await self._get_weather(lat, lon)
         now_precip = weather.precipitation_mm
-
         try:
             forecasts = await self.kma.get_ultra_short_forecast(lat, lon)
         except Exception as e:  # noqa: BLE001
@@ -1055,8 +1091,6 @@ class VPTIOrchestrator:
 
         raining_now = now_precip > 0.0
         rain_expected = raining_now or onset_hours is not None
-        umbrella = rain_expected
-
         if raining_now:
             advice = "현재 비가 내리고 있습니다 — 우산 필요"
         elif onset_hours is not None:
@@ -1070,9 +1104,11 @@ class VPTIOrchestrator:
             "rain_expected_6h": rain_expected,
             "onset_in_hours": onset_hours,
             "max_precip_mm": round(max_precip, 1),
-            "umbrella_recommended": umbrella,
+            "umbrella_recommended": rain_expected,
             "advice": advice,
             "hourly": hourly,
+            "source": "최근접격자(폴백)",
+            "confidence": "낮음",
         }
 
     @staticmethod

@@ -24,9 +24,14 @@ class TestHealth:
         assert "version" in data
 
     def test_root(self, client: TestClient) -> None:
+        """루트는 JSON API 가 아니라 웹사이트다.
+
+        main.py 가 `app.mount("/", StaticFiles(WEB_DIR, html=True))` 로 web/ 을
+        마운트한다. 예전에 JSON 을 돌려주던 시절의 기대값이 남아 있었다.
+        """
         r = client.get("/")
         assert r.status_code == 200
-        assert "ClimaX" in r.json()["name"]
+        assert "text/html" in r.headers.get("content-type", "")
 
 
 class TestVSIEndpoints:

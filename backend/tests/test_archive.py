@@ -50,10 +50,15 @@ class TestAnonymization:
     @pytest.mark.asyncio
     async def test_개인정보_컬럼_없음(self):
         """나이·질환·심박 등 개인 식별·민감 항목은 스키마에 존재하지 않는다."""
+        import re as _re
         from app.services.archive import DDL
+        # 부분문자열로 보면 imagery_src 안의 'age' 같은 것에 걸린다.
+        # 컬럼 이름 단위(단어 경계)로 본다 — 검사의 원래 뜻은 그것이었다.
+        lowered = DDL.lower()
         for banned in ("age", "user_id", "device_id", "condition",
                        "heart_rate", "core_temp", "phone", "name"):
-            assert banned not in DDL.lower(), f"{banned} 컬럼이 스키마에 있으면 안 됨"
+            hit = _re.search(rf"(?<![a-z0-9_]){_re.escape(banned)}(?![a-z0-9_])", lowered)
+            assert hit is None, f"{banned} 컬럼이 스키마에 있으면 안 됨"
 
     @pytest.mark.asyncio
     async def test_관측시각_자동설정(self):

@@ -958,6 +958,24 @@ async def daily_brief(
     worst = max((sky_rank.get(f.sky_condition or "", 0) for f in today), default=0)
     first_rain = min((f.forecast_for for f in rain_slots), default=None)
 
+    # "하루종일 비"로 뭉개지 않도록 실제 비 시간대만 뽑는다 (2026-09-01).
+    # 단기예보는 3시간 간격이므로 한 칸은 3시간을 대표한다.
+    rain_window = None
+    if rain_slots:
+        ordered = sorted(rain_slots, key=lambda f: f.forecast_for)
+        blocks, start, prev = [], ordered[0], ordered[0]
+        for f in ordered[1:]:
+            if f.forecast_for - prev.forecast_for <= timedelta(hours=3):
+                prev = f
+                continue
+            blocks.append((start, prev))
+            start = prev = f
+        blocks.append((start, prev))
+        rain_window = ", ".join(
+            f"{a.forecast_for:%H}~{(b.forecast_for + timedelta(hours=3)):%H}시"
+            for a, b in blocks
+        )
+
     return {
         "date": now.strftime("%Y-%m-%d"),
         "t_max": max(temps) if temps else None,
@@ -968,7 +986,42 @@ async def daily_brief(
         "rain_type": rain_slots[0].precipitation_type if rain_slots else None,
         "sky_worst": {1: "맑음", 3: "구름많음", 4: "흐림"}.get(worst),
         "slots": len(today),
+        # --- 신규(구버전 앱은 무시) ---
+        "rain_window": rain_window,          # 예: "14~18시" — 없으면 None
+        "rain_slot_count": len(rain_slots),
+        "all_day_rain": bool(rain_slots) and len(rain_slots) >= max(1, len(today) - 1),
     }
+
+
+@router.get(
+    "/rain/at",
+    summary="내 위치 비 정보 — 격자 보간 + 관측 사실 + 접근 판정 (2026-09-01)",
+)
+async def rain_at(
+    request: Request,
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+) -> dict:
+    """좌표 단위 강수 정보.
+
+    * 지금 비가 오는가 — 초단기실황(인접 격자 보간) + 주변 관측소 실측
+    * 0~6시간 — 초단기예보를 인접 격자로 보간해 시간대별로
+    * 접근 중인 비 — 바람 불어오는 쪽 관측소에 비가 있으면 도착시간 **범위**
+
+    도착시간은 지상풍으로 강수대 이동을 근사한 **추정**이다. 단일 시각으로 단정하지
+    않고 범위와 신뢰도를 함께 준다. 호우·태풍은 기상청 특보를 그대로 따라야 한다.
+    개인정보 없음·미저장.
+    """
+    orchestrator = getattr(request.app.state, "orchestrator", None)
+    if orchestrator is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized.",
+        )
+    try:
+        return await orchestrator.get_precipitation_outlook(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"rain lookup failed: {e}")
 
 
 @router.get("/field", include_in_schema=False)

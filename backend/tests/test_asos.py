@@ -152,9 +152,23 @@ class TestNearestStation:
     def test_부산_시내는_159(self):
         assert ASOSClient.nearest_station(35.18, 129.08) == 159
 
-    def test_서울은_50km_밖_None(self):
-        assert ASOSClient.nearest_station(37.57, 126.98) is None
+    def test_서울은_이제_서울_관측소(self):
+        """2026-08-26 전국확장(97곳) 이후 서울에도 관측소가 있다.
 
-    def test_반경_경계(self):
-        # 부산 관측소에서 약 40km(김해 인근) → 잡힘
-        assert ASOSClient.nearest_station(35.30, 128.80) == 159
+        부산 한 곳만 있던 시절엔 None 이 맞았다. 코드가 아니라 기대값이 낡았다.
+        """
+        assert ASOSClient.nearest_station(37.57, 126.98) == 108
+
+    def test_더_가까운_관측소를_고른다(self):
+        """김해 인근(35.30, 128.80)은 부산(159)보다 김해시(253)가 가깝다."""
+        from app.services.kma import ASOS_STATIONS, haversine_km
+        here = (35.30, 128.80)
+        picked = ASOSClient.nearest_station(*here)
+        assert picked == 253
+        d_picked = haversine_km(*here, *ASOS_STATIONS[picked])
+        d_busan = haversine_km(*here, *ASOS_STATIONS[159])
+        assert d_picked < d_busan
+
+    def test_아주_먼_바다는_None(self):
+        """반경(50km) 밖이면 관측소를 고르지 않는다 — 폴백 경로가 살아 있어야 한다."""
+        assert ASOSClient.nearest_station(30.0, 140.0) is None

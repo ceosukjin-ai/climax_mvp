@@ -77,12 +77,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         kma_client = KMAClient(api_key=settings.kma_api_key)
 
         # ASOS 실측(일사·전운량·지면온도) — API허브 키 있을 때만 (없으면 SKY 예보만)
+        aws_obs_client = None
         if settings.kma_apihub_key:
             from app.services.kma import ASOSClient
             asos_client = ASOSClient(auth_key=settings.kma_apihub_key)
             logger.info("ASOS 실측 클라이언트 ready (운량·일사 실측 보정 사용)")
+
+            # AWS 실측(500여 곳, 현천·강수감지) — 강수 판정 정밀도. 같은 키를 쓴다.
+            # 활용신청이 안 됐거나 응답이 비면 조용히 ASOS 로 물러난다.
+            from app.services.aws_obs import AWSObsClient
+            aws_obs_client = AWSObsClient(auth_key=settings.kma_apihub_key)
+            logger.info("AWS 실측 클라이언트 ready (강수 판정 정밀도 향상)")
         else:
-            logger.info("KMA_APIHUB_KEY 없음 → ASOS 실측 미사용 (SKY 예보 경로만)")
+            logger.info("KMA_APIHUB_KEY 없음 → ASOS/AWS 실측 미사용 (SKY 예보 경로만)")
 
         # SegFormer (시간 걸림)
         segformer = get_segformer_service()
@@ -99,6 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 kma=kma_client,
                 segformer=segformer,
                 asos=asos_client,
+                aws_obs=aws_obs_client,
                 archive=archive,
                 imagery_monthly_budget=settings.streetview_monthly_image_budget,
             )

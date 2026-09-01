@@ -669,3 +669,312 @@ class ASOSClient:
             if obs is not None:
                 return obs
         return None
+
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=0.5, min=0.5, max=2),
+        retry=retry_if_exception_type(httpx.RequestError),
+    )
+    async def get_all_hourly(self) -> dict[int, dict]:
+        """전 지점 최신 정시 관측을 한 번의 호출로 받는다 (stn=0).
+
+        용도: 사용자 주변 어느 관측소에 지금 비가 오고 있는지 훑기.
+        지점마다 따로 부르면 97회지만 stn=0 이면 1회다. 캐시는 호출부에서 한다.
+        help=1 을 붙여 헤더(컬럼명)를 함께 받아 강수량 컬럼 위치를 런타임에 찾는다.
+        """
+        now = datetime.now(KST)
+        for h in (0, 1, 2):
+            tm = (now.replace(minute=0, second=0, microsecond=0)
+                  - timedelta(hours=h))
+            params = {
+                "tm": tm.strftime("%Y%m%d%H%M"),
+                "stn": "0",
+                "help": "1",
+                "authKey": self.auth_key,
+            }
+            resp = await self._client.get(APIHUB_SFCTM2_URL, params=params)
+            resp.raise_for_status()
+            text = resp.content.decode("euc-kr", errors="replace")
+            if '"status"' in text and "403" in text:
+                raise KMAError("API허브 활용신청 필요 또는 인증키 오류 (403)")
+            rows = parse_sfctm2_all(text)
+            if rows:
+                return rows
+        return {}
+
+
+# ===== 강수 확장 (2026-09-01) =====
+# 좌표 단위 강수 정보를 위해 추가된 부분. 기존 함수·클래스는 건드리지 않는다.
+
+ASOS_STATION_NAMES: dict[int, str] = {
+    90: "속초",
+    93: "북춘천",
+    95: "철원",
+    98: "동두천",
+    99: "파주",
+    100: "대관령",
+    101: "춘천",
+    102: "백령도",
+    104: "북강릉",
+    105: "강릉",
+    106: "동해",
+    108: "서울",
+    112: "인천",
+    114: "원주",
+    115: "울릉도",
+    119: "수원",
+    121: "영월",
+    127: "충주",
+    129: "서산",
+    130: "울진",
+    131: "청주",
+    133: "대전",
+    135: "추풍령",
+    136: "안동",
+    137: "상주",
+    138: "포항",
+    140: "군산",
+    143: "대구",
+    146: "전주",
+    152: "울산",
+    155: "창원",
+    156: "광주",
+    159: "부산",
+    162: "통영",
+    165: "목포",
+    168: "여수",
+    169: "흑산도",
+    170: "완도",
+    172: "고창",
+    174: "순천",
+    177: "홍성",
+    181: "서청주",
+    184: "제주",
+    185: "고산",
+    188: "성산",
+    189: "서귀포",
+    192: "진주",
+    201: "강화",
+    202: "양평",
+    203: "이천",
+    211: "인제",
+    212: "홍천",
+    216: "태백",
+    217: "정선군",
+    221: "제천",
+    226: "보은",
+    232: "천안",
+    235: "보령",
+    236: "부여",
+    238: "금산",
+    239: "세종",
+    243: "부안",
+    244: "임실",
+    245: "정읍",
+    247: "남원",
+    248: "장수",
+    251: "고창군",
+    252: "영광군",
+    253: "김해시",
+    254: "순창군",
+    255: "북창원",
+    257: "양산시",
+    258: "보성군",
+    259: "강진군",
+    260: "장흥",
+    261: "해남",
+    262: "고흥",
+    263: "의령군",
+    264: "함양군",
+    266: "광양시",
+    268: "진도군",
+    271: "봉화",
+    272: "영주",
+    273: "문경",
+    276: "청송군",
+    277: "영덕",
+    278: "의성",
+    279: "구미",
+    281: "영천",
+    283: "경주시",
+    284: "거창",
+    285: "합천",
+    288: "밀양",
+    289: "산청",
+    294: "거제",
+    295: "남해",
+    296: "북부산",
+}
+
+
+def _grid_consts() -> tuple[float, float, float, float, float]:
+    """latlon_to_grid 와 동일한 투영 상수. 역변환·소수격자 계산에 재사용."""
+    RE, GRID = 6371.00877, 5.0
+    SLAT1, SLAT2, OLON, OLAT = 30.0, 60.0, 126.0, 38.0
+    DEGRAD = math.pi / 180.0
+
+    re_ = RE / GRID
+    slat1, slat2 = SLAT1 * DEGRAD, SLAT2 * DEGRAD
+    olon, olat = OLON * DEGRAD, OLAT * DEGRAD
+
+    sn = math.tan(math.pi * 0.25 + slat2 * 0.5) / math.tan(math.pi * 0.25 + slat1 * 0.5)
+    sn = math.log(math.cos(slat1) / math.cos(slat2)) / math.log(sn)
+    sf = math.tan(math.pi * 0.25 + slat1 * 0.5)
+    sf = (sf ** sn * math.cos(slat1)) / sn
+    ro = math.tan(math.pi * 0.25 + olat * 0.5)
+    ro = re_ * sf / (ro ** sn)
+    return re_, sn, sf, ro, olon
+
+
+def latlon_to_grid_float(lat: float, lon: float) -> tuple[float, float]:
+    """위경도 → 격자 좌표(소수). 반올림 전 값이라 인접 격자 보간에 쓸 수 있다.
+
+    latlon_to_grid 는 여기에 +0.5 후 int() 를 한 것과 같다.
+    """
+    XO, YO = 43, 136
+    DEGRAD = math.pi / 180.0
+    re_, sn, sf, ro, olon = _grid_consts()
+
+    ra = math.tan(math.pi * 0.25 + lat * DEGRAD * 0.5)
+    ra = re_ * sf / (ra ** sn)
+    theta = lon * DEGRAD - olon
+    if theta > math.pi:
+        theta -= 2.0 * math.pi
+    if theta < -math.pi:
+        theta += 2.0 * math.pi
+    theta *= sn
+
+    return ra * math.sin(theta) + XO, ro - ra * math.cos(theta) + YO
+
+
+def grid_to_latlon(nx: int, ny: int) -> tuple[float, float]:
+    """격자 → 격자 중심 위경도. 검증·거리 계산용."""
+    XO, YO = 43, 136
+    RADDEG = 180.0 / math.pi
+    re_, sn, sf, ro, olon = _grid_consts()
+
+    xn, yn = nx - XO, ro - ny + YO
+    ra = math.sqrt(xn * xn + yn * yn)
+    if sn < 0.0:
+        ra = -ra
+    alat = 2.0 * math.atan((re_ * sf / ra) ** (1.0 / sn)) - math.pi * 0.5
+
+    if abs(xn) <= 0.0:
+        theta = 0.0
+    elif abs(yn) <= 0.0:
+        theta = math.pi * 0.5 * (-1.0 if xn < 0.0 else 1.0)
+    else:
+        theta = math.atan2(xn, yn)
+    return alat * RADDEG, (theta / sn + olon) * RADDEG
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    return 2 * 6371.0 * math.asin(math.sqrt(a))
+
+
+def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """1→2 방위각 [0,360). 북 0, 동 90."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dl = math.radians(lon2 - lon1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
+COMPASS_16 = (
+    "북", "북북동", "북동", "동북동", "동", "동남동", "남동", "남남동",
+    "남", "남남서", "남서", "서남서", "서", "서북서", "북서", "북북서",
+)
+
+
+def compass_name(deg: float) -> str:
+    return COMPASS_16[int((deg % 360.0) / 22.5 + 0.5) % 16]
+
+
+# --- sfctm2 헤더 기반 파싱 (강수량 RN 컬럼 위치를 런타임에 찾는다) ---
+#
+# 기존 parse_sfctm2 는 문서 기준 고정 인덱스를 쓴다(운영 중이므로 건드리지 않는다).
+# 강수량(RN)은 고정 인덱스 표에 없어서, help=1 응답의 헤더 줄에서 컬럼명을 읽어
+# 위치를 찾는다. 헤더를 못 찾으면 강수 판정을 포기하고 None 을 돌려준다 —
+# 틀린 자리에서 숫자를 읽어 "비 온다"고 하는 것보다 모른다고 하는 편이 낫다.
+
+def parse_sfctm2_header(text: str) -> dict[str, int] | None:
+    for line in text.splitlines():
+        s = line.strip()
+        if not s.startswith("#"):
+            continue
+        toks = s.lstrip("#").split()
+        if "STN" in toks and len(toks) >= 5 and toks[0].upper().startswith(("YY", "TM")):
+            return {name: i for i, name in enumerate(toks)}
+    return None
+
+
+def parse_sfctm2_all(text: str) -> dict[int, dict]:
+    """kma_sfctm2 응답(stn=0, help=1)에서 전 지점의 강수·기온·바람을 뽑는다.
+
+    반환: {지점번호: {"tm", "rn_mm", "ta_c", "ws_ms", "wd_deg"}}
+    rn_mm 은 해당 정시까지의 1시간 강수량. 결측/헤더 미검출이면 None.
+    """
+    cols = parse_sfctm2_header(text)
+    out: dict[int, dict] = {}
+    if not cols:
+        return out
+
+    def pick(names: tuple[str, ...]) -> int | None:
+        for n in names:
+            if n in cols:
+                return cols[n]
+        return None
+
+    i_stn = pick(("STN", "STN_ID"))
+    i_rn = pick(("RN", "RN-60m", "RN_HR1", "RN_DAY"))
+    i_ta = pick(("TA",))
+    i_ws = pick(("WS",))
+    i_wd = pick(("WD",))
+    if i_stn is None or i_rn is None:
+        return out
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith(("#", "=")):
+            continue
+        t = s.split()
+        if len(t) <= max(x for x in (i_stn, i_rn, i_ta, i_ws, i_wd) if x is not None):
+            continue
+        tm = t[0]
+        if len(tm) != 12 or not tm.isdigit():
+            continue
+        try:
+            stn = int(t[i_stn])
+        except ValueError:
+            continue
+
+        def num(idx: int | None, lo: float, hi: float) -> float | None:
+            if idx is None:
+                return None
+            try:
+                v = float(t[idx])
+            except (IndexError, ValueError):
+                return None
+            if v <= -9.0 or not (lo <= v <= hi):
+                return None
+            return v
+
+        rec = {
+            "tm": tm,
+            "rn_mm": num(i_rn, 0.0, 500.0),
+            "ta_c": num(i_ta, -45.0, 55.0),
+            "ws_ms": num(i_ws, 0.0, 80.0),
+            "wd_deg": num(i_wd, 0.0, 360.0),
+        }
+        prev = out.get(stn)
+        if prev is None or rec["tm"] > prev["tm"]:
+            out[stn] = rec
+    return out
