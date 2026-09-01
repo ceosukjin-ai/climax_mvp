@@ -111,6 +111,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 imagery_monthly_budget=settings.streetview_monthly_image_budget,
             )
             logger.info("Orchestrator ready")
+            # 전 지점 관측은 좌표와 무관한 전국 공통 자료다. 미리 받아두면
+            # 사용자 요청이 캐시만 읽는다 (첫 요청 1분 → 즉시).
+            try:
+                orchestrator.rain.start_prewarm()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("강수 관측 미리 받기 시작 실패: {}", e)
 
             # 외부 API 콜드 연결 워밍업 — 첫 사용자 요청의 지연(KMA 첫 호출 ~5s 콜드
             # TLS/커넥션 셋업)을 부팅 시 1회 지불한다. 이후 요청은 커넥션 재사용(~50ms).
@@ -153,6 +159,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    # 미리 받기 루프 정리 (종료 시 취소되지 않으면 경고가 남는다)
+    if orchestrator is not None:
+        try:
+            await orchestrator.rain.stop_prewarm()
+        except Exception:  # noqa: BLE001
+            pass
+
     logger.info("ClimaX backend shutting down")
     await archive.close()
     await cache.close()
@@ -162,6 +175,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await kma_client.close()
     if asos_client is not None:
         await asos_client.close()
+    if aws_obs_client is not None:
+        await aws_obs_client.close()
     if directions is not None:
         await directions.close()
 

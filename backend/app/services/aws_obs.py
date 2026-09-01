@@ -66,6 +66,10 @@ URL_AWS_HOUR = f"{APIHUB}/url/awsh.php"                     # 시간통계 var=R
 URL_RDR_AWS = f"{APIHUB}/cgi-bin/url/nph-rdr_cmp_aws_all_pt_data"   # AWS 지점별 레이더값
 
 # 레이더 결측 코드 (실측 확인 2026-09-01)
+# 레이더 전 지점 조회는 다른 조회보다 훨씬 느리다(실측 30.7초).
+# 기본 30초로는 간발의 차이로 잘려서 값이 하나도 안 들어왔다 (2026-09-01 운영).
+RADAR_TIMEOUT_SEC = 75.0
+
 RADAR_NO_ECHO = -250.0      # 강수 없음
 RADAR_OUT_OF_RANGE = -300.0  # 관측 반경 밖
 
@@ -560,14 +564,20 @@ class AWSObsClient:
         self.registry.flush()
         await self._client.aclose()
 
-    async def _get(self, url: str, params: dict) -> str | None:
+    async def _get(self, url: str, params: dict,
+                   timeout: float | None = None) -> str | None:
         p = dict(params)
         p["authKey"] = self.auth_key
         try:
-            resp = await self._client.get(url, params=p)
+            resp = await self._client.get(
+                url, params=p,
+                timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
+            )
             resp.raise_for_status()
         except Exception as e:  # noqa: BLE001
-            logger.warning("AWS 조회 실패 {}: {}", url.rsplit("/", 1)[-1], e)
+            # 타임아웃은 str(e) 가 비어 있어 로그만 보면 원인을 못 찾는다
+            logger.warning("AWS 조회 실패 {}: {}: {}",
+                           url.rsplit("/", 1)[-1], type(e).__name__, e or "(메시지 없음)")
             return None
         text = resp.content.decode("euc-kr", errors="replace")
         if '"status"' in text and ('"403"' in text or "403," in text or "404" in text):
@@ -690,7 +700,7 @@ class AWSObsClient:
             t = t.replace(minute=(t.minute // 5) * 5, second=0, microsecond=0)
             text = await self._get(URL_RDR_AWS, {
                 "tm": t.strftime("%Y%m%d%H%M"), "qcd": "EXT", "cmp": "HSP", "help": "1",
-            })
+            }, timeout=RADAR_TIMEOUT_SEC)
             if not text:
                 continue
             rows = parse_radar_aws(text)

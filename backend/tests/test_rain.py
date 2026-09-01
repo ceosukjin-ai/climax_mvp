@@ -664,3 +664,38 @@ async def test_umbrella_not_recommended_for_far_away_rain():
     assert r.level == "없음"
     assert r.approaching is None          # 60km 밖은 '다가온다'고 하지 않는다
     assert r.nearest_rain is not None     # 다만 근처에 비가 있다는 사실은 남긴다
+
+
+# ===== 미리 받아두기 =====
+
+async def test_prewarm_fills_cache_so_requests_do_not_wait():
+    """전 지점 관측은 좌표와 무관하다 — 미리 받아두면 요청은 캐시만 읽는다.
+
+    운영에서 첫 요청이 1분 걸렸다(지점표 714곳 + 관측 5종을 그 자리에서 받음).
+    """
+    import asyncio
+    from app.services.aws_obs import StationRain as SR
+
+    aws = FakeAWS({159: SR(stn=159, rn_mm=0.0, ww=0)})
+    svc = RainService(FakeKMA(), aws=aws)
+
+    svc.start_prewarm(interval_sec=3600)
+    await asyncio.sleep(0)          # 루프가 한 번 돌 기회를 준다
+    await asyncio.sleep(0)
+    for _ in range(20):
+        if aws.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert aws.calls >= 1, "미리 받기가 관측을 가져오지 않았다"
+
+    before = aws.calls
+    await svc.rain_at(*BUSAN)       # 요청은 캐시를 쓴다
+    assert aws.calls == before
+
+    await svc.stop_prewarm()
+    assert svc._prewarm_task is None
+
+
+async def test_stop_prewarm_is_safe_when_not_started():
+    svc = RainService(FakeKMA())
+    await svc.stop_prewarm()        # 예외 없이 지나가야 한다

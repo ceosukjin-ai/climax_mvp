@@ -50,6 +50,7 @@ GRID_WEIGHT_FLOOR = 0.05      # 이보다 작은 가중치의 격자는 호출�
 NCST_TTL_SEC = 10 * 60        # 초단기실황은 매시 발표 — 10분 캐시
 FCST_TTL_SEC = 15 * 60        # 초단기예보는 매시 30분 발표 — 15분 캐시
 OBS_TTL_SEC = 10 * 60         # 전 지점 관측 훑기 — 10분 캐시
+PREWARM_INTERVAL_SEC = 5 * 60  # 미리 받아두는 주기 (캐시 만료보다 짧게)
 FAIL_TTL_SEC = 3 * 60         # 실패 시 잠시 재시도 억제
 
 NEARBY_RADIUS_KM = 120.0      # 주변 관측소 탐색 반경 (표시용)
@@ -253,6 +254,43 @@ class RainService:
         self._fcst: dict[tuple[int, int], tuple[object, float]] = {}
         self._obs: tuple[tuple | None, float] = (None, 0.0)
         self.obs_kind: str = "없음"     # 이번 판정에 무엇을 썼나 (AWS / ASOS / 없음)
+        self._prewarm_task = None
+
+    # --- 미리 받아두기 ---------------------------------------------------
+    #
+    # 전 지점 관측은 좌표와 무관한 **전국 공통 자료**다. 사용자 요청이 들어온 뒤에
+    # 받으면 첫 사람이 1분을 기다린다(2026-09-01 운영 확인). 서버가 주기적으로
+    # 미리 받아 캐시에 넣어두면 요청은 캐시만 읽는다.
+
+    async def _prewarm_loop(self, interval_sec: int) -> None:
+        import asyncio
+        while True:
+            try:
+                recs, _, _, kind = await self._station_data()
+                logger.info("강수 관측 미리 받기 완료 — {} {}곳", kind, len(recs))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                logger.warning("강수 관측 미리 받기 실패: {}", e)
+            await asyncio.sleep(interval_sec)
+
+    def start_prewarm(self, interval_sec: int = PREWARM_INTERVAL_SEC) -> None:
+        import asyncio
+        if self._prewarm_task is not None:
+            return
+        self._prewarm_task = asyncio.create_task(self._prewarm_loop(interval_sec))
+        logger.info("강수 관측 미리 받기 시작 ({}초 주기)", interval_sec)
+
+    async def stop_prewarm(self) -> None:
+        import asyncio
+        if self._prewarm_task is None:
+            return
+        self._prewarm_task.cancel()
+        try:
+            await self._prewarm_task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        self._prewarm_task = None
 
     # --- 캐시된 격자 조회 -------------------------------------------------
 
