@@ -976,6 +976,60 @@ async def daily_brief(
             for a, b in blocks
         )
 
+    # 시간대별 브리핑 (2026-09-01) — 하루 한 줄로 뭉치면 실제 행동에 못 쓴다.
+    # "낮 최고 31도, 비 소식 있음"만으로는 오후에 우산을 챙길지 알 수 없다.
+    # 오전/오후/저녁으로 쪼개서 각 구간의 기온대·비·하늘을 따로 준다.
+    # 이미 지나간 구간은 넣지 않는다(예보 목록 자체가 now-1h 이후로 걸러져 있다).
+    BANDS = (("morning", "오전", 6, 12), ("afternoon", "오후", 12, 18),
+             ("evening", "저녁", 18, 24))
+    bands = []
+    for key, label, h0, h1 in BANDS:
+        slots = [f for f in today if h0 <= f.forecast_for.hour < h1]
+        if not slots:
+            continue
+        b_temps = [f.temperature_c for f in slots if f.temperature_c is not None]
+        b_rain = [
+            f for f in slots
+            if (f.precipitation_type not in (None, "없음"))
+            or ((f.precipitation_mm or 0.0) > 0.0)
+        ]
+        b_pops = [
+            f.precipitation_prob_pct for f in slots
+            if getattr(f, "precipitation_prob_pct", None) is not None
+        ]
+        b_worst = max((sky_rank.get(f.sky_condition or "", 0) for f in slots), default=0)
+        # 실제로 남아 있는 시각 범위를 준다. 아침 9시에 열면 오전은 6시가 아니라
+        # 9시부터다 — 이미 지나간 시간을 범위에 넣으면 브리핑이 거짓말이 된다.
+        bands.append({
+            "key": key,
+            "label": label,
+            "from_hour": min(f.forecast_for.hour for f in slots),
+            "to_hour": h1,          # 구간의 끝(24 = 자정)
+            "t_max": max(b_temps) if b_temps else None,
+            "t_min": min(b_temps) if b_temps else None,
+            "rain": bool(b_rain),
+            # 이 구간에서 비가 시작되는 시각 — "오후 3시부터" 처럼 쓴다
+            "rain_from_hour": (
+                min(f.forecast_for.hour for f in b_rain) if b_rain else None
+            ),
+            # 비가 그치는 시각 — 비 이후 첫 '안 오는' 칸의 시각. 끝까지 오면 구간 끝.
+            # 예보 간격(1시간/3시간)에 의존하지 않으려고 다음 칸의 시각을 그대로 쓴다.
+            "rain_to_hour": (
+                next(
+                    (
+                        h for h in sorted(f.forecast_for.hour for f in slots)
+                        if h > max(g.forecast_for.hour for g in b_rain)
+                        and h not in {g.forecast_for.hour for g in b_rain}
+                    ),
+                    h1,
+                )
+                if b_rain else None
+            ),
+            "rain_type": b_rain[0].precipitation_type if b_rain else None,
+            "pop_max": max(b_pops) if b_pops else None,
+            "sky": {1: "맑음", 3: "구름많음", 4: "흐림"}.get(b_worst),
+        })
+
     return {
         "date": now.strftime("%Y-%m-%d"),
         "t_max": max(temps) if temps else None,
@@ -990,6 +1044,8 @@ async def daily_brief(
         "rain_window": rain_window,          # 예: "14~18시" — 없으면 None
         "rain_slot_count": len(rain_slots),
         "all_day_rain": bool(rain_slots) and len(rain_slots) >= max(1, len(today) - 1),
+        # 오전/오후/저녁 — 구버전 앱은 이 키를 무시한다
+        "bands": bands,
     }
 
 

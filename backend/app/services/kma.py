@@ -99,6 +99,9 @@ class KMAForecast:
     precipitation_mm: float | None
     sky_condition: str | None        # 맑음/구름많음/흐림
     precipitation_type: str | None   # 없음/비/비눈/눈/소나기
+    # 강수확률 POP [%] — 단기예보에만 있다(초단기예보에는 없어 None).
+    # 시간대별 브리핑에서 "오후 60%" 처럼 쓴다 (2026-09-01).
+    precipitation_prob_pct: float | None = None
 
 
 class KMAError(Exception):
@@ -360,6 +363,9 @@ class KMAClient:
                     precipitation_mm=_parse_float(cats.get("PCP")),
                     sky_condition=SKY_CODE.get(cats.get("SKY", "")),
                     precipitation_type=PTY_CODE.get(cats.get("PTY", "")),
+                    precipitation_prob_pct=(
+                        _parse_float(cats["POP"]) if "POP" in cats else None
+                    ),
                 )
             )
         return forecasts
