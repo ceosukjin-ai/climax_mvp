@@ -52,7 +52,11 @@ FCST_TTL_SEC = 15 * 60        # 초단기예보는 매시 30분 발표 — 15분
 OBS_TTL_SEC = 10 * 60         # 전 지점 관측 훑기 — 10분 캐시
 FAIL_TTL_SEC = 3 * 60         # 실패 시 잠시 재시도 억제
 
-NEARBY_RADIUS_KM = 120.0      # 주변 관측소 탐색 반경
+NEARBY_RADIUS_KM = 120.0      # 주변 관측소 탐색 반경 (표시용)
+# 접근 판정은 더 좁게 본다. 120km 밖의 비를 "다가온다"고 하면
+# 실제로는 몇 시간이 걸리고 오는 중에 사라지는 일이 흔하다.
+# (2026-09-01 운영 확인: 119.8km 밖 비 때문에 우산을 권하고 있었다)
+APPROACH_MAX_KM = 60.0
 HERE_RADIUS_KM = 8.0          # 이 안의 관측소 강수를 "여기"로 본다.
 # 15km 였는데 2026-09-01 검증에서 13.9km 떨어진 지점의 빗방울을 "여기 비"로
 # 단정하는 문제가 드러났다. 5km 격자가 뭉뚱그린다고 말해놓고 15km 를 여기라 하면
@@ -566,7 +570,9 @@ class RainService:
         approaching = None
         for want in ("비", "상공", "빗방울"):
             approaching = next(
-                (s for s in nearby if s.upwind and s.level == want), None)
+                (s for s in nearby
+                 if s.upwind and s.level == want and s.km <= APPROACH_MAX_KM),
+                None)
             if approaching is not None:
                 break
 

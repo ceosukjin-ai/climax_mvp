@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -86,10 +87,29 @@ MISSING_VALUES = {-9.0, -9.9, -99.0, -99.9, -999.0, -999.9, -9999.0}
 # 감지 분수는 60분 중 10분 이상이면 '비', 그 미만이면 '빗방울'.
 WEAK_RE_MINUTES = 10.0
 
-STATION_CACHE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "aws_stations.json",
-)
+def _station_cache_path() -> str:
+    """지점 좌표 캐시 위치.
+
+    컨테이너는 비루트(climax)로 돌고 /app 은 root 소유라 거기엔 못 쓴다.
+    (2026-09-01 운영 로그: Permission denied: /app/aws_stations.json →
+     매 요청마다 714곳을 다시 받아 20초씩 쓰고 있었다)
+    쓸 수 있는 곳을 순서대로 고른다.
+    """
+    env = os.environ.get("AWS_STATION_CACHE")
+    if env:
+        return env
+    here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    for d in (os.path.join(here, ".cache"), here, tempfile.gettempdir()):
+        try:
+            os.makedirs(d, exist_ok=True)
+            if os.access(d, os.W_OK):
+                return os.path.join(d, "aws_stations.json")
+        except OSError:
+            continue
+    return os.path.join(tempfile.gettempdir(), "aws_stations.json")
+
+
+STATION_CACHE = _station_cache_path()
 STATION_CACHE_TTL_SEC = 30 * 24 * 3600
 
 

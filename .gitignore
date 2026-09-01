@@ -86,3 +86,5 @@ mobile/android/
 #       (RN 자동생성 iOS 프로젝트가 아니라 직접 작성한 앱 골격)
 api.txt
 *.code-workspace
+backend/aws_stations.json
+backend/.cache/

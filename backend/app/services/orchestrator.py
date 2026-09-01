@@ -1047,14 +1047,25 @@ class VPTIOrchestrator:
         max_precip = max(
             [r.now_precip_mm] + [h.precip_mm for h in r.timeline] or [0.0]
         )
-        rain_expected = r.raining_now or r.onset_at is not None or r.approaching is not None
+
+        # 구버전 앱은 umbrella_recommended 만 보고 "우산 챙기세요"를 띄운다.
+        # 그래서 이 값은 **실제로 우산이 필요한 경우**로만 켠다.
+        #   · 지금 비가 온다  · 6시간 안에 비 예보가 있다
+        # 빗방울이나 먼 곳의 비로는 켜지 않는다 — 2026-09-01 운영에서 120km 밖 비로
+        # 우산을 권하고 있었다.
+        umbrella = (r.level == "비") or (r.onset_at is not None)
+        rain_expected = (
+            umbrella
+            or r.level == "빗방울"
+            or (r.approaching is not None and r.eta_min_range is not None)
+        )
 
         # --- 구버전 앱이 읽는 키 (형태·의미 그대로 유지) ---
         payload.update({
             "rain_expected_6h": rain_expected,
             "onset_in_hours": onset_hours,
             "max_precip_mm": round(max_precip, 1),
-            "umbrella_recommended": rain_expected,
+            "umbrella_recommended": umbrella,
         })
         return payload
 

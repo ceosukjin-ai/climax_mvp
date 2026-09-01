@@ -640,3 +640,27 @@ async def test_fallback_sentence_uses_the_right_word():
     assert r.eta_min_range is None
     assert "가까운 빗방울" in r.advice
     assert "가까운 비는" not in r.advice
+
+
+# ===== 구버전 앱이 읽는 키 (2026-09-01 운영에서 잘못 켜져 있었다) =====
+
+async def test_umbrella_not_recommended_for_far_away_rain():
+    """120km 밖의 비로 '우산 챙기세요'를 켜면 안 된다.
+
+    구버전 앱은 umbrella_recommended 만 보고 알림을 띄운다.
+    운영 확인: 119.8km 밖 가산의 비 때문에 부산 사용자에게 우산을 권하고 있었다.
+    """
+    from app.services.aws_obs import StationRain as SR
+    from app.services.kma import ASOS_STATIONS, bearing_deg, haversine_km
+    far = max(ASOS_STATIONS, key=lambda s: -1 if haversine_km(
+        *BUSAN, *ASOS_STATIONS[s]) > 120 else haversine_km(*BUSAN, *ASOS_STATIONS[s]))
+    assert 60 < haversine_km(*BUSAN, *ASOS_STATIONS[far]) <= 120
+
+    brg = bearing_deg(*BUSAN, *ASOS_STATIONS[far])
+    aws = FakeAWS({far: SR(stn=far, rn_mm=3.5)})
+    svc = RainService(FakeKMA(wind_deg=brg, wind_ms=6.0), aws=aws)
+    r = await svc.rain_at(*BUSAN)
+
+    assert r.level == "없음"
+    assert r.approaching is None          # 60km 밖은 '다가온다'고 하지 않는다
+    assert r.nearest_rain is not None     # 다만 근처에 비가 있다는 사실은 남긴다
