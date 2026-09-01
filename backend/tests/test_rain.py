@@ -699,3 +699,30 @@ async def test_prewarm_fills_cache_so_requests_do_not_wait():
 async def test_stop_prewarm_is_safe_when_not_started():
     svc = RainService(FakeKMA())
     await svc.stop_prewarm()        # 예외 없이 지나가야 한다
+
+
+async def test_radar_nationwide_count_separates_two_failures():
+    """레이더가 죽은 것과 '여기 근처만 값이 없는 것'은 다르다.
+
+    운영에서 radar_known=0 만 보고는 둘을 구분할 수 없어 원인을 못 좁혔다.
+    """
+    from app.services.aws_obs import StationRain as SR
+    from app.services.kma import ASOS_STATIONS, haversine_km
+
+    far = [s for s, (la, lo) in ASOS_STATIONS.items()
+           if haversine_km(*BUSAN, la, lo) > 100][:3]
+    near = [s for s, (la, lo) in ASOS_STATIONS.items()
+            if haversine_km(*BUSAN, la, lo) <= 8.0]
+    assert far and near
+
+    # 먼 곳엔 레이더 값이 있고, 여기 근처엔 없다
+    recs = {s: SR(stn=s, rn_mm=0.0, ww=0, radar_mmh=0.0) for s in far}
+    recs.update({s: SR(stn=s, rn_mm=0.0, ww=0, radar_mmh=None) for s in near})
+    r = await RainService(FakeKMA(), aws=FakeAWS(recs)).rain_at(*BUSAN)
+    assert r.radar_nationwide == len(far)     # 레이더는 살아 있다
+    assert r.local_aloft_known == 0           # 다만 여기 근처엔 값이 없다
+
+    # 레이더 자체가 실패한 경우
+    recs2 = {s: SR(stn=s, rn_mm=0.0, ww=0) for s in far + near}
+    r2 = await RainService(FakeKMA(), aws=FakeAWS(recs2)).rain_at(*BUSAN)
+    assert r2.radar_nationwide == 0

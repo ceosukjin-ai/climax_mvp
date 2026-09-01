@@ -231,6 +231,7 @@ class RainAt:
     local_aloft: int = 0
     local_aloft_known: int = 0
     sky_only: bool = False           # 하늘엔 있는데 땅엔 안 닿는 상태
+    radar_nationwide: int = 0        # 전국에서 레이더 값이 온 지점 수
     wind_ms: float | None = None
     data_at: datetime | None = None  # '지금' 값의 기준 시각 (가장 신선한 자료)
     data_age_min: int | None = None  # 그 자료가 몇 분 전 것인가
@@ -255,6 +256,7 @@ class RainService:
         self._obs: tuple[tuple | None, float] = (None, 0.0)
         self.obs_kind: str = "없음"     # 이번 판정에 무엇을 썼나 (AWS / ASOS / 없음)
         self._prewarm_task = None
+        self.radar_nationwide: int = 0   # 전국에서 레이더 값이 온 지점 수 (진단용)
 
     # --- 미리 받아두기 ---------------------------------------------------
     #
@@ -267,7 +269,11 @@ class RainService:
         while True:
             try:
                 recs, _, _, kind = await self._station_data()
-                logger.info("강수 관측 미리 받기 완료 — {} {}곳", kind, len(recs))
+                radar = sum(1 for v in recs.values() if v.radar_mmh is not None)
+                wet = sum(1 for v in recs.values() if v.intensity in ("비", "빗방울"))
+                logger.info(
+                    "강수 관측 미리 받기 완료 — {} {}곳 (레이더 {}곳 · 강수 {}곳)",
+                    kind, len(recs), radar, wet)
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
@@ -291,6 +297,7 @@ class RainService:
         except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         self._prewarm_task = None
+        self.radar_nationwide: int = 0   # 전국에서 레이더 값이 온 지점 수 (진단용)
 
     # --- 캐시된 격자 조회 -------------------------------------------------
 
@@ -444,6 +451,7 @@ class RainService:
         known = 0                 # 온다/안온다를 실제로 판정할 수 있었던 지점 수
         here_known = here_rain = here_drizzle = 0    # 반경 HERE_RADIUS_KM 안 집계
         here_aloft_known = here_aloft = 0            # 하늘(레이더) 집계
+        radar_nationwide = 0                         # 전국에서 레이더 값이 온 지점
         obs_at: datetime | None = None
 
         for stn, rec in recs.items():
@@ -452,6 +460,8 @@ class RainService:
 
             level = rec.intensity        # 비 / 빗방울 / 없음 / None(모른다)
             sky = rec.aloft              # True / False / None(레이더 반경 밖)
+            if rec.radar_mmh is not None:
+                radar_nationwide += 1
             if level is None and sky is None:
                 continue
             if level is not None:
@@ -505,6 +515,7 @@ class RainService:
 
         found.sort(key=lambda s: s.km)
         # 판정 가능한 지점이 하나도 없으면 "비가 없다"가 아니라 "모른다"이다.
+        self.radar_nationwide = radar_nationwide
         return (found, raining, known > 0, obs_at,
                 LocalVerdict(here_known, here_rain, here_drizzle,
                              here_aloft_known, here_aloft))
@@ -649,6 +660,7 @@ class RainService:
             local_aloft=local.aloft,
             local_aloft_known=local.aloft_known,
             sky_only=local.sky_only,
+            radar_nationwide=self.radar_nationwide,
             wind_ms=wind_ms,
             mismatch=mismatch,
             data_at=data_at,
@@ -843,6 +855,9 @@ def to_dict(r: RainAt) -> dict:
             "radar_known": r.local_aloft_known,
             "radar_wet": r.local_aloft,
         },
+        # 전국 레이더 지점 수. 0 이면 레이더 조회 자체가 실패한 것이고,
+        # 0 이 아닌데 radar_known 이 0 이면 여기 근처 지점만 값이 없는 것이다.
+        "radar_stations_nationwide": r.radar_nationwide,
         "data_at": r.data_at.strftime("%H:%M") if r.data_at else None,
         "data_age_min": r.data_age_min,
         "stale": r.stale,
