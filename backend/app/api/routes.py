@@ -1459,6 +1459,19 @@ async def archive_concept(
     return await concept_pair(lat, lon, scenario, svf, gvi, bvi, force=force)
 
 
+@router.get("/archive/siteplan", include_in_schema=False)
+async def archive_siteplan(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    level: int = Query(19, ge=15, le=20), size: int = Query(800, ge=300, le=1024),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """개선 시뮬 배치도 바탕 — 위성사진 + 축척 + 보행 축 (대표 전용, 2026-09-05)."""
+    _require_field_key(x_field_key)
+    from app.services.siteplan import siteplan
+    return await siteplan(getattr(request.app.state, "archive", None), lat, lon, level, size)
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""

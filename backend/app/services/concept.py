@@ -20,9 +20,11 @@ from app.config import get_settings
 
 CACHE_DIR = Path("/app/.cache/concept") if Path("/app").is_dir() else Path(".cache/concept")
 
-_SCENE_STYLE = ("Photorealistic street-level photograph, eye level, 35mm lens, Busan, South Korea, "
-                "midsummer early afternoon, clear sky, harsh sunlight, no people in the foreground, "
-                "Korean signage, realistic asphalt road and concrete sidewalk.")
+_SCENE_STYLE = ("Photorealistic street-level photograph taken from the SIDEWALK, eye level, 35mm lens, "
+                "Busan, South Korea, midsummer early afternoon, clear sky, harsh sunlight, no people in the "
+                "foreground, Korean signage. The sidewalk occupies the lower-right third of the frame, wide "
+                "and clearly visible, with a curb separating it from the asphalt road on the left. "
+                "A pedestrian crosswalk waiting corner is visible on the sidewalk.")
 
 
 def _describe(svf: float, gvi: float, bvi: float) -> str:
@@ -49,13 +51,16 @@ def _describe(svf: float, gvi: float, bvi: float) -> str:
 
 
 AFTER_PROMPT = {
-    "shade": ("Edit this photo: install a permanent fixed shade canopy (Korean 그늘막 style — a sturdy "
-              "steel-post umbrella or sail canopy about 4 m wide, beige or dark green fabric) over the "
-              "sidewalk waiting area / crosswalk corner. Cast a realistic shadow on the pavement under it. "
-              "Keep everything else exactly the same: same buildings, road, lighting, camera angle."),
+    "shade": ("Edit this photo: on the SIDEWALK ONLY, at the pedestrian crosswalk waiting corner, install one "
+              "permanent Korean-style shade canopy (그늘막): a single sturdy steel post with a round or square "
+              "fabric canopy about 3 m across, dark green or beige, about 2.7 m tall. The post stands on the "
+              "sidewalk pavement next to the curb; nothing is placed on the road or over traffic lanes. "
+              "Cast a realistic shadow on the sidewalk under it. Keep everything else exactly the same: "
+              "same buildings, road, lighting, camera angle."),
     "trees": ("Edit this photo: plant a row of mature street trees (8–10 m tall, broad canopy, like zelkova "
-              "or plane trees) along the sidewalk edge with tree pits, spaced about 10 m, casting dappled "
-              "shade on the sidewalk. Keep everything else exactly the same: same buildings, road, lighting, camera angle."),
+              "or plane trees) IN THE SIDEWALK along the curb line, each in a tree pit, spaced about 10 m, "
+              "casting dappled shade on the sidewalk. No trees on the road. Keep everything else exactly the "
+              "same: same buildings, road, lighting, camera angle."),
     "coolpave": ("Edit this photo: resurface the road and sidewalk with light grey high-albedo cool pavement. "
                  "Keep everything else exactly the same."),
     "combo": ("Edit this photo: plant a row of mature street trees along the sidewalk AND resurface the road "

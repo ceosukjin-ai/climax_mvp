@@ -456,6 +456,66 @@
     } catch (e) { box.innerHTML = `<div class="empty status err">시뮬레이션 실패: ${e.message}</div>`; }
   }
 
+
+  // ── 배치도 (실제 위치 항공사진 + 개입 위치) ───────────────
+  async function loadSiteplan(cell, scn, m, w, rows) {
+    const out = $("#siteplan-out"); if (!out) return;
+    out.innerHTML = `<div class="status" style="margin-top:8px">항공사진 불러오는 중…</div>`;
+    try {
+      const r = await fetch(`${API}/api/v1/archive/siteplan?lat=${cell.lat}&lon=${cell.lon}`, { headers: { "X-Field-Key": getKey() } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const sp = await r.json();
+      if (!sp.ok) { out.innerHTML = `<div class="status err" style="margin-top:8px">${sp.reason}</div>`; return; }
+      renderSiteplan(out, sp, cell, scn, m, w, rows);
+    } catch (e) { out.innerHTML = `<div class="status err" style="margin-top:8px">배치도 실패: ${e.message}</div>`; }
+  }
+
+  function renderSiteplan(out, sp, cell, scn, m, w, rows) {
+    const S = sp.size, mpp = sp.m_per_px, C = S / 2, px = mt => mt / mpp;
+    const sc = rows.find(r => r.key === scn) || rows[0];
+    const axis = sp.axis_deg == null ? 0 : sp.axis_deg;            // 북 기준 시계방향
+    const ux = Math.sin(axis * Math.PI / 180), uy = -Math.cos(axis * Math.PI / 180); // 화면 좌표 단위벡터
+    const cellPx = px(11);
+    let marks = "";
+    const treeIcon = (x, y) => `<circle cx="${x}" cy="${y}" r="${px(3.5)}" fill="#16a34a" fill-opacity=".8" stroke="#052e16" stroke-width="1.5"/><circle cx="${x}" cy="${y}" r="${px(0.6)}" fill="#052e16"/>`;
+    const shadeIcon = (x, y) => `<g><circle cx="${x}" cy="${y}" r="${px(1.6)}" fill="#f59e0b" fill-opacity=".9" stroke="#78350f" stroke-width="1.5"/><line x1="${x-px(1.6)}" y1="${y}" x2="${x+px(1.6)}" y2="${y}" stroke="#78350f"/><line x1="${x}" y1="${y-px(1.6)}" x2="${x}" y2="${y+px(1.6)}" stroke="#78350f"/><text x="${x}" y="${y-px(2.2)}" text-anchor="middle" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">그늘막</text></g>`;
+    const paveBand = () => { const L = px(50), Wd = px(2); const p = [[-L, -Wd], [L, -Wd], [L, Wd], [-L, Wd]].map(([a, b]) => `${C + a*ux - b*uy},${C + a*uy + b*ux}`).join(" "); return `<polygon points="${p}" fill="#e2e8f0" fill-opacity=".55" stroke="#94a3b8" stroke-dasharray="4 3"/>`; };
+    const treeRow = () => { let t = ""; for (let i = -4.5; i <= 4.5; i++) { const d = px(10) * i; t += treeIcon(C + d*ux, C + d*uy); } return t; };
+    if (scn === "shade") marks = shadeIcon(C, C);
+    else if (scn === "trees") marks = treeRow();
+    else if (scn === "coolpave") marks = paveBand();
+    else marks = paveBand() + treeRow();
+    // 격자·축척·북·캡션
+    const capW = 330, capH = 78;
+    const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" style="width:100%;height:auto;display:block;border-radius:8px" id="siteplan-svg">
+      <image href="${sp.image}" width="${S}" height="${S}"/>
+      <line x1="${C - px(60)*ux}" y1="${C - px(60)*uy}" x2="${C + px(60)*ux}" y2="${C + px(60)*uy}" stroke="#38bdf8" stroke-width="1" stroke-dasharray="6 4" opacity=".7"/>
+      <rect x="${C - cellPx/2}" y="${C - cellPx/2}" width="${cellPx}" height="${cellPx}" fill="${colorFor(w.design.base.pvpti)}" fill-opacity=".35" stroke="${colorFor(w.design.base.pvpti)}" stroke-width="2"/>
+      ${marks}
+      <g transform="translate(16,${S - 56})"><rect x="0" y="0" width="${px(20)}" height="6" fill="#fff"/><rect x="${px(20)}" y="0" width="${px(20)}" height="6" fill="#111"/><text x="0" y="22" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">0</text><text x="${px(40)}" y="22" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke" text-anchor="end">40 m</text></g>
+      <g transform="translate(${S - 36},48)"><polygon points="0,-22 8,8 0,2 -8,8" fill="#fff" stroke="#000"/><text x="0" y="24" text-anchor="middle" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">N</text></g>
+      <g transform="translate(16,16)"><rect width="${capW}" height="${capH}" rx="8" fill="#0f172a" fill-opacity=".85"/>
+        <text x="12" y="22" font-size="13" fill="#38bdf8">추천 계획 · 격자 ${cell.lat}, ${cell.lon}</text>
+        <text x="12" y="44" font-size="17" font-weight="600" fill="#fff">${sc.name} <tspan font-size="12" font-weight="400" fill="#94a3b8">${COST_DESC[sc.key]}</tspan></text>
+        <text x="12" y="66" font-size="13" fill="#e2e8f0">체감 ${w.design.base.pvpti}° → ${sc.pvpti}° (${sc.delta}°) · ${won(sc.cost)}원</text></g>
+      <text x="${S - 10}" y="${S - 10}" text-anchor="end" font-size="11" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">${sp.attribution} · 설계 폭염일 기준 · 몸씨 엔진</text>
+    </svg>`;
+    out.innerHTML = `<div style="margin-top:10px">${svg}</div>
+      <div class="status" style="margin-top:6px">실제 위치. 사각형 = 측정 격자(11m), 점선 = 보행 축${sp.axis_deg == null ? "(추정 불가 · 남북 기본)" : ` ${sp.axis_deg}°`}. 개입 아이콘은 격자 중심 기준 배치 — 실제 시공 위치는 보도 폭·지장물 확인 후 확정.
+        <a href="#" id="siteplan-dl" style="color:var(--accent)">PNG 저장</a> · <select id="siteplan-scn" class="btn" style="padding:2px 6px;font-size:.78rem">${rows.map(r => `<option value="${r.key}" ${r.key === scn ? "selected" : ""}>${r.name}</option>`).join("")}</select></div>`;
+    $("#siteplan-scn").addEventListener("change", e => renderSiteplan(out, sp, cell, e.target.value, m, w, rows));
+    $("#siteplan-dl").addEventListener("click", async e => {
+      e.preventDefault();
+      const svgEl = $("#siteplan-svg"), xml = new XMLSerializer().serializeToString(svgEl);
+      const img = new Image(); img.onload = () => {
+        const cv = document.createElement("canvas"); cv.width = S; cv.height = S; cv.getContext("2d").drawImage(img, 0, 0);
+        const a = document.createElement("a"); a.download = `배치도_${cell.lat}_${cell.lon}_${scn}.png`; a.href = cv.toDataURL("image/png"); a.click();
+      };
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(xml);
+    });
+  }
+
   async function loadConcept(cell, scn, m, w, force = false) {
     const out = $("#concept-out"); if (!out) return;
     out.innerHTML = `<div class="status" style="margin-top:8px">개념도 생성 중… (첫 생성은 30~60초)</div>`;
@@ -498,10 +558,12 @@
         <div style="font-size:1.05rem;font-weight:600;margin-top:2px">${best.name} <span style="color:var(--dim);font-weight:400;font-size:.85rem">(${COST_DESC[best.key]})</span></div>
         <div style="font-size:.9rem;margin-top:2px">체감 ${base.pvpti}° → <b style="color:${colorFor(best.pvpti)}">${best.pvpti}°</b> (${best.delta}°, ${best.pct}%) · 비용 <b>${won(best.cost)}원</b> · 1°당 ${won(Math.round(best.perDeg))}원</div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button class="btn" id="concept-btn" data-scn="${best.key}" style="border-color:var(--accent);color:var(--text)">개념도 만들기 (${best.name} 전·후)</button>
+          <button class="btn" id="siteplan-btn" style="border-color:var(--accent);color:var(--text)">배치도 만들기 (실제 위치 · 항공사진)</button>
+          <button class="btn" id="concept-btn" data-scn="${best.key}">참고 개념도 (${best.name} 전·후)</button>
           <select id="concept-scn" class="btn" style="padding:6px 8px">${rows.map(r => `<option value="${r.key}" ${r.key === best.key ? "selected" : ""}>${r.name}</option>`).join("")}</select>
           <span class="status">AI 생성 개념도 · 격자 공간지표 기반 · 실제 장소 사진 아님 · 장당 약 100~200원</span>
         </div>
+        <div id="siteplan-out"></div>
         <div id="concept-out"></div>
       </div>` : "";
     box.innerHTML = head + rec + `
@@ -527,6 +589,8 @@
         <span>· 그늘막은 2026 기사 단가(접이식 170~200만·스마트 800~850만), 가로수·차열포장은 가정값</span>
       </div>
       <p class="status" style="margin:8px 0 0">"실측조건" 열은 이 격자의 실제 평균 기온·습도·풍속으로 다시 계산한 변화. 엔진 가정: ${w.assumptions.join(" / ")}. 결과는 앱과 같은 물리 엔진(일사→MRT→PET)에서 나온 값.</p>`;
+    const sb = $("#siteplan-btn");
+    if (sb) sb.addEventListener("click", () => loadSiteplan(cell, $("#concept-scn").value, m, w, rows));
     const cb = $("#concept-btn");
     if (cb) cb.addEventListener("click", () => loadConcept(cell, $("#concept-scn").value, m, w));
     $("#c-save").addEventListener("click", () => {
