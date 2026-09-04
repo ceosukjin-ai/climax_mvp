@@ -136,14 +136,22 @@
   let hours = 168, map, layer, data;
 
   // ── 접근 키 ────────────────────────────────────────────
+  // 붙여넣기에 "FIELD_KEY=" 접두사·줄바꿈·공백이 섞여 들어와도 키만 골라낸다
+  // (헤더 값에 줄바꿈이 들어가면 사파리가 "Type error" 로 fetch 를 거부한다).
+  function cleanKey(raw) {
+    if (!raw) return null;
+    const m = String(raw).match(/[0-9a-f]{32,}/i);
+    const k = m ? m[0] : String(raw).replace(/FIELD_KEY=/g, "").replace(/\s+/g, "");
+    return k || null;
+  }
   function getKey(force) {
     let k = null;
-    try { k = localStorage.getItem(KEY_NAME); } catch (_) {}
+    try { k = cleanKey(localStorage.getItem(KEY_NAME)); } catch (_) {}
     if (!k || force) {
-      k = prompt("접근 키 (FIELD_KEY)");
-      if (k) { try { localStorage.setItem(KEY_NAME, k.trim()); } catch (_) {} }
+      k = cleanKey(prompt("접근 키 (FIELD_KEY)"));
+      if (k) { try { localStorage.setItem(KEY_NAME, k); } catch (_) {} }
     }
-    return k ? k.trim() : null;
+    return k;
   }
 
   // ── 색 ────────────────────────────────────────────────
@@ -315,6 +323,11 @@
       else { st.textContent = "갱신 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); }
       render(data);
     } catch (e) {
+      if (/type error|load failed/i.test(e.message)) {
+        try { localStorage.removeItem(KEY_NAME); } catch (_) {}
+        st.textContent = "키 형식 오류 — [키] 버튼 눌러 다시 입력"; st.className = "status err";
+        return;
+      }
       st.textContent = "불러오기 실패: " + e.message; st.className = "status err";
     }
   }
