@@ -466,9 +466,19 @@
     const m = w.measured, base = w.design.base, costs = getCosts();
     const rows = w.design.scenarios.map(sc => ({ ...sc, cost: COST_UNIT[sc.key](costs), meas: w.at_measured.scenarios.find(x => x.key === sc.key) }));
     rows.forEach(r => { r.perDeg = r.delta < 0 ? r.cost / -r.delta : null; });
-    const best = [...rows].filter(r => r.perDeg).sort((a, b) => a.perDeg - b.perDeg)[0];
+    // 최적 계획: ① 목표(38° 미만 = 위험 등급 탈출)에 도달하는 개입 중 비용 최저 → ② 없으면 1°당 비용 최저
+    const TARGET = 38;
+    const eff = rows.filter(r => r.delta < 0);
+    const reach = eff.filter(r => r.pvpti < TARGET).sort((a, b) => a.cost - b.cost);
+    const best = reach[0] || [...eff].sort((a, b) => a.perDeg - b.perDeg)[0] || null;
+    const bestWhy = best ? (reach.length ? `목표(${TARGET}° 미만)를 달성하는 개입 중 비용 최저` : `목표 미달 — 1° 낮추는 비용이 가장 낮은 개입`) : "효과 있는 개입 없음";
     const maxDrop = Math.max(0.1, ...rows.map(r => -r.delta));
-    box.innerHTML = head + `
+    const rec = best ? `<div style="background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin:6px 0 10px">
+        <div style="font-size:.78rem;color:var(--accent)">추천 계획 · ${bestWhy}</div>
+        <div style="font-size:1.05rem;font-weight:600;margin-top:2px">${best.name} <span style="color:var(--dim);font-weight:400;font-size:.85rem">(${COST_DESC[best.key]})</span></div>
+        <div style="font-size:.9rem;margin-top:2px">체감 ${base.pvpti}° → <b style="color:${colorFor(best.pvpti)}">${best.pvpti}°</b> (${best.delta}°, ${best.pct}%) · 비용 <b>${won(best.cost)}원</b> · 1°당 ${won(Math.round(best.perDeg))}원</div>
+      </div>` : "";
+    box.innerHTML = head + rec + `
       <div class="sub">측정 ${fmt(m.n)}건 (30일) · SVF ${m.svf} · GVI ${m.gvi} · BVI ${m.bvi} · 실측 평균 체감 ${m.avg_pvpti ?? "–"}° (최고 ${m.max_pvpti ?? "–"}°)
       &nbsp;|&nbsp; <b style="color:var(--text)">설계 폭염일</b>(맑음 · 14시 · 기온 ${w.design_day.temperature_c}° · 습도 ${w.design_day.humidity_pct}% · 풍속 ${w.design_day.wind_speed_ms}m/s) 기준선 체감 <b style="color:${colorFor(base.pvpti)}">${base.pvpti}°</b> (MRT ${base.mrt}°)</div>
       <div style="overflow-x:auto"><table>
