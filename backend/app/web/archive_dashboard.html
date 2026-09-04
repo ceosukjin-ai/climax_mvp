@@ -306,7 +306,13 @@
         .addTo(layer);
       b.push([c.lat, c.lon]);
     });
-    if (b.length) map.fitBounds(b, { padding: [20, 20], maxZoom: 15 });
+    // 초기 화면은 측정이 몰린 곳으로 — 표본 수 가중 5~95% 범위 (외딴 테스트 좌표에 끌려가지 않게)
+    if (b.length) {
+      const q = (arr, p) => { const s = [...arr].sort((a, c) => a - c); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))]; };
+      const w = []; cells.forEach(c => { const k = Math.min(20, +c.n); for (let i = 0; i < k; i++) w.push([c.lat, c.lon]); });
+      const lats = w.map(x => x[0]), lons = w.map(x => x[1]);
+      map.fitBounds([[q(lats, .05), q(lons, .05)], [q(lats, .95), q(lons, .95)]], { padding: [24, 24], maxZoom: 15 });
+    }
 
     const top = cells.slice(0, 20);
     $("#toptable").innerHTML = `<tr><th>#</th><th>위도</th><th>경도</th><th>표본</th><th>평균</th><th>최고</th><th>기온</th><th>SVF</th><th>GVI</th></tr>` +
