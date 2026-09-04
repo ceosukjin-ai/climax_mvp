@@ -52,6 +52,7 @@
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
   #map{height:420px;border-radius:10px;background:#0b1220}
   .leaflet-container{font:inherit}
+  .osm-dim{filter:brightness(.55) saturate(.6) contrast(1.1)}
   .maplegend{display:flex;gap:10px;flex-wrap:wrap;font-size:.78rem;color:var(--dim);margin-top:8px}
   .maplegend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
   .tip{position:fixed;pointer-events:none;background:#0b1220;border:1px solid var(--border);border-radius:8px;
@@ -280,12 +281,16 @@
     renderMap(d.hotspots || [], label);
   }
 
-  function renderMap(cells, label) {
-    $("#map-sub").textContent = `${label} · 격자 11m · 평균 체감온도 · ${fmt(cells.length)}개`;
+  function renderMap(allCells, label) {
+    // 테스트 적재(source=test)의 가짜 좌표가 섞여 있어 한반도 범위만 그린다
+    const inKorea = c => c.lat >= 33 && c.lat <= 39 && c.lon >= 124 && c.lon <= 132;
+    const cells = allCells.filter(inKorea);
+    const dropped = allCells.length - cells.length;
+    $("#map-sub").textContent = `${label} · 격자 11m · 평균 체감온도 · ${fmt(cells.length)}개` + (dropped ? ` · 국외 좌표 ${fmt(dropped)}개 제외` : "");
     if (!map) {
       map = L.map("map", { zoomControl: true, attributionControl: true }).setView([35.23, 129.08], 12);
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-        maxZoom: 19, attribution: "&copy; OpenStreetMap &copy; CARTO"
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19, attribution: "&copy; OpenStreetMap contributors", className: "osm-dim"
       }).addTo(map);
       layer = L.layerGroup().addTo(map);
     }
