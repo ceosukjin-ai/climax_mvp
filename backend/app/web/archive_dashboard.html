@@ -50,7 +50,11 @@
   svg text{fill:var(--dim);font-size:11px}
   .legend{display:flex;gap:14px;font-size:.8rem;color:var(--dim);margin-top:6px;flex-wrap:wrap}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-  #map{height:420px;border-radius:10px;background:#0b1220}
+  .maps{display:grid;grid-template-columns:1fr 1.6fr;gap:10px}
+  @media (max-width:760px){.maps{grid-template-columns:1fr}}
+  #map,#map2{height:440px;border-radius:10px;background:#0b1220}
+  .maplabel{font-size:.78rem;color:var(--muted);margin:0 0 4px}
+  .cursorbox{stroke:#38bdf8;fill:#38bdf8;fill-opacity:.08}
   .leaflet-container{font:inherit}
   .osm-dim{filter:brightness(.55) saturate(.6) contrast(1.1)}
   .maplegend{display:flex;gap:10px;flex-wrap:wrap;font-size:.78rem;color:var(--dim);margin-top:8px}
@@ -109,7 +113,10 @@
 
   <section class="card">
     <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도</small></h2>
-    <div id="map"></div>
+    <div class="maps">
+      <div><p class="maplabel">개요 — 클릭한 곳을 오른쪽에 크게</p><div id="map"></div></div>
+      <div><p class="maplabel" id="map2-label">상세</p><div id="map2"></div></div>
+    </div>
     <div class="maplegend">
       <span><i style="background:var(--safe)"></i>&lt;29 안전</span>
       <span><i style="background:var(--caution)"></i>29–35 주의</span>
@@ -134,7 +141,7 @@
   const KEY_NAME = "climax_field_key";   // 현장 대조 도구와 공유
   const $ = (s) => document.querySelector(s);
   const tip = $("#tip");
-  let hours = 168, map, layer, data;
+  let hours = 168, map, layer, map2, layer2, box, data;
 
   // ── 접근 키 ────────────────────────────────────────────
   // 붙여넣기에 "FIELD_KEY=" 접두사·줄바꿈·공백이 섞여 들어와도 키만 골라낸다
@@ -295,36 +302,43 @@
     const cells = allCells.filter(inKorea);
     const dropped = allCells.length - cells.length;
     $("#map-sub").textContent = `${label} · 격자 11m · 평균 체감온도 · ${fmt(cells.length)}개` + (dropped ? ` · 국외 좌표 ${fmt(dropped)}개 제외` : "");
+    const tiles = () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors", className: "osm-dim" });
     if (!map) {
-      map = L.map("map", { zoomControl: true, attributionControl: true }).setView([35.23, 129.08], 12);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19, attribution: "&copy; OpenStreetMap contributors", className: "osm-dim"
-      }).addTo(map);
-      layer = L.layerGroup().addTo(map);
+      map = L.map("map", { zoomControl: false }).setView([35.23, 129.08], 11);
+      tiles().addTo(map); layer = L.layerGroup().addTo(map);
+      map2 = L.map("map2").setView([35.23, 129.08], 15);
+      tiles().addTo(map2); layer2 = L.layerGroup().addTo(map2);
+      // 개요 클릭 → 상세 지도가 그곳으로
+      map.on("click", e => map2.setView(e.latlng, Math.max(map2.getZoom(), 15)));
+      // 상세 지도가 보는 범위를 개요에 사각형으로
+      const drawBox = () => { if (box) box.remove(); box = L.rectangle(map2.getBounds(), { className: "cursorbox", weight: 1.5 }).addTo(map); };
+      map2.on("moveend", drawBox); map2.on("zoomend", drawBox);
+      map2.on("moveend", () => { const c = map2.getCenter(); $("#map2-label").textContent = `상세 — ${c.lat.toFixed(4)}, ${c.lng.toFixed(4)} · 줌 ${map2.getZoom()}`; });
     }
-    layer.clearLayers();
+    layer.clearLayers(); layer2.clearLayers();
     if (!cells.length) return;
     const maxN = Math.max(...cells.map(c => +c.n));
     const b = [];
     cells.forEach(c => {
       const p = c.avg_pvpti == null ? null : +c.avg_pvpti;
-      const r = 4 + 10 * Math.sqrt((+c.n) / maxN);
-      L.circleMarker([c.lat, c.lon], { radius: r, color: "#0f172a", weight: 1, fillColor: colorFor(p), fillOpacity: .85 })
-        .bindTooltip(`평균 ${p ?? "–"}° · 최고 ${c.max_pvpti ?? "–"}°<br>${fmt(c.n)}건 · 기온 ${c.avg_air ?? "–"}° · SVF ${c.avg_svf ?? "–"}`, { direction: "top" })
-        .addTo(layer);
+      const tipHtml = `평균 ${p ?? "–"}° · 최고 ${c.max_pvpti ?? "–"}°<br>${fmt(c.n)}건 · 기온 ${c.avg_air ?? "–"}° · SVF ${c.avg_svf ?? "–"}`;
+      // 개요: 작은 점(표본 수만 크기에) / 상세: 큰 원 + 툴팁
+      L.circleMarker([c.lat, c.lon], { radius: 2.5 + 4 * Math.sqrt((+c.n) / maxN), stroke: false, fillColor: colorFor(p), fillOpacity: .8, interactive: false }).addTo(layer);
+      L.circleMarker([c.lat, c.lon], { radius: 6 + 10 * Math.sqrt((+c.n) / maxN), color: "#0f172a", weight: 1, fillColor: colorFor(p), fillOpacity: .85 })
+        .bindTooltip(tipHtml, { direction: "top" }).addTo(layer2);
       b.push([c.lat, c.lon]);
     });
-    // 초기 화면은 측정이 몰린 곳으로 — 표본 수 가중 5~95% 범위 (외딴 테스트 좌표에 끌려가지 않게)
-    if (b.length) {
-      const q = (arr, p) => { const s = [...arr].sort((a, c) => a - c); return s[Math.min(s.length - 1, Math.floor(p * (s.length - 1)))]; };
-      const w = []; cells.forEach(c => { const k = Math.min(20, +c.n); for (let i = 0; i < k; i++) w.push([c.lat, c.lon]); });
-      const lats = w.map(x => x[0]), lons = w.map(x => x[1]);
-      map.fitBounds([[q(lats, .05), q(lons, .05)], [q(lats, .95), q(lons, .95)]], { padding: [24, 24], maxZoom: 15 });
-    }
+    // 개요는 한반도 안 측정 전체, 상세는 측정 밀집 구역(표본 가중 5~95%)
+    map.fitBounds(b, { padding: [10, 10], maxZoom: 13 });
+    const q = (arr, pp) => { const s = [...arr].sort((a, c) => a - c); return s[Math.min(s.length - 1, Math.floor(pp * (s.length - 1)))]; };
+    const w = []; cells.forEach(c => { const k = Math.min(20, +c.n); for (let i = 0; i < k; i++) w.push([c.lat, c.lon]); });
+    const lats = w.map(x => x[0]), lons = w.map(x => x[1]);
+    map2.fitBounds([[q(lats, .05), q(lons, .05)], [q(lats, .95), q(lons, .95)]], { padding: [24, 24], maxZoom: 16 });
 
     const top = cells.slice(0, 20);
     $("#toptable").innerHTML = `<tr><th>#</th><th>위도</th><th>경도</th><th>표본</th><th>평균</th><th>최고</th><th>기온</th><th>SVF</th><th>GVI</th></tr>` +
-      top.map((c, i) => `<tr><td>${i + 1}</td><td>${c.lat}</td><td>${c.lon}</td><td>${fmt(c.n)}</td><td style="color:${colorFor(+c.avg_pvpti)}">${c.avg_pvpti ?? "–"}°</td><td>${c.max_pvpti ?? "–"}°</td><td>${c.avg_air ?? "–"}°</td><td>${c.avg_svf ?? "–"}</td><td>${c.avg_gvi ?? "–"}</td></tr>`).join("");
+      top.map((c, i) => `<tr data-lat="${c.lat}" data-lon="${c.lon}" style="cursor:pointer"><td>${i + 1}</td><td>${c.lat}</td><td>${c.lon}</td><td>${fmt(c.n)}</td><td style="color:${colorFor(+c.avg_pvpti)}">${c.avg_pvpti ?? "–"}°</td><td>${c.max_pvpti ?? "–"}°</td><td>${c.avg_air ?? "–"}°</td><td>${c.avg_svf ?? "–"}</td><td>${c.avg_gvi ?? "–"}</td></tr>`).join("");
+    $("#toptable").querySelectorAll("tr[data-lat]").forEach(tr => tr.addEventListener("click", () => { map2.setView([+tr.dataset.lat, +tr.dataset.lon], 17); window.scrollTo({ top: $("#map2").getBoundingClientRect().top + window.scrollY - 60, behavior: "smooth" }); }));
   }
 
   // ── 로드 ──────────────────────────────────────────────
