@@ -147,6 +147,14 @@
   }
   function getKey(force) {
     let k = null;
+    // 주소 뒤 #key=… 로 열면 키를 저장하고 주소에서 지운다 (북마크용 · 서버 로그에 안 남음)
+    const hm = location.hash.match(/key=([^&]+)/);
+    if (hm) {
+      k = cleanKey(decodeURIComponent(hm[1]));
+      if (k) { try { localStorage.setItem(KEY_NAME, k); } catch (_) {} }
+      history.replaceState(null, "", location.pathname);
+      if (k) return k;
+    }
     try { k = cleanKey(localStorage.getItem(KEY_NAME)); } catch (_) {}
     if (!k || force) {
       k = cleanKey(prompt("접근 키 (FIELD_KEY)"));
