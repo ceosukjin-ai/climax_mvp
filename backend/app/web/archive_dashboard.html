@@ -61,6 +61,20 @@
   .modal .text p{margin:0 0 8px}
   .modal .text b{color:var(--accent);font-weight:600}
   .modal .text .note{color:var(--dim);font-size:.85rem}
+  /* 격자 개선 시뮬 패널 */
+  .whatif{margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px}
+  .whatif h3{font-size:.95rem;margin:0 0 6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .whatif h3 a{color:var(--accent);font-size:.8rem;text-decoration:none;border:1px solid var(--border);border-radius:8px;padding:3px 8px}
+  .whatif .sub{font-size:.78rem;color:var(--muted);margin-bottom:8px}
+  .whatif table td,.whatif table th{padding:6px 6px}
+  .whatif .bar{height:8px;border-radius:4px;background:var(--accent);display:inline-block;vertical-align:middle}
+  .whatif input{width:88px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:.8rem;text-align:right}
+  .whatif .costs{display:flex;gap:10px;flex-wrap:wrap;font-size:.78rem;color:var(--dim);margin-top:8px;align-items:center}
+  .whatif .costs label{display:flex;gap:4px;align-items:center}
+  .whatif .empty{padding:8px 0}
+  .agebar{display:flex;gap:6px;align-items:flex-end;height:80px;margin-top:6px}
+  .agebar div{flex:1;background:#38bdf8;border-radius:3px 3px 0 0;position:relative;min-height:2px}
+  .agebar div span{position:absolute;bottom:-18px;left:0;right:0;text-align:center;font-size:.7rem;color:var(--dim)}
   svg text{fill:var(--dim);font-size:11px}
   .legend{display:flex;gap:14px;font-size:.8rem;color:var(--dim);margin-top:6px;flex-wrap:wrap}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
@@ -119,6 +133,11 @@
         <div class="risk" id="riskbar"></div>
         <div class="legend" id="risklegend"></div>
       </section>
+      <section class="card small" data-detail="age">
+        <h2>연령대 분포 <small>선택 기간 · 10년 구간</small></h2>
+        <div class="agebar" id="agebar"></div>
+        <div style="height:18px"></div>
+      </section>
       <section class="card small" data-detail="tsurf">
         <h2>지면온도 실측 ↔ 추정 <small>ASOS · 7일</small></h2>
         <svg class="chart" id="tsurf"></svg>
@@ -139,6 +158,7 @@
         <span><i style="background:#b91c1c"></i>≥41 심각</span>
         <span style="margin-left:auto">원 크기 = 표본 수</span>
       </div>
+      <div class="whatif" id="whatif"><div class="empty status">상세 지도에서 격자(원)를 클릭하면 여기에 그 지점의 개선 시뮬레이션이 뜹니다.</div></div>
       <details style="margin-top:10px"><summary>상위 격자 표 (평균 체감 순, 20개) — 행 클릭하면 상세 지도로</summary>
         <div style="overflow-x:auto;margin-top:8px"><table id="toptable"></table></div>
       </details>
@@ -292,6 +312,7 @@
     $("#hourly-sub").textContent = `${label} · 실외`;
     draw.hourly($("#hourly"), d);
     const rh = riskHtml(d); $("#riskbar").innerHTML = rh.bar; $("#risklegend").innerHTML = rh.leg;
+    $("#agebar").innerHTML = ageHtml(d);
     const ts = d.tsurf || [];
     draw.tsurf($("#tsurf"), d);
     if (ts.length) {
@@ -327,8 +348,30 @@
     return { bar, leg, total };
   };
 
+  const AGE_KO = { u20:"~19", "20s":"20대", "30s":"30대", "40s":"40대", "50s":"50대", "60s":"60대", "70s":"70대", "80s+":"80대+", unknown:"미상" };
+  const AGE_ORDER = ["u20","20s","30s","40s","50s","60s","70s","80s+","unknown"];
+  function ageHtml(d) {
+    const rows = d.age || [], tot = rows.reduce((a, r) => a + +r.n, 0) || 1;
+    const mx = Math.max(1, ...rows.map(r => +r.n));
+    const items = AGE_ORDER.map(k => rows.find(r => r.band === k)).filter(Boolean);
+    if (!items.length) return `<div class="empty" style="width:100%">데이터 없음</div>`;
+    return items.map(r => `<div style="height:${Math.max(2, r.n / mx * 100)}%;${r.band === "unknown" ? "background:#64748b" : ""}" title="${AGE_KO[r.band]} ${fmt(r.n)}건 (${Math.round(r.n / tot * 100)}%) · 평균 ${r.avg_pvpti ?? "–"}°"><span>${AGE_KO[r.band]}</span></div>`).join("");
+  }
+
   // ── 해석 문장 (확대 창) ───────────────────────────────
   const explain = {
+    age(d) {
+      const rows = (d.age || []).filter(r => r.band !== "unknown"), unk = (d.age || []).find(r => r.band === "unknown");
+      if (!rows.length) return `<p>연령대 정보가 있는 측정이 아직 없어요.${unk ? ` (연령대 미상 ${fmt(unk.n)}건 — 9/5 서버 배포 이전의 측정)` : ""}</p><p class="note">9/5 서버 배포 이후 측정부터 10년 단위 연령 구간만 함께 남깁니다(앱은 이미 나이를 보내고 있어 앱 수정 불필요). 나이 원값·기기 식별자는 저장하지 않습니다.</p>`;
+      const tot = rows.reduce((a, r) => a + +r.n, 0);
+      const top = [...rows].sort((a, b) => b.n - a.n)[0];
+      const elder = rows.filter(r => ["60s","70s","80s+"].includes(r.band)).reduce((a, r) => a + +r.n, 0);
+      const hot = [...rows].filter(r => r.avg_pvpti != null).sort((a, b) => b.avg_pvpti - a.avg_pvpti)[0];
+      return `<p>${LABEL()} 동안 연령대가 있는 측정 <b>${fmt(tot)}건</b>. 가장 많은 구간은 <b>${AGE_KO[top.band]}</b> (${Math.round(top.n / tot * 100)}%). 60대 이상은 <b>${fmt(elder)}건 (${Math.round(elder / tot * 100)}%)</b>.</p>
+      <p>평균 체감이 가장 높은 구간: <b>${AGE_KO[hot?.band]}</b> (${hot?.avg_pvpti}°) — 그 연령대가 더운 시간·장소에 더 노출된다는 뜻.</p>
+      ${unk ? `<p class="note">연령대 미상 ${fmt(unk.n)}건은 9/5 배포 이전의 측정.</p>` : ""}
+      <p class="note">사람 수가 아니라 측정 건수. 한 사람이 하루 20건을 남기니 인원과 다르다.</p>`;
+    },
     daily(d) {
       const rows = d.daily || []; if (!rows.length) return "<p>데이터 없음</p>";
       const tot = rows.reduce((a, r) => a + +r.n, 0), mx = rows.reduce((a, r) => +r.n > +a.n ? r : a, rows[0]);
@@ -368,7 +411,7 @@
   };
 
   // ── 확대 창 ───────────────────────────────────────────
-  const TITLE = { daily:"일별 적재 — 최근 30일", hourly:"시간대별 평균 체감", risk:"위험등급 분포", tsurf:"지면온도 실측 ↔ 엔진 추정 (ASOS, 7일)" };
+  const TITLE = { age:"연령대 분포", daily:"일별 적재 — 최근 30일", hourly:"시간대별 평균 체감", risk:"위험등급 분포", tsurf:"지면온도 실측 ↔ 엔진 추정 (ASOS, 7일)" };
   function openDetail(kind) {
     if (!data) return;
     $("#modal-title").textContent = TITLE[kind] + (kind === "hourly" || kind === "risk" ? ` · ${LABEL()}` : "");
@@ -376,17 +419,84 @@
     if (kind === "risk") {
       const { bar, leg } = riskHtml(data);
       body.innerHTML = `<div class="risk" style="height:28px;border-radius:14px">${bar}</div><div class="legend" style="font-size:.9rem">${leg}</div>`;
+    } else if (kind === "age") {
+      body.innerHTML = `<div class="agebar" style="height:200px">${ageHtml(data)}</div><div style="height:20px"></div>`;
     } else {
       body.innerHTML = `<svg class="chart big" id="modal-svg"></svg>` + (kind === "tsurf" ? `<div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span></div>` : "");
     }
     $("#modal-text").innerHTML = explain[kind](data);
     $("#modal").classList.add("on");
-    if (kind !== "risk") requestAnimationFrame(() => draw[kind]($("#modal-svg"), data));
+    if (kind !== "risk" && kind !== "age") requestAnimationFrame(() => draw[kind]($("#modal-svg"), data));
   }
   document.querySelectorAll(".card.small").forEach(el => el.addEventListener("click", () => openDetail(el.dataset.detail)));
   $("#modal-close").addEventListener("click", () => $("#modal").classList.remove("on"));
   $("#modal").addEventListener("click", e => { if (e.target === $("#modal")) $("#modal").classList.remove("on"); });
   document.addEventListener("keydown", e => { if (e.key === "Escape") $("#modal").classList.remove("on"); });
+
+
+  // ── 격자 개선 시뮬레이션 ───────────────────────────────
+  // 단가(원). 그늘막은 2026 기사값(접이식 170~200만 / 스마트 800~850만), 가로수·차열포장은 가정값 — 화면에서 수정 가능
+  const COST_DEF = { tree: 1200000, shade: 1850000, pave_m2: 40000 };
+  const COST_UNIT = { trees: c => 10 * c.tree, shade: c => c.shade, coolpave: c => 400 * c.pave_m2, combo: c => 10 * c.tree + 400 * c.pave_m2 };
+  const COST_DESC = { trees: "가로수 10주", shade: "그늘막 1개소", coolpave: "차열포장 400㎡", combo: "가로수 10주 + 차열포장 400㎡" };
+  function getCosts() { try { return { ...COST_DEF, ...JSON.parse(localStorage.getItem("climax_costs") || "{}") }; } catch (_) { return { ...COST_DEF }; } }
+  const won = n => n >= 1e8 ? (n / 1e8).toFixed(1) + "억" : n >= 1e4 ? Math.round(n / 1e4).toLocaleString("ko-KR") + "만" : n.toLocaleString("ko-KR");
+  let lastWhatif = null;
+
+  async function loadWhatif(cell) {
+    if (!cell) return;
+    const box = $("#whatif");
+    box.innerHTML = `<div class="empty status">${cell.lat}, ${cell.lon} 시뮬레이션 계산 중…</div>`;
+    const key = getKey();
+    try {
+      const r = await fetch(`${API}/api/v1/archive/whatif?lat=${cell.lat}&lon=${cell.lon}&hours=${Math.max(hours, 720)}`, { headers: { "X-Field-Key": key } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      lastWhatif = await r.json();
+      renderWhatif(lastWhatif, cell);
+    } catch (e) { box.innerHTML = `<div class="empty status err">시뮬레이션 실패: ${e.message}</div>`; }
+  }
+
+  function renderWhatif(w, cell) {
+    const box = $("#whatif");
+    const road = `https://map.kakao.com/link/roadview/${cell.lat},${cell.lon}`;
+    const mapl = `https://map.kakao.com/link/map/핫스팟,${cell.lat},${cell.lon}`;
+    const head = `<h3>격자 ${cell.lat}, ${cell.lon}
+      <a href="${road}" target="_blank" rel="noopener">카카오 로드뷰 ↗</a><a href="${mapl}" target="_blank" rel="noopener">지도 ↗</a></h3>`;
+    if (!w.ok) { box.innerHTML = head + `<div class="empty status err">${w.reason}</div>`; return; }
+    const m = w.measured, base = w.design.base, costs = getCosts();
+    const rows = w.design.scenarios.map(sc => ({ ...sc, cost: COST_UNIT[sc.key](costs), meas: w.at_measured.scenarios.find(x => x.key === sc.key) }));
+    rows.forEach(r => { r.perDeg = r.delta < 0 ? r.cost / -r.delta : null; });
+    const best = [...rows].filter(r => r.perDeg).sort((a, b) => a.perDeg - b.perDeg)[0];
+    const maxDrop = Math.max(0.1, ...rows.map(r => -r.delta));
+    box.innerHTML = head + `
+      <div class="sub">측정 ${fmt(m.n)}건 (30일) · SVF ${m.svf} · GVI ${m.gvi} · BVI ${m.bvi} · 실측 평균 체감 ${m.avg_pvpti ?? "–"}° (최고 ${m.max_pvpti ?? "–"}°)
+      &nbsp;|&nbsp; <b style="color:var(--text)">설계 폭염일</b>(맑음 · 14시 · 기온 ${w.design_day.temperature_c}° · 습도 ${w.design_day.humidity_pct}% · 풍속 ${w.design_day.wind_speed_ms}m/s) 기준선 체감 <b style="color:${colorFor(base.pvpti)}">${base.pvpti}°</b> (MRT ${base.mrt}°)</div>
+      <div style="overflow-x:auto"><table>
+        <tr><th>개입</th><th>체감 후</th><th>변화</th><th style="text-align:left;min-width:120px"></th><th>실측조건</th><th>비용</th><th>1° 낮추는 데</th></tr>
+        ${rows.map(r => `<tr>
+          <td title="${r.note}">${r.name}<div class="status">${COST_DESC[r.key]}</div></td>
+          <td style="color:${colorFor(r.pvpti)}">${r.pvpti}°</td>
+          <td><b>${r.delta > 0 ? "+" : ""}${r.delta}°</b> <span class="status">(${r.pct > 0 ? "+" : ""}${r.pct}%)</span></td>
+          <td style="text-align:left"><span class="bar" style="width:${Math.round(-r.delta / maxDrop * 110)}px"></span></td>
+          <td class="status">${r.meas ? (r.meas.delta > 0 ? "+" : "") + r.meas.delta + "°" : "–"}</td>
+          <td>${won(r.cost)}원</td>
+          <td ${best && best.key === r.key ? 'style="color:var(--accent);font-weight:600"' : ""}>${r.perDeg ? won(Math.round(r.perDeg)) + "원" : "–"}</td>
+        </tr>`).join("")}
+      </table></div>
+      <div class="costs">단가(원, 수정 가능):
+        <label>가로수 1주 <input id="c-tree" value="${costs.tree}"></label>
+        <label>그늘막 1개소 <input id="c-shade" value="${costs.shade}"></label>
+        <label>차열포장 ㎡ <input id="c-pave" value="${costs.pave_m2}"></label>
+        <button class="btn" id="c-save" style="padding:3px 10px;font-size:.78rem">적용</button>
+        <span>· 그늘막은 2026 기사 단가(접이식 170~200만·스마트 800~850만), 가로수·차열포장은 가정값</span>
+      </div>
+      <p class="status" style="margin:8px 0 0">"실측조건" 열은 이 격자의 실제 평균 기온·습도·풍속으로 다시 계산한 변화. 엔진 가정: ${w.assumptions.join(" / ")}. 결과는 앱과 같은 물리 엔진(일사→MRT→PET)에서 나온 값.</p>`;
+    $("#c-save").addEventListener("click", () => {
+      const c = { tree: +$("#c-tree").value || COST_DEF.tree, shade: +$("#c-shade").value || COST_DEF.shade, pave_m2: +$("#c-pave").value || COST_DEF.pave_m2 };
+      try { localStorage.setItem("climax_costs", JSON.stringify(c)); } catch (_) {}
+      renderWhatif(w, cell);
+    });
+  }
 
   function renderMap(allCells, label) {
     // 테스트 적재(source=test)의 가짜 좌표가 섞여 있어 한반도 범위만 그린다
@@ -417,7 +527,7 @@
       // 개요: 작은 점(표본 수만 크기에) / 상세: 큰 원 + 툴팁
       L.circleMarker([c.lat, c.lon], { radius: 2.5 + 4 * Math.sqrt((+c.n) / maxN), stroke: false, fillColor: colorFor(p), fillOpacity: .8, interactive: false }).addTo(layer);
       L.circleMarker([c.lat, c.lon], { radius: 6 + 10 * Math.sqrt((+c.n) / maxN), color: "#0f172a", weight: 1, fillColor: colorFor(p), fillOpacity: .85 })
-        .bindTooltip(tipHtml, { direction: "top" }).addTo(layer2);
+        .bindTooltip(tipHtml, { direction: "top" }).on("click", () => loadWhatif(c)).addTo(layer2);
       b.push([c.lat, c.lon]);
     });
     // 개요는 한반도 안 측정 전체, 상세는 측정 밀집 구역(표본 가중 5~95%)
@@ -430,7 +540,7 @@
     const top = cells.slice(0, 20);
     $("#toptable").innerHTML = `<tr><th>#</th><th>위도</th><th>경도</th><th>표본</th><th>평균</th><th>최고</th><th>기온</th><th>SVF</th><th>GVI</th></tr>` +
       top.map((c, i) => `<tr data-lat="${c.lat}" data-lon="${c.lon}" style="cursor:pointer"><td>${i + 1}</td><td>${c.lat}</td><td>${c.lon}</td><td>${fmt(c.n)}</td><td style="color:${colorFor(+c.avg_pvpti)}">${c.avg_pvpti ?? "–"}°</td><td>${c.max_pvpti ?? "–"}°</td><td>${c.avg_air ?? "–"}°</td><td>${c.avg_svf ?? "–"}</td><td>${c.avg_gvi ?? "–"}</td></tr>`).join("");
-    $("#toptable").querySelectorAll("tr[data-lat]").forEach(tr => tr.addEventListener("click", () => { map2.setView([+tr.dataset.lat, +tr.dataset.lon], 17); window.scrollTo({ top: $("#map2").getBoundingClientRect().top + window.scrollY - 60, behavior: "smooth" }); }));
+    $("#toptable").querySelectorAll("tr[data-lat]").forEach(tr => tr.addEventListener("click", () => { map2.setView([+tr.dataset.lat, +tr.dataset.lon], 17); loadWhatif(cells.find(c => c.lat == tr.dataset.lat && c.lon == tr.dataset.lon)); window.scrollTo({ top: $("#map2").getBoundingClientRect().top + window.scrollY - 60, behavior: "smooth" }); }));
   }
 
   // ── 로드 ──────────────────────────────────────────────

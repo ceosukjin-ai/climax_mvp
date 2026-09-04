@@ -148,6 +148,21 @@ class VPTIOrchestrationError(Exception):
     """파이프라인 상위 오류."""
 
 
+def _age_band(age) -> str | None:
+    """나이 → '20s'…'80s+' 구간. 19세 이하 'u20'. None 이면 None. (원값은 저장하지 않는다)"""
+    if age is None:
+        return None
+    try:
+        a = int(age)
+    except (TypeError, ValueError):
+        return None
+    if a < 20:
+        return "u20"
+    if a >= 80:
+        return "80s+"
+    return f"{(a // 10) * 10}s"
+
+
 class VPTIOrchestrator:
     """실시간 VPTI 파이프라인 오케스트레이션.
 
@@ -862,6 +877,8 @@ class VPTIOrchestrator:
                 source="app",
                 # 공간지표(svf/gvi/bvi)의 영상 출처 — ML 학습 대상 선별에 쓴다.
                 imagery_src=pano_analysis.imagery_source,
+                # 연령대 10년 구간만 (나이 원값은 남기지 않는다) — 취약군 분석용 (2026-09-05)
+                age_band=_age_band(getattr(profile, "age", None)),
             )
 
         logger.info(

@@ -1431,6 +1431,19 @@ async def archive_dashboard_data(
     return await archive.dashboard(hours=hours, min_samples=min_samples)
 
 
+@router.get("/archive/whatif", include_in_schema=False)
+async def archive_whatif(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    hours: int = Query(24 * 30, ge=1, le=24 * 365),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """격자 개선 시뮬레이션 (대표 전용, 2026-09-05) — 가로수·그늘막·차열포장 적용 시 pVPTI 변화."""
+    _require_field_key(x_field_key)
+    from app.services.whatif import cell_whatif
+    return await cell_whatif(getattr(request.app.state, "archive", None), lat, lon, hours)
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""

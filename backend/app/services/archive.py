@@ -90,6 +90,9 @@ CREATE INDEX IF NOT EXISTS ix_field_check_time ON field_check (observed_at DESC)
 # ALTER … IF NOT EXISTS 이므로 몇 번 실행돼도 안전하다.
 MIGRATIONS = """
 ALTER TABLE measurement ADD COLUMN IF NOT EXISTS imagery_src TEXT;
+-- 연령대(10년 구간, '60s' 등) — 개인 나이가 아니라 구간. 취약군 분석용 (2026-09-05).
+-- 개인 식별 불가(구간+11m 격자+시각으로는 특정 불가). 방침 제2조 "익명 측정 기록" 항목에 반영할 것.
+ALTER TABLE measurement ADD COLUMN IF NOT EXISTS age_band TEXT;
 CREATE INDEX IF NOT EXISTS ix_measurement_imagery ON measurement (imagery_src);
 """
 
@@ -155,7 +158,7 @@ class Archive:
         kw["lon"] = round(float(kw["lon"]), COORD_PRECISION)
         cols = ("observed_at", "lat", "lon", "pvpti", "risk_level", "air_temp",
                 "humidity", "wind_ms", "mrt", "svf", "gvi", "bvi",
-                "cloud", "cloud_src", "indoor", "source", "imagery_src")
+                "cloud", "cloud_src", "indoor", "source", "imagery_src", "age_band")
         kw.setdefault("imagery_src", "gsv")   # 미지정이면 보수적으로 GSV 취급
         vals = {c: kw.get(c) for c in cols}
         sql = (f"INSERT INTO measurement ({', '.join(cols)}) "
@@ -369,6 +372,13 @@ class Archive:
                     " FROM measurement WHERE observed_at > NOW() - make_interval(hours => :hours)"
                     " GROUP BY level"), {"hours": hours})
                 out["risk"] = {x["level"]: int(x["n"]) for x in r.mappings()}
+                # 연령대 분포 (창 내) — 구버전 앱은 NULL → '미상'
+                r = await s.execute(text(
+                    "SELECT COALESCE(age_band,'unknown') band, COUNT(*) n,"
+                    " ROUND(AVG(pvpti)::numeric,1) avg_pvpti"
+                    " FROM measurement WHERE observed_at > NOW() - make_interval(hours => :hours)"
+                    " GROUP BY band ORDER BY band"), {"hours": hours})
+                out["age"] = [dict(x) for x in r.mappings()]
                 # 지면온도 실측↔추정 (최근 7일)
                 r = await s.execute(text(
                     "SELECT observed_at, obs_ground_c, est_ground_c, air_temp FROM engine_check"
