@@ -36,6 +36,7 @@ services:
       BUILDING_API_KEY: ${BUILDING_API_KEY:-}
       # 현장 대조 도구 접근키 (2026-08-16, 대표 전용) — 없으면 /field/check 404
       FIELD_KEY: ${FIELD_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
 
       NCP_OBJECT_ACCESS_KEY: ${NCP_OBJECT_ACCESS_KEY:-}
       NCP_OBJECT_SECRET_KEY: ${NCP_OBJECT_SECRET_KEY:-}
@@ -52,6 +53,8 @@ services:
     volumes:
       # 모델 가중치 영구 보존 (컨테이너 재시작해도 재다운로드 안 함)
       - hf_cache:/app/.cache/huggingface
+      # 개념도(개선 시뮬 이미지) 캐시 — 같은 격자·개입은 다시 생성하지 않는다
+      - concept_cache:/app/.cache/concept
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
@@ -92,6 +95,7 @@ volumes:
   redis_data:
   postgres_data:
   hf_cache:
+  concept_cache:
 
 networks:
   default:

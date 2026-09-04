@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     # .env.prod 에 FIELD_KEY=<긴 임의 문자열> 로 설정.
     field_key: str = ""
 
+    # Gemini 이미지 생성 (개선 시뮬 개념도, 2026-09-05). 비어 있으면 개념도 기능만 꺼진다.
+    gemini_api_key: str = ""
+    gemini_image_model: str = "gemini-2.5-flash-image"
+
     # NCP Object Storage
     ncp_object_access_key: str = ""
     ncp_object_secret_key: str = ""

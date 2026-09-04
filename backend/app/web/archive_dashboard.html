@@ -456,6 +456,26 @@
     } catch (e) { box.innerHTML = `<div class="empty status err">시뮬레이션 실패: ${e.message}</div>`; }
   }
 
+  async function loadConcept(cell, scn, m, w, force = false) {
+    const out = $("#concept-out"); if (!out) return;
+    out.innerHTML = `<div class="status" style="margin-top:8px">개념도 생성 중… (첫 생성은 30~60초)</div>`;
+    try {
+      const r = await fetch(`${API}/api/v1/archive/concept?lat=${cell.lat}&lon=${cell.lon}&scenario=${scn}&svf=${m.svf}&gvi=${m.gvi}&bvi=${m.bvi}${force ? "&force=true" : ""}`, { headers: { "X-Field-Key": getKey() } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const c = await r.json();
+      if (!c.ok) { out.innerHTML = `<div class="status err" style="margin-top:8px">생성 실패: ${c.reason}</div>`; return; }
+      const sc = w.design.scenarios.find(x => x.key === scn) || {};
+      const cost = COST_UNIT[scn](getCosts());
+      out.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+          <figure style="margin:0"><img src="${c.before}" style="width:100%;border-radius:8px;display:block"><figcaption class="status" style="margin-top:4px">현재 (개념도) · 체감 ${w.design.base.pvpti}°</figcaption></figure>
+          <figure style="margin:0"><img src="${c.after}" style="width:100%;border-radius:8px;display:block"><figcaption class="status" style="margin-top:4px"><b style="color:var(--text)">${c.label}</b> · 체감 <span style="color:${colorFor(sc.pvpti)}">${sc.pvpti}°</span> (${sc.delta}°) · ${won(cost)}원</figcaption></figure>
+        </div>
+        <div class="status" style="margin-top:6px">${c.disclaimer}. 장면: ${c.scene} <a href="#" id="concept-redo" style="color:var(--accent)">다시 생성</a></div>`;
+      $("#concept-redo").addEventListener("click", e => { e.preventDefault(); loadConcept(cell, scn, m, w, true); });
+    } catch (e) { out.innerHTML = `<div class="status err" style="margin-top:8px">생성 실패: ${e.message}</div>`; }
+  }
+
   function renderWhatif(w, cell) {
     const box = $("#whatif");
     const road = `https://map.kakao.com/link/roadview/${cell.lat},${cell.lon}`;
@@ -477,6 +497,12 @@
         <div style="font-size:.78rem;color:var(--accent)">추천 계획 · ${bestWhy}</div>
         <div style="font-size:1.05rem;font-weight:600;margin-top:2px">${best.name} <span style="color:var(--dim);font-weight:400;font-size:.85rem">(${COST_DESC[best.key]})</span></div>
         <div style="font-size:.9rem;margin-top:2px">체감 ${base.pvpti}° → <b style="color:${colorFor(best.pvpti)}">${best.pvpti}°</b> (${best.delta}°, ${best.pct}%) · 비용 <b>${won(best.cost)}원</b> · 1°당 ${won(Math.round(best.perDeg))}원</div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn" id="concept-btn" data-scn="${best.key}" style="border-color:var(--accent);color:var(--text)">개념도 만들기 (${best.name} 전·후)</button>
+          <select id="concept-scn" class="btn" style="padding:6px 8px">${rows.map(r => `<option value="${r.key}" ${r.key === best.key ? "selected" : ""}>${r.name}</option>`).join("")}</select>
+          <span class="status">AI 생성 개념도 · 격자 공간지표 기반 · 실제 장소 사진 아님 · 장당 약 100~200원</span>
+        </div>
+        <div id="concept-out"></div>
       </div>` : "";
     box.innerHTML = head + rec + `
       <div class="sub">측정 ${fmt(m.n)}건 (30일) · SVF ${m.svf} · GVI ${m.gvi} · BVI ${m.bvi} · 실측 평균 체감 ${m.avg_pvpti ?? "–"}° (최고 ${m.max_pvpti ?? "–"}°)
@@ -501,6 +527,8 @@
         <span>· 그늘막은 2026 기사 단가(접이식 170~200만·스마트 800~850만), 가로수·차열포장은 가정값</span>
       </div>
       <p class="status" style="margin:8px 0 0">"실측조건" 열은 이 격자의 실제 평균 기온·습도·풍속으로 다시 계산한 변화. 엔진 가정: ${w.assumptions.join(" / ")}. 결과는 앱과 같은 물리 엔진(일사→MRT→PET)에서 나온 값.</p>`;
+    const cb = $("#concept-btn");
+    if (cb) cb.addEventListener("click", () => loadConcept(cell, $("#concept-scn").value, m, w));
     $("#c-save").addEventListener("click", () => {
       const c = { tree: +$("#c-tree").value || COST_DEF.tree, shade: +$("#c-shade").value || COST_DEF.shade, pave_m2: +$("#c-pave").value || COST_DEF.pave_m2 };
       try { localStorage.setItem("climax_costs", JSON.stringify(c)); } catch (_) {}

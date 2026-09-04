@@ -71,7 +71,7 @@ COPY --chown=climax:climax app ./app
 COPY --chown=climax:climax vpti_core ./vpti_core
 
 # 모델 캐시 디렉토리 (non-root 사용자가 쓸 수 있게)
-RUN mkdir -p /app/.cache/huggingface && \
+RUN mkdir -p /app/.cache/huggingface /app/.cache/concept && \
     chown -R climax:climax /app/.cache
 
 USER climax
