@@ -44,15 +44,28 @@
   .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
   .card h2{font-size:.95rem;margin:0 0 8px;font-weight:600}
   .card h2 small{color:var(--muted);font-weight:400;margin-left:6px}
-  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  @media (max-width:760px){.two{grid-template-columns:1fr}}
-  svg.chart{width:100%;height:190px;display:block;overflow:visible}
+  .layout{display:grid;grid-template-columns:minmax(300px,1fr) minmax(0,1.5fr);gap:12px;align-items:start}
+  @media (max-width:900px){.layout{grid-template-columns:1fr}}
+  .card.small{cursor:pointer;transition:border-color .15s}
+  .card.small:hover{border-color:var(--accent)}
+  .card.small h2::after{content:"자세히 →";float:right;color:var(--muted);font-weight:400;font-size:.75rem}
+  svg.chart{width:100%;height:120px;display:block;overflow:visible}
+  svg.chart.big{height:300px}
+  /* 확대 창 */
+  .modal{position:fixed;inset:0;background:rgba(2,6,23,.75);display:none;align-items:center;justify-content:center;z-index:100;padding:16px}
+  .modal.on{display:flex}
+  .modal .box{background:var(--surface);border:1px solid var(--border);border-radius:14px;max-width:960px;width:100%;max-height:92vh;overflow:auto;padding:18px 20px}
+  .modal h2{font-size:1.1rem;margin:0 0 10px;display:flex;align-items:center}
+  .modal h2 button{margin-left:auto;background:transparent;border:1px solid var(--border);color:var(--dim);border-radius:8px;padding:4px 10px;cursor:pointer}
+  .modal .text{margin-top:14px;font-size:.92rem;line-height:1.65;color:var(--text)}
+  .modal .text p{margin:0 0 8px}
+  .modal .text b{color:var(--accent);font-weight:600}
+  .modal .text .note{color:var(--dim);font-size:.85rem}
   svg text{fill:var(--dim);font-size:11px}
   .legend{display:flex;gap:14px;font-size:.8rem;color:var(--dim);margin-top:6px;flex-wrap:wrap}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-  .maps{display:grid;grid-template-columns:1fr 1.6fr;gap:10px}
-  @media (max-width:760px){.maps{grid-template-columns:1fr}}
-  #map,#map2{height:440px;border-radius:10px;background:#0b1220}
+  #map{height:200px;border-radius:10px;background:#0b1220}
+  #map2{height:560px;border-radius:10px;background:#0b1220}
   .maplabel{font-size:.78rem;color:var(--muted);margin:0 0 4px}
   .cursorbox{stroke:#38bdf8;fill:#38bdf8;fill-opacity:.08}
   .leaflet-container{font:inherit}
@@ -91,48 +104,55 @@
 
   <section class="grid" id="tiles"></section>
 
-  <section class="card">
-    <h2>일별 적재 <small>최근 30일 · 건수</small></h2>
-    <svg class="chart" id="daily"></svg>
-  </section>
-
-  <section class="two">
-    <section class="card">
-      <h2>시간대별 평균 체감 <small id="hourly-sub">선택 기간 · 실외 · 한국시간</small></h2>
-      <svg class="chart" id="hourly"></svg>
-    </section>
-    <section class="card">
-      <h2>위험등급 분포 <small>선택 기간</small></h2>
-      <div class="risk" id="riskbar"></div>
-      <div class="legend" id="risklegend"></div>
-      <h2 style="margin-top:16px">지면온도 실측 ↔ 엔진 추정 <small>ASOS · 최근 7일</small></h2>
-      <svg class="chart" id="tsurf" style="height:150px"></svg>
-      <div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span><span id="tsurf-rmse"></span></div>
-    </section>
-  </section>
-
-  <section class="card">
-    <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도</small></h2>
-    <div class="maps">
-      <div><p class="maplabel">개요 — 클릭한 곳을 오른쪽에 크게</p><div id="map"></div></div>
-      <div><p class="maplabel" id="map2-label">상세</p><div id="map2"></div></div>
+  <div class="layout">
+    <div>
+      <section class="card small" data-detail="daily">
+        <h2>일별 적재 <small>최근 30일</small></h2>
+        <svg class="chart" id="daily"></svg>
+      </section>
+      <section class="card small" data-detail="hourly">
+        <h2>시간대별 평균 체감 <small id="hourly-sub">선택 기간 · 실외</small></h2>
+        <svg class="chart" id="hourly"></svg>
+      </section>
+      <section class="card small" data-detail="risk">
+        <h2>위험등급 분포 <small>선택 기간</small></h2>
+        <div class="risk" id="riskbar"></div>
+        <div class="legend" id="risklegend"></div>
+      </section>
+      <section class="card small" data-detail="tsurf">
+        <h2>지면온도 실측 ↔ 추정 <small>ASOS · 7일</small></h2>
+        <svg class="chart" id="tsurf"></svg>
+        <div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span><span id="tsurf-rmse"></span></div>
+      </section>
     </div>
-    <div class="maplegend">
-      <span><i style="background:var(--safe)"></i>&lt;29 안전</span>
-      <span><i style="background:var(--caution)"></i>29–35 주의</span>
-      <span><i style="background:var(--warning)"></i>35–38 경고</span>
-      <span><i style="background:var(--danger)"></i>38–41 위험</span>
-      <span><i style="background:#b91c1c"></i>≥41 심각</span>
-      <span style="margin-left:auto">원 크기 = 표본 수</span>
-    </div>
-    <details style="margin-top:10px"><summary>상위 격자 표 (평균 체감 순, 20개)</summary>
-      <div style="overflow-x:auto;margin-top:8px"><table id="toptable"></table></div>
-    </details>
-  </section>
+    <section class="card">
+      <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도</small></h2>
+      <p class="maplabel">개요 — 클릭한 곳을 아래에 크게</p>
+      <div id="map"></div>
+      <p class="maplabel" id="map2-label" style="margin-top:8px">상세</p>
+      <div id="map2"></div>
+      <div class="maplegend">
+        <span><i style="background:var(--safe)"></i>&lt;29 안전</span>
+        <span><i style="background:var(--caution)"></i>29–35 주의</span>
+        <span><i style="background:var(--warning)"></i>35–38 경고</span>
+        <span><i style="background:var(--danger)"></i>38–41 위험</span>
+        <span><i style="background:#b91c1c"></i>≥41 심각</span>
+        <span style="margin-left:auto">원 크기 = 표본 수</span>
+      </div>
+      <details style="margin-top:10px"><summary>상위 격자 표 (평균 체감 순, 20개) — 행 클릭하면 상세 지도로</summary>
+        <div style="overflow-x:auto;margin-top:8px"><table id="toptable"></table></div>
+      </details>
+    </section>
+  </div>
 
   <p class="status" style="text-align:center">개인 식별자 없음 · 좌표 11m 격자 반올림 · 대외 제공 시 표본 3 미만 격자 제외</p>
 </main>
 <div class="tip" id="tip"></div>
+<div class="modal" id="modal"><div class="box">
+  <h2><span id="modal-title"></span><button id="modal-close">닫기 ✕</button></h2>
+  <div id="modal-body"></div>
+  <div class="text" id="modal-text"></div>
+</div></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
@@ -268,33 +288,105 @@
       ["현장 실측", fmt(t.field_check), "field_check"],
     ].map(([k, v, s]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
 
-    bars($("#daily"), d.daily || [], "d", "n", {
-      fmtX: v => v.slice(5).replace("-", "/"),
-      tip: r => `${r.d}<br>${fmt(r.n)}건 · 평균 ${r.avg_pvpti ?? "–"}° · 최고 ${r.max_pvpti ?? "–"}°`
-    });
-
-    const hourly = Array.from({ length: 24 }, (_, h) => (d.hourly || []).find(r => +r.h === h) || { h, n: 0, avg_pvpti: null });
-    $("#hourly-sub").textContent = `${label} · 실외 · 한국시간`;
-    bars($("#hourly"), hourly, "h", "avg_pvpti", {
-      zero: false, fmtX: v => `${v}시`, fmtY: v => v.toFixed(0) + "°",
-      color: r => colorFor(r.avg_pvpti),
-      tip: r => `${r.h}시<br>평균 ${r.avg_pvpti ?? "–"}° · 최고 ${r.max_pvpti ?? "–"}° · ${fmt(r.n)}건`
-    });
-
-    const risk = d.risk || {}, total = Object.values(risk).reduce((a, b) => a + b, 0) || 1;
-    $("#riskbar").innerHTML = ORDER.filter(k => risk[k]).map(k => `<div style="flex:${risk[k]};background:${RISK[k]}" title="${RISK_KO[k]} ${risk[k]}"></div>`).join("");
-    $("#risklegend").innerHTML = ORDER.filter(k => risk[k]).map(k => `<span><i style="background:${RISK[k]}"></i>${RISK_KO[k]} ${fmt(risk[k])} (${Math.round(risk[k] / total * 100)}%)</span>`).join("") || `<span class="empty">데이터 없음</span>`;
-
+    draw.daily($("#daily"), d);
+    $("#hourly-sub").textContent = `${label} · 실외`;
+    draw.hourly($("#hourly"), d);
+    const rh = riskHtml(d); $("#riskbar").innerHTML = rh.bar; $("#risklegend").innerHTML = rh.leg;
     const ts = d.tsurf || [];
-    lines($("#tsurf"), ts, [{ key:"obs", name:"실측", color:"#38bdf8" }, { key:"est", name:"추정", color:"#f472b6" }]);
+    draw.tsurf($("#tsurf"), d);
     if (ts.length) {
       const rm = Math.sqrt(ts.reduce((a, r) => a + (r.est - r.obs) ** 2, 0) / ts.length);
       const bias = ts.reduce((a, r) => a + (r.est - r.obs), 0) / ts.length;
-      $("#tsurf-rmse").textContent = `RMSE ${rm.toFixed(1)}° · 편향 ${bias >= 0 ? "+" : ""}${bias.toFixed(1)}° · ${ts.length}쌍`;
+      $("#tsurf-rmse").textContent = `RMSE ${rm.toFixed(1)}° · 편향 ${bias >= 0 ? "+" : ""}${bias.toFixed(1)}°`;
     } else $("#tsurf-rmse").textContent = "";
 
     renderMap(d.hotspots || [], label);
   }
+
+  // ── 카드별 그리기 함수 (작은 카드와 확대 창이 같은 함수를 쓴다) ──
+  const LABEL = () => ({ 24:"24시간", 168:"7일", 720:"30일", 8760:"전체" }[hours] || `${hours}h`);
+  const draw = {
+    daily(svg, d) {
+      bars(svg, d.daily || [], "d", "n", { fmtX: v => v.slice(5).replace("-", "/"),
+        tip: r => `${r.d}<br>${fmt(r.n)}건 · 평균 ${r.avg_pvpti ?? "–"}° · 최고 ${r.max_pvpti ?? "–"}°` });
+    },
+    hourly(svg, d) {
+      const hourly = Array.from({ length: 24 }, (_, h) => (d.hourly || []).find(r => +r.h === h) || { h, n: 0, avg_pvpti: null });
+      bars(svg, hourly, "h", "avg_pvpti", { zero: false, fmtX: v => `${v}시`, fmtY: v => v.toFixed(0) + "°",
+        color: r => colorFor(r.avg_pvpti),
+        tip: r => `${r.h}시<br>평균 ${r.avg_pvpti ?? "–"}° · 최고 ${r.max_pvpti ?? "–"}° · ${fmt(r.n)}건` });
+    },
+    tsurf(svg, d) {
+      lines(svg, d.tsurf || [], [{ key:"obs", name:"실측", color:"#38bdf8" }, { key:"est", name:"추정", color:"#f472b6" }]);
+    },
+  };
+  const riskHtml = (d) => {
+    const risk = d.risk || {}, total = Object.values(risk).reduce((a, b) => a + b, 0) || 1;
+    const bar = ORDER.filter(k => risk[k]).map(k => `<div style="flex:${risk[k]};background:${RISK[k]}" title="${RISK_KO[k]} ${risk[k]}"></div>`).join("");
+    const leg = ORDER.filter(k => risk[k]).map(k => `<span><i style="background:${RISK[k]}"></i>${RISK_KO[k]} ${fmt(risk[k])} (${Math.round(risk[k] / total * 100)}%)</span>`).join("") || `<span class="empty">데이터 없음</span>`;
+    return { bar, leg, total };
+  };
+
+  // ── 해석 문장 (확대 창) ───────────────────────────────
+  const explain = {
+    daily(d) {
+      const rows = d.daily || []; if (!rows.length) return "<p>데이터 없음</p>";
+      const tot = rows.reduce((a, r) => a + +r.n, 0), mx = rows.reduce((a, r) => +r.n > +a.n ? r : a, rows[0]);
+      const hot = rows.filter(r => r.max_pvpti != null).sort((a, b) => b.max_pvpti - a.max_pvpti)[0];
+      return `<p>최근 30일 <b>${fmt(tot)}건</b>, 하루 평균 <b>${fmt(Math.round(tot / rows.length))}건</b>. 가장 많이 쌓인 날은 <b>${mx.d}</b> (${fmt(mx.n)}건).</p>
+      <p>체감온도가 가장 높았던 날은 <b>${hot?.d ?? "–"}</b> (최고 ${hot?.max_pvpti ?? "–"}°).</p>
+      <p class="note">막대 하나가 하루. 앱이 측정할 때마다 1건 — 사용자·동의 참여가 늘면 이 막대가 올라간다. 동의 안 켠 사용자의 측정은 여기 없다.</p>`;
+    },
+    hourly(d) {
+      const rows = (d.hourly || []).filter(r => r.avg_pvpti != null); if (!rows.length) return "<p>데이터 없음</p>";
+      const peak = rows.reduce((a, r) => +r.avg_pvpti > +a.avg_pvpti ? r : a, rows[0]);
+      const warn = rows.filter(r => +r.avg_pvpti >= 29).map(r => +r.h).sort((a, b) => a - b);
+      const span = warn.length ? `${warn[0]}시~${warn[warn.length - 1]}시` : "없음";
+      return `<p>${LABEL()} 기준, 시간대별 평균 체감(pVPTI)이 가장 높은 때는 <b>${peak.h}시</b> (${peak.avg_pvpti}°, ${fmt(peak.n)}건).</p>
+      <p>평균이 주의 기준(29°)을 넘는 시간대: <b>${span}</b>. 이 구간이 알림·산책 권고의 핵심 창이다.</p>
+      <p class="note">실외 측정만. 색은 위험등급 기준(안전 &lt;29 · 주의 29–35 · 경고 35–38 · 위험 38–41 · 심각 ≥41). 한국시간.</p>`;
+    },
+    risk(d) {
+      const { total } = riskHtml(d), r = d.risk || {};
+      const pct = k => Math.round((r[k] || 0) / total * 100);
+      const bad = (r.warning || 0) + (r.danger || 0) + (r.severe || 0);
+      return `<p>${LABEL()} 동안 측정 <b>${fmt(total)}건</b> 중 경고 이상(경고+위험+심각)이 <b>${fmt(bad)}건 (${Math.round(bad / total * 100)}%)</b>.</p>
+      <p>안전 ${pct("safe")}% · 주의 ${pct("caution")}% · 경고 ${pct("warning")}% · 위험 ${pct("danger")}% · 심각 ${pct("severe")}%.</p>
+      <p class="note">등급은 개인화 전 기준값(base). 사용자별 취약도 보정 전이라 "장소가 얼마나 더웠나"를 뜻한다. 경고 이상 비율은 B2G 제안에서 "위험 노출 빈도" 지표로 쓸 수 있다.</p>`;
+    },
+    tsurf(d) {
+      const ts = d.tsurf || []; if (!ts.length) return "<p>데이터 없음</p>";
+      const res = ts.map(r => r.est - r.obs);
+      const rm = Math.sqrt(res.reduce((a, v) => a + v * v, 0) / ts.length), bias = res.reduce((a, v) => a + v, 0) / ts.length;
+      const worst = ts.reduce((a, r) => Math.abs(r.est - r.obs) > Math.abs(a.est - a.obs) ? r : a, ts[0]);
+      const day = ts.filter(r => { const h = new Date(r.t).getUTCHours() + 9; return h % 24 >= 10 && h % 24 <= 16; });
+      const dbias = day.length ? day.reduce((a, r) => a + r.est - r.obs, 0) / day.length : null;
+      return `<p>최근 7일 ASOS 실측 지면온도와 엔진 추정을 <b>${ts.length}쌍</b> 맞댄 결과: RMSE <b>${rm.toFixed(1)}°</b>, 평균 편향 <b>${bias >= 0 ? "+" : ""}${bias.toFixed(1)}°</b> (${bias > 0 ? "엔진이 실측보다 뜨겁게 본다" : "엔진이 실측보다 차게 본다"}).</p>
+      <p>낮(10~16시)만 보면 편향 <b>${dbias == null ? "–" : (dbias >= 0 ? "+" : "") + dbias.toFixed(1) + "°"}</b>. 가장 크게 어긋난 시각: ${kst(worst.t)} (실측 ${worst.obs}° / 추정 ${worst.est}°).</p>
+      <p class="note">이 잔차가 f_stor·h_c 계수 교정의 원재료. 편향이 한 방향으로 꾸준하면 계수 하나로 잡히고, 낮에만 크면 일사 흡수 쪽(f_stor)이 원인일 가능성이 높다.</p>`;
+    },
+  };
+
+  // ── 확대 창 ───────────────────────────────────────────
+  const TITLE = { daily:"일별 적재 — 최근 30일", hourly:"시간대별 평균 체감", risk:"위험등급 분포", tsurf:"지면온도 실측 ↔ 엔진 추정 (ASOS, 7일)" };
+  function openDetail(kind) {
+    if (!data) return;
+    $("#modal-title").textContent = TITLE[kind] + (kind === "hourly" || kind === "risk" ? ` · ${LABEL()}` : "");
+    const body = $("#modal-body");
+    if (kind === "risk") {
+      const { bar, leg } = riskHtml(data);
+      body.innerHTML = `<div class="risk" style="height:28px;border-radius:14px">${bar}</div><div class="legend" style="font-size:.9rem">${leg}</div>`;
+    } else {
+      body.innerHTML = `<svg class="chart big" id="modal-svg"></svg>` + (kind === "tsurf" ? `<div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span></div>` : "");
+    }
+    $("#modal-text").innerHTML = explain[kind](data);
+    $("#modal").classList.add("on");
+    if (kind !== "risk") requestAnimationFrame(() => draw[kind]($("#modal-svg"), data));
+  }
+  document.querySelectorAll(".card.small").forEach(el => el.addEventListener("click", () => openDetail(el.dataset.detail)));
+  $("#modal-close").addEventListener("click", () => $("#modal").classList.remove("on"));
+  $("#modal").addEventListener("click", e => { if (e.target === $("#modal")) $("#modal").classList.remove("on"); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") $("#modal").classList.remove("on"); });
 
   function renderMap(allCells, label) {
     // 테스트 적재(source=test)의 가짜 좌표가 섞여 있어 한반도 범위만 그린다
@@ -329,7 +421,7 @@
       b.push([c.lat, c.lon]);
     });
     // 개요는 한반도 안 측정 전체, 상세는 측정 밀집 구역(표본 가중 5~95%)
-    map.fitBounds(b, { padding: [10, 10], maxZoom: 13 });
+    map.fitBounds(b, { padding: [6, 6], maxZoom: 12 });
     const q = (arr, pp) => { const s = [...arr].sort((a, c) => a - c); return s[Math.min(s.length - 1, Math.floor(pp * (s.length - 1)))]; };
     const w = []; cells.forEach(c => { const k = Math.min(20, +c.n); for (let i = 0; i < k; i++) w.push([c.lat, c.lon]); });
     const lats = w.map(x => x[0]), lons = w.map(x => x[1]);
