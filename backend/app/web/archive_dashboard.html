@@ -471,49 +471,57 @@
   }
 
   function renderSiteplan(out, sp, cell, scn, m, w, rows) {
-    const S = sp.size, mpp = sp.m_per_px, C = S / 2, px = mt => mt / mpp;
     const sc = rows.find(r => r.key === scn) || rows[0];
-    const axis = sp.axis_deg == null ? 0 : sp.axis_deg;            // 북 기준 시계방향
-    const ux = Math.sin(axis * Math.PI / 180), uy = -Math.cos(axis * Math.PI / 180); // 화면 좌표 단위벡터
-    const cellPx = px(11);
-    let marks = "";
-    const treeIcon = (x, y) => `<circle cx="${x}" cy="${y}" r="${px(3.5)}" fill="#16a34a" fill-opacity=".8" stroke="#052e16" stroke-width="1.5"/><circle cx="${x}" cy="${y}" r="${px(0.6)}" fill="#052e16"/>`;
-    const shadeIcon = (x, y) => `<g><circle cx="${x}" cy="${y}" r="${px(1.6)}" fill="#f59e0b" fill-opacity=".9" stroke="#78350f" stroke-width="1.5"/><line x1="${x-px(1.6)}" y1="${y}" x2="${x+px(1.6)}" y2="${y}" stroke="#78350f"/><line x1="${x}" y1="${y-px(1.6)}" x2="${x}" y2="${y+px(1.6)}" stroke="#78350f"/><text x="${x}" y="${y-px(2.2)}" text-anchor="middle" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">그늘막</text></g>`;
-    const paveBand = () => { const L = px(50), Wd = px(2); const p = [[-L, -Wd], [L, -Wd], [L, Wd], [-L, Wd]].map(([a, b]) => `${C + a*ux - b*uy},${C + a*uy + b*ux}`).join(" "); return `<polygon points="${p}" fill="#e2e8f0" fill-opacity=".55" stroke="#94a3b8" stroke-dasharray="4 3"/>`; };
-    const treeRow = () => { let t = ""; for (let i = -4.5; i <= 4.5; i++) { const d = px(10) * i; t += treeIcon(C + d*ux, C + d*uy); } return t; };
-    if (scn === "shade") marks = shadeIcon(C, C);
-    else if (scn === "trees") marks = treeRow();
-    else if (scn === "coolpave") marks = paveBand();
-    else marks = paveBand() + treeRow();
-    // 격자·축척·북·캡션
-    const capW = 330, capH = 78;
-    const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}" viewBox="0 0 ${S} ${S}" style="width:100%;height:auto;display:block;border-radius:8px" id="siteplan-svg">
-      <image href="${sp.image}" width="${S}" height="${S}"/>
-      <line x1="${C - px(60)*ux}" y1="${C - px(60)*uy}" x2="${C + px(60)*ux}" y2="${C + px(60)*uy}" stroke="#38bdf8" stroke-width="1" stroke-dasharray="6 4" opacity=".7"/>
-      <rect x="${C - cellPx/2}" y="${C - cellPx/2}" width="${cellPx}" height="${cellPx}" fill="${colorFor(w.design.base.pvpti)}" fill-opacity=".35" stroke="${colorFor(w.design.base.pvpti)}" stroke-width="2"/>
-      ${marks}
-      <g transform="translate(16,${S - 56})"><rect x="0" y="0" width="${px(20)}" height="6" fill="#fff"/><rect x="${px(20)}" y="0" width="${px(20)}" height="6" fill="#111"/><text x="0" y="22" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">0</text><text x="${px(40)}" y="22" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke" text-anchor="end">40 m</text></g>
-      <g transform="translate(${S - 36},48)"><polygon points="0,-22 8,8 0,2 -8,8" fill="#fff" stroke="#000"/><text x="0" y="24" text-anchor="middle" font-size="12" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">N</text></g>
-      <g transform="translate(16,16)"><rect width="${capW}" height="${capH}" rx="8" fill="#0f172a" fill-opacity=".85"/>
-        <text x="12" y="22" font-size="13" fill="#38bdf8">추천 계획 · 격자 ${cell.lat}, ${cell.lon}</text>
-        <text x="12" y="44" font-size="17" font-weight="600" fill="#fff">${sc.name} <tspan font-size="12" font-weight="400" fill="#94a3b8">${COST_DESC[sc.key]}</tspan></text>
-        <text x="12" y="66" font-size="13" fill="#e2e8f0">체감 ${w.design.base.pvpti}° → ${sc.pvpti}° (${sc.delta}°) · ${won(sc.cost)}원</text></g>
-      <text x="${S - 10}" y="${S - 10}" text-anchor="end" font-size="11" fill="#fff" stroke="#000" stroke-width="3" paint-order="stroke">${sp.attribution} · 설계 폭염일 기준 · 몸씨 엔진</text>
-    </svg>`;
-    out.innerHTML = `<div style="margin-top:10px">${svg}</div>
-      <div class="status" style="margin-top:6px">실제 위치. 사각형 = 측정 격자(11m), 점선 = 보행 축${sp.axis_deg == null ? "(추정 불가 · 남북 기본)" : ` ${sp.axis_deg}°`}. 개입 아이콘은 격자 중심 기준 배치 — 실제 시공 위치는 보도 폭·지장물 확인 후 확정.
-        <a href="#" id="siteplan-dl" style="color:var(--accent)">PNG 저장</a> · <select id="siteplan-scn" class="btn" style="padding:2px 6px;font-size:.78rem">${rows.map(r => `<option value="${r.key}" ${r.key === scn ? "selected" : ""}>${r.name}</option>`).join("")}</select></div>`;
-    $("#siteplan-scn").addEventListener("change", e => renderSiteplan(out, sp, cell, e.target.value, m, w, rows));
-    $("#siteplan-dl").addEventListener("click", async e => {
-      e.preventDefault();
-      const svgEl = $("#siteplan-svg"), xml = new XMLSerializer().serializeToString(svgEl);
-      const img = new Image(); img.onload = () => {
-        const cv = document.createElement("canvas"); cv.width = S; cv.height = S; cv.getContext("2d").drawImage(img, 0, 0);
-        const a = document.createElement("a"); a.download = `배치도_${cell.lat}_${cell.lon}_${scn}.png`; a.href = cv.toDataURL("image/png"); a.click();
-      };
-      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(xml);
-    });
+    out.innerHTML = `<div style="margin-top:10px">
+      <div id="siteplan-map" style="height:460px;border-radius:8px;background:#0b1220"></div>
+      <div class="status" style="margin-top:6px">실제 위치 항공사진. 네모 = 측정 격자(11m), 점선 = 보행 축${sp.axis_deg == null ? "(추정 불가·남북 기본)" : ` ${sp.axis_deg}°`}. 아이콘은 격자 중심 기준 배치 — 실제 시공 위치는 보도 폭·지장물 확인 후 확정.
+        &nbsp;<select id="siteplan-scn" class="btn" style="padding:2px 6px;font-size:.78rem">${rows.map(r => `<option value="${r.key}" ${r.key === scn ? "selected" : ""}>${r.name}</option>`).join("")}</select>
+        &nbsp;<a href="#" id="siteplan-shot" style="color:var(--accent)">이미지로 저장(화면 캡처 안내)</a></div>
+    </div>`;
+    const KEY = sp.vworld_key;
+    const map = L.map("siteplan-map", { zoomControl: true, attributionControl: true }).setView([cell.lat, cell.lon], 19);
+    L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${KEY}/Satellite/{z}/{y}/{x}.jpeg`, {
+      maxZoom: 20, minZoom: 15, attribution: sp.attribution
+    }).addTo(map);
+    // 라벨(도로명) 겹치기 — 위치 파악 도움
+    L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${KEY}/Hybrid/{z}/{y}/{x}.png`, { maxZoom: 20, minZoom: 15, opacity: .9 }).addTo(map);
+
+    const axis = sp.axis_deg == null ? 0 : sp.axis_deg;
+    const rad = axis * Math.PI / 180;
+    // 미터 offset → 위경도
+    const mLat = mt => mt / 111320, mLon = mt => mt / (111320 * Math.cos(cell.lat * Math.PI / 180));
+    const along = (d) => [cell.lat + mLat(d * Math.cos(rad)), cell.lon + mLon(d * Math.sin(rad))];
+    const overlay = L.layerGroup().addTo(map);
+
+    function draw() {
+      overlay.clearLayers();
+      const s2 = rows.find(r => r.key === $("#siteplan-scn").value) || sc;
+      // 격자 사각형 11m
+      const hl = mLat(5.5), ho = mLon(5.5);
+      L.rectangle([[cell.lat - hl, cell.lon - ho], [cell.lat + hl, cell.lon + ho]],
+        { color: colorFor(w.design.base.pvpti), weight: 2, fillOpacity: .2 }).addTo(overlay);
+      // 보행 축 점선
+      L.polyline([along(-60), along(60)], { color: "#38bdf8", weight: 2, dashArray: "8 6", opacity: .8 }).addTo(overlay);
+      const K = s2.key;
+      if (K === "shade" || K === "combo" || K === "trees") {
+        if (K === "trees" || K === "combo") for (let i = -4.5; i <= 4.5; i++)
+          L.circleMarker(along(10 * i), { radius: 7, color: "#052e16", weight: 1.5, fillColor: "#16a34a", fillOpacity: .85 }).addTo(overlay);
+      }
+      if (K === "shade")
+        L.marker([cell.lat, cell.lon], { icon: L.divIcon({ className: "", html: `<div style="background:#f59e0b;border:2px solid #78350f;border-radius:50%;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:14px">⛱</div>`, iconSize: [26, 26] }) }).addTo(overlay).bindTooltip("그늘막", { permanent: true, direction: "top" });
+      if (K === "coolpave" || K === "combo") {
+        const w2 = mLon(2), a = along(-50), b = along(50);
+        L.polyline([a, b], { color: "#e2e8f0", weight: 14, opacity: .5 }).addTo(overlay);
+      }
+      // 캡션
+      const cap = L.control({ position: "topright" });
+      cap.onAdd = () => { const d = L.DomUtil.create("div"); d.style.cssText = "background:rgba(15,23,42,.88);color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;max-width:220px";
+        d.innerHTML = `<div style="color:#38bdf8">추천: ${s2.name}</div><div style="font-weight:600">체감 ${w.design.base.pvpti}° → ${s2.pvpti}° (${s2.delta}°)</div><div>${COST_DESC[s2.key]} · ${won(s2.cost)}원</div>`; return d; };
+      cap.addTo(map); overlay._cap = cap;
+    }
+    draw();
+    $("#siteplan-scn").addEventListener("change", () => { if (overlay._cap) map.removeControl(overlay._cap); draw(); });
+    $("#siteplan-shot").addEventListener("click", e => { e.preventDefault(); alert("지도는 외부 항공사진 타일이라 파일로 바로 저장되지 않아요.\n캡처: 맥 ⌘⇧4 로 지도 영역을 드래그하면 제안서용 이미지로 저장됩니다."); });
   }
 
   async function loadConcept(cell, scn, m, w, force = false) {
