@@ -1358,9 +1358,20 @@ async def building_risk_at(
     return result
 
 
+def _require_field_key(x_field_key: str | None) -> None:
+    """관리자 전용 엔드포인트 공통 관문 — 키가 없거나 틀리면 존재 자체를 숨긴다(404)."""
+    s = get_settings()
+    if not s.field_key or x_field_key != s.field_key:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
 @router.get("/archive/stats", summary="측정 이력 적재 현황 (관리자용)")
-async def archive_stats(request: Request) -> dict:
-    """데이터가 실제로 쌓이고 있는지 확인 — 건수·기간·격자 수."""
+async def archive_stats(
+    request: Request,
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """데이터가 실제로 쌓이고 있는지 확인 — 건수·기간·격자 수. (X-Field-Key 필요, 2026-09-04)"""
+    _require_field_key(x_field_key)
     archive = getattr(request.app.state, "archive", None)
     if archive is None:
         return {"enabled": False, "reason": "archive 미초기화"}
@@ -1373,12 +1384,15 @@ async def archive_hotspots(
     hours: int = Query(24, ge=1, le=24 * 90, description="최근 N시간"),
     min_samples: int = Query(1, ge=1, le=100, description="이 표본 수 미만 격자는 제외"),
     limit: int = Query(500, ge=1, le=5000),
+    x_field_key: str | None = Header(None),
 ) -> dict:
     """개인 식별자 없이, 격자 단위 평균·최고 체감온도를 반환한다.
 
     지자체 제안·연구용 집계. min_samples 를 올리면 표본이 적은 격자를 제외해
     재식별 위험을 낮출 수 있다(대외 제공 시 권장).
+    영업비밀(1급 수집 데이터)이라 X-Field-Key 없이는 404 (2026-09-04).
     """
+    _require_field_key(x_field_key)
     archive = getattr(request.app.state, "archive", None)
     if archive is None:
         return {"cells": [], "note": "archive 미초기화"}
