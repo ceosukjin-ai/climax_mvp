@@ -1400,6 +1400,37 @@ async def archive_hotspots(
     return {"hours": hours, "min_samples": min_samples, "count": len(cells), "cells": cells}
 
 
+@router.get("/archive/dashboard", include_in_schema=False)
+async def archive_dashboard_page():
+    """데이터 자산 대시보드 페이지 (대표 전용, 2026-09-04) — 서버가 직접 서빙.
+
+    /api/v1/field 와 같은 방식: 페이지 자체는 공개돼도 무해(숫자가 없음),
+    데이터(/archive/dashboard_data)는 X-Field-Key 없이는 404.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    p = Path(__file__).resolve().parents[1] / "web" / "archive_dashboard.html"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(p, media_type="text/html", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/archive/dashboard_data", include_in_schema=False)
+async def archive_dashboard_data(
+    request: Request,
+    hours: int = Query(24 * 7, ge=1, le=24 * 365),
+    min_samples: int = Query(1, ge=1, le=100),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    _require_field_key(x_field_key)
+    archive = getattr(request.app.state, "archive", None)
+    if archive is None:
+        return {"enabled": False, "reason": "archive 미초기화"}
+    return await archive.dashboard(hours=hours, min_samples=min_samples)
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""

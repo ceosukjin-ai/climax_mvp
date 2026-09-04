@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="몸씨 데이터">
+<title>몸씨 데이터 자산</title>
+<!--
+  ClimaX 데이터 자산 대시보드 (2026-09-04, 대표 전용)
+  · 페이지 자체는 숫자를 갖지 않는다. 모든 데이터는 /api/v1/archive/dashboard_data 를
+    X-Field-Key 헤더로 호출해 받는다 (키 없으면 404 → 존재 자체가 안 보임).
+  · 키는 현장 대조 도구와 같은 localStorage 키(climax_field_key)를 공유한다.
+  · 외부 의존: Leaflet(cdnjs) + OSM 타일. 나머지는 손으로 그린 SVG.
+-->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --bg:#0f172a; --surface:#1e293b; --surface-2:#334155; --border:#475569;
+    --text:#f1f5f9; --dim:#94a3b8; --muted:#64748b; --accent:#38bdf8;
+    --safe:#16a34a; --caution:#eab308; --warning:#f97316; --danger:#dc2626; --severe:#7c2d12;
+    --grid:#273449;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR","Apple SD Gothic Neo",sans-serif;
+    font-size:15px;line-height:1.45}
+  body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  main{max-width:1100px;margin:0 auto;padding:14px}
+  header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:4px 0 14px}
+  h1{font-size:1.15rem;margin:0;display:flex;align-items:center;gap:8px}
+  h1 .dot{width:10px;height:10px;border-radius:50%;background:var(--accent)}
+  .spacer{flex:1}
+  .seg{display:flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+  .seg button{background:transparent;color:var(--dim);border:0;padding:7px 12px;font-size:.9rem;cursor:pointer}
+  .seg button.on{background:var(--surface-2);color:var(--text)}
+  .btn{background:var(--surface);color:var(--dim);border:1px solid var(--border);border-radius:10px;padding:7px 12px;font-size:.9rem;cursor:pointer}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+  .tile{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+  .tile .k{font-size:.78rem;color:var(--dim)}
+  .tile .v{font-size:1.6rem;font-weight:600;letter-spacing:-.02em;margin-top:2px}
+  .tile .s{font-size:.75rem;color:var(--muted);margin-top:2px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
+  .card h2{font-size:.95rem;margin:0 0 8px;font-weight:600}
+  .card h2 small{color:var(--muted);font-weight:400;margin-left:6px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:760px){.two{grid-template-columns:1fr}}
+  svg.chart{width:100%;height:190px;display:block;overflow:visible}
+  svg text{fill:var(--dim);font-size:11px}
+  .legend{display:flex;gap:14px;font-size:.8rem;color:var(--dim);margin-top:6px;flex-wrap:wrap}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  #map{height:420px;border-radius:10px;background:#0b1220}
+  .leaflet-container{font:inherit}
+  .maplegend{display:flex;gap:10px;flex-wrap:wrap;font-size:.78rem;color:var(--dim);margin-top:8px}
+  .maplegend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+  .tip{position:fixed;pointer-events:none;background:#0b1220;border:1px solid var(--border);border-radius:8px;
+       padding:6px 9px;font-size:.78rem;color:var(--text);display:none;z-index:50;white-space:nowrap}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th,td{text-align:right;padding:5px 6px;border-bottom:1px solid var(--grid)}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--dim);font-weight:500}
+  .risk{display:flex;height:14px;border-radius:7px;overflow:hidden;gap:2px;background:var(--bg)}
+  .risk div{min-width:0}
+  .empty{color:var(--muted);font-size:.85rem;padding:18px 0;text-align:center}
+  .status{font-size:.8rem;color:var(--muted)}
+  .status.err{color:#fca5a5}
+  details summary{cursor:pointer;color:var(--dim);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1><span class="dot"></span>몸씨 데이터 자산</h1>
+    <span class="status" id="status">불러오는 중…</span>
+    <span class="spacer"></span>
+    <div class="seg" id="range">
+      <button data-h="24">24시간</button>
+      <button data-h="168" class="on">7일</button>
+      <button data-h="720">30일</button>
+      <button data-h="8760">전체</button>
+    </div>
+    <button class="btn" id="reload">새로고침</button>
+    <button class="btn" id="keybtn" title="접근 키 바꾸기">키</button>
+  </header>
+
+  <section class="grid" id="tiles"></section>
+
+  <section class="card">
+    <h2>일별 적재 <small>최근 30일 · 건수</small></h2>
+    <svg class="chart" id="daily"></svg>
+  </section>
+
+  <section class="two">
+    <section class="card">
+      <h2>시간대별 평균 체감 <small id="hourly-sub">선택 기간 · 실외 · 한국시간</small></h2>
+      <svg class="chart" id="hourly"></svg>
+    </section>
+    <section class="card">
+      <h2>위험등급 분포 <small>선택 기간</small></h2>
+      <div class="risk" id="riskbar"></div>
+      <div class="legend" id="risklegend"></div>
+      <h2 style="margin-top:16px">지면온도 실측 ↔ 엔진 추정 <small>ASOS · 최근 7일</small></h2>
+      <svg class="chart" id="tsurf" style="height:150px"></svg>
+      <div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span><span id="tsurf-rmse"></span></div>
+    </section>
+  </section>
+
+  <section class="card">
+    <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도</small></h2>
+    <div id="map"></div>
+    <div class="maplegend">
+      <span><i style="background:var(--safe)"></i>&lt;29 안전</span>
+      <span><i style="background:var(--caution)"></i>29–35 주의</span>
+      <span><i style="background:var(--warning)"></i>35–38 경고</span>
+      <span><i style="background:var(--danger)"></i>38–41 위험</span>
+      <span><i style="background:#b91c1c"></i>≥41 심각</span>
+      <span style="margin-left:auto">원 크기 = 표본 수</span>
+    </div>
+    <details style="margin-top:10px"><summary>상위 격자 표 (평균 체감 순, 20개)</summary>
+      <div style="overflow-x:auto;margin-top:8px"><table id="toptable"></table></div>
+    </details>
+  </section>
+
+  <p class="status" style="text-align:center">개인 식별자 없음 · 좌표 11m 격자 반올림 · 대외 제공 시 표본 3 미만 격자 제외</p>
+</main>
+<div class="tip" id="tip"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(() => {
+  const API = "";            // 같은 origin
+  const KEY_NAME = "climax_field_key";   // 현장 대조 도구와 공유
+  const $ = (s) => document.querySelector(s);
+  const tip = $("#tip");
+  let hours = 168, map, layer, data;
+
+  // ── 접근 키 ────────────────────────────────────────────
+  function getKey(force) {
+    let k = null;
+    try { k = localStorage.getItem(KEY_NAME); } catch (_) {}
+    if (!k || force) {
+      k = prompt("접근 키 (FIELD_KEY)");
+      if (k) { try { localStorage.setItem(KEY_NAME, k.trim()); } catch (_) {} }
+    }
+    return k ? k.trim() : null;
+  }
+
+  // ── 색 ────────────────────────────────────────────────
+  const RISK = { safe:"#16a34a", caution:"#eab308", warning:"#f97316", danger:"#dc2626", severe:"#b91c1c", unknown:"#64748b" };
+  const RISK_KO = { safe:"안전", caution:"주의", warning:"경고", danger:"위험", severe:"심각", unknown:"미정" };
+  const ORDER = ["safe","caution","warning","danger","severe","unknown"];
+  const colorFor = (p) => p == null ? RISK.unknown : p < 29 ? RISK.safe : p < 35 ? RISK.caution : p < 38 ? RISK.warning : p < 41 ? RISK.danger : RISK.severe;
+
+  const fmt = (n) => (n == null ? "–" : Number(n).toLocaleString("ko-KR"));
+  const kst = (iso) => iso ? new Date(iso).toLocaleString("ko-KR", { timeZone:"Asia/Seoul", month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" }) : "–";
+
+  // ── 툴팁 ──────────────────────────────────────────────
+  function showTip(e, html) { tip.innerHTML = html; tip.style.display = "block"; moveTip(e); }
+  function moveTip(e) { tip.style.left = (e.clientX + 12) + "px"; tip.style.top = (e.clientY - 28) + "px"; }
+  function hideTip() { tip.style.display = "none"; }
+
+  // ── SVG 막대 차트 ──────────────────────────────────────
+  function bars(svgEl, rows, xKey, yKey, opts = {}) {
+    const W = svgEl.clientWidth || 600, H = svgEl.clientHeight || 190;
+    const m = { l: 34, r: 8, t: 8, b: 22 };
+    svgEl.innerHTML = "";
+    if (!rows.length) { svgEl.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle">데이터 없음</text>`; return; }
+    const ys = rows.map(r => +r[yKey] || 0);
+    const yMax = Math.max(1, ...ys) * 1.08, yMin = opts.zero === false ? Math.min(...ys) - 1 : 0;
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const bw = iw / rows.length;
+    const y = v => m.t + ih - (v - yMin) / (yMax - yMin) * ih;
+    let s = "";
+    // 격자선 4개
+    for (let i = 0; i <= 4; i++) {
+      const v = yMin + (yMax - yMin) * i / 4, yy = y(v);
+      s += `<line x1="${m.l}" x2="${W-m.r}" y1="${yy}" y2="${yy}" stroke="#273449" stroke-width="1"/>`;
+      s += `<text x="${m.l-6}" y="${yy+4}" text-anchor="end">${opts.fmtY ? opts.fmtY(v) : Math.round(v)}</text>`;
+    }
+    rows.forEach((r, i) => {
+      const v = +r[yKey] || 0, x = m.l + i * bw + bw * 0.15, w = Math.max(2, bw * 0.7);
+      const top = y(v), h = Math.max(0, m.t + ih - top);
+      const fill = opts.color ? opts.color(r) : "#38bdf8";
+      s += `<rect x="${x}" y="${top}" width="${w}" height="${h}" rx="3" fill="${fill}" data-i="${i}" opacity=".9"/>`;
+      const step = Math.ceil(rows.length / 8);
+      if (i % step === 0) s += `<text x="${x + w/2}" y="${H-6}" text-anchor="middle">${opts.fmtX ? opts.fmtX(r[xKey]) : r[xKey]}</text>`;
+    });
+    svgEl.innerHTML = s;
+    svgEl.querySelectorAll("rect").forEach(el => {
+      const r = rows[+el.dataset.i];
+      el.addEventListener("mousemove", e => showTip(e, opts.tip ? opts.tip(r) : `${r[xKey]}: ${fmt(r[yKey])}`));
+      el.addEventListener("mouseleave", hideTip);
+    });
+  }
+
+  // ── SVG 선 차트 (2계열) ────────────────────────────────
+  function lines(svgEl, rows, series) {
+    const W = svgEl.clientWidth || 600, H = svgEl.clientHeight || 150;
+    const m = { l: 34, r: 8, t: 8, b: 20 };
+    svgEl.innerHTML = "";
+    if (rows.length < 2) { svgEl.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle">데이터 없음</text>`; return; }
+    const all = rows.flatMap(r => series.map(sr => r[sr.key]).filter(v => v != null));
+    const yMin = Math.floor(Math.min(...all) - 1), yMax = Math.ceil(Math.max(...all) + 1);
+    const iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const x = i => m.l + i / (rows.length - 1) * iw;
+    const y = v => m.t + ih - (v - yMin) / (yMax - yMin) * ih;
+    let s = "";
+    for (let i = 0; i <= 3; i++) {
+      const v = yMin + (yMax - yMin) * i / 3, yy = y(v);
+      s += `<line x1="${m.l}" x2="${W-m.r}" y1="${yy}" y2="${yy}" stroke="#273449"/>`;
+      s += `<text x="${m.l-6}" y="${yy+4}" text-anchor="end">${v.toFixed(0)}°</text>`;
+    }
+    series.forEach(sr => {
+      const d = rows.map((r, i) => r[sr.key] == null ? null : `${i ? "L" : "M"}${x(i).toFixed(1)},${y(r[sr.key]).toFixed(1)}`).filter(Boolean).join(" ");
+      s += `<path d="${d}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round"/>`;
+    });
+    const step = Math.ceil(rows.length / 6);
+    rows.forEach((r, i) => { if (i % step === 0) s += `<text x="${x(i)}" y="${H-4}" text-anchor="middle">${kst(r.t).replace(/\s?\d+:\d+$/, "")}</text>`; });
+    s += `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hover"/>`;
+    s += `<line id="xh" x1="0" x2="0" y1="${m.t}" y2="${m.t+ih}" stroke="#94a3b8" stroke-dasharray="3 3" style="display:none"/>`;
+    svgEl.innerHTML = s;
+    const hv = svgEl.querySelector("#hover"), xh = svgEl.querySelector("#xh");
+    hv.addEventListener("mousemove", e => {
+      const rect = svgEl.getBoundingClientRect();
+      const i = Math.round((e.clientX - rect.left - m.l) / iw * (rows.length - 1));
+      const r = rows[Math.max(0, Math.min(rows.length - 1, i))];
+      xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.style.display = "";
+      showTip(e, `${kst(r.t)}<br>` + series.map(sr => `${sr.name} ${r[sr.key] ?? "–"}°`).join(" · ") + (r.obs != null && r.est != null ? `<br>잔차 ${(r.est - r.obs).toFixed(1)}°` : ""));
+    });
+    hv.addEventListener("mouseleave", () => { hideTip(); xh.style.display = "none"; });
+  }
+
+  // ── 렌더 ──────────────────────────────────────────────
+  function render(d) {
+    const t = d.totals || {};
+    const label = { 24:"24시간", 168:"7일", 720:"30일", 8760:"전체" }[hours] || `${hours}h`;
+    $("#tiles").innerHTML = [
+      ["총 측정", fmt(t.measurement), `${t.first ? t.first.slice(0,10) : "–"} 부터`],
+      ["오늘", fmt(t.today), "한국시간 0시 기준"],
+      ["격자 수", fmt(t.cells), "11m 격자"],
+      ["마지막 적재", kst(t.last), t.indoor ? `실내 ${fmt(t.indoor)}건 포함` : "실외만"],
+      ["엔진 대조", fmt(t.engine_check), `ASOS · ${kst(t.engine_check_last)}`],
+      ["현장 실측", fmt(t.field_check), "field_check"],
+    ].map(([k, v, s]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+
+    bars($("#daily"), d.daily || [], "d", "n", {
+      fmtX: v => v.slice(5).replace("-", "/"),
+      tip: r => `${r.d}<br>${fmt(r.n)}건 · 평균 ${r.avg_pvpti ?? "–"}° · 최고 ${r.max_pvpti ?? "–"}°`
+    });
+
+    const hourly = Array.from({ length: 24 }, (_, h) => (d.hourly || []).find(r => +r.h === h) || { h, n: 0, avg_pvpti: null });
+    $("#hourly-sub").textContent = `${label} · 실외 · 한국시간`;
+    bars($("#hourly"), hourly, "h", "avg_pvpti", {
+      zero: false, fmtX: v => `${v}시`, fmtY: v => v.toFixed(0) + "°",
+      color: r => colorFor(r.avg_pvpti),
+      tip: r => `${r.h}시<br>평균 ${r.avg_pvpti ?? "–"}° · 최고 ${r.max_pvpti ?? "–"}° · ${fmt(r.n)}건`
+    });
+
+    const risk = d.risk || {}, total = Object.values(risk).reduce((a, b) => a + b, 0) || 1;
+    $("#riskbar").innerHTML = ORDER.filter(k => risk[k]).map(k => `<div style="flex:${risk[k]};background:${RISK[k]}" title="${RISK_KO[k]} ${risk[k]}"></div>`).join("");
+    $("#risklegend").innerHTML = ORDER.filter(k => risk[k]).map(k => `<span><i style="background:${RISK[k]}"></i>${RISK_KO[k]} ${fmt(risk[k])} (${Math.round(risk[k] / total * 100)}%)</span>`).join("") || `<span class="empty">데이터 없음</span>`;
+
+    const ts = d.tsurf || [];
+    lines($("#tsurf"), ts, [{ key:"obs", name:"실측", color:"#38bdf8" }, { key:"est", name:"추정", color:"#f472b6" }]);
+    if (ts.length) {
+      const rm = Math.sqrt(ts.reduce((a, r) => a + (r.est - r.obs) ** 2, 0) / ts.length);
+      const bias = ts.reduce((a, r) => a + (r.est - r.obs), 0) / ts.length;
+      $("#tsurf-rmse").textContent = `RMSE ${rm.toFixed(1)}° · 편향 ${bias >= 0 ? "+" : ""}${bias.toFixed(1)}° · ${ts.length}쌍`;
+    } else $("#tsurf-rmse").textContent = "";
+
+    renderMap(d.hotspots || [], label);
+  }
+
+  function renderMap(cells, label) {
+    $("#map-sub").textContent = `${label} · 격자 11m · 평균 체감온도 · ${fmt(cells.length)}개`;
+    if (!map) {
+      map = L.map("map", { zoomControl: true, attributionControl: true }).setView([35.23, 129.08], 12);
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        maxZoom: 19, attribution: "&copy; OpenStreetMap &copy; CARTO"
+      }).addTo(map);
+      layer = L.layerGroup().addTo(map);
+    }
+    layer.clearLayers();
+    if (!cells.length) return;
+    const maxN = Math.max(...cells.map(c => +c.n));
+    const b = [];
+    cells.forEach(c => {
+      const p = c.avg_pvpti == null ? null : +c.avg_pvpti;
+      const r = 4 + 10 * Math.sqrt((+c.n) / maxN);
+      L.circleMarker([c.lat, c.lon], { radius: r, color: "#0f172a", weight: 1, fillColor: colorFor(p), fillOpacity: .85 })
+        .bindTooltip(`평균 ${p ?? "–"}° · 최고 ${c.max_pvpti ?? "–"}°<br>${fmt(c.n)}건 · 기온 ${c.avg_air ?? "–"}° · SVF ${c.avg_svf ?? "–"}`, { direction: "top" })
+        .addTo(layer);
+      b.push([c.lat, c.lon]);
+    });
+    if (b.length) map.fitBounds(b, { padding: [20, 20], maxZoom: 15 });
+
+    const top = cells.slice(0, 20);
+    $("#toptable").innerHTML = `<tr><th>#</th><th>위도</th><th>경도</th><th>표본</th><th>평균</th><th>최고</th><th>기온</th><th>SVF</th><th>GVI</th></tr>` +
+      top.map((c, i) => `<tr><td>${i + 1}</td><td>${c.lat}</td><td>${c.lon}</td><td>${fmt(c.n)}</td><td style="color:${colorFor(+c.avg_pvpti)}">${c.avg_pvpti ?? "–"}°</td><td>${c.max_pvpti ?? "–"}°</td><td>${c.avg_air ?? "–"}°</td><td>${c.avg_svf ?? "–"}</td><td>${c.avg_gvi ?? "–"}</td></tr>`).join("");
+  }
+
+  // ── 로드 ──────────────────────────────────────────────
+  async function load(forceKey) {
+    const key = getKey(forceKey);
+    const st = $("#status");
+    if (!key) { st.textContent = "키가 없어요"; st.className = "status err"; return; }
+    st.textContent = "불러오는 중…"; st.className = "status";
+    try {
+      const r = await fetch(`${API}/api/v1/archive/dashboard_data?hours=${hours}`, { headers: { "X-Field-Key": key } });
+      if (r.status === 404) { try { localStorage.removeItem(KEY_NAME); } catch (_) {} st.textContent = "키가 틀렸어요 — 새로고침해서 다시 입력"; st.className = "status err"; return; }
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      data = await r.json();
+      if (data.error) { st.textContent = "집계 오류: " + data.error; st.className = "status err"; }
+      else { st.textContent = "갱신 " + new Date().toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }); }
+      render(data);
+    } catch (e) {
+      st.textContent = "불러오기 실패: " + e.message; st.className = "status err";
+    }
+  }
+
+  $("#range").addEventListener("click", e => {
+    const b = e.target.closest("button"); if (!b) return;
+    $("#range .on")?.classList.remove("on"); b.classList.add("on");
+    hours = +b.dataset.h; load();
+  });
+  $("#reload").addEventListener("click", () => load());
+  $("#keybtn").addEventListener("click", () => load(true));
+  window.addEventListener("resize", () => { if (data) render(data); });
+  document.addEventListener("mousemove", e => { if (tip.style.display === "block") moveTip(e); });
+  load();
+})();
+</script>
+</body>
+</html>

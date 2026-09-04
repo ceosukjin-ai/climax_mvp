@@ -316,6 +316,76 @@ class Archive:
             logger.warning("[archive] ml_dataset 조회 실패: {}: {}", type(e).__name__, e)
             return []
 
+    # ── 관리자 대시보드 집계 (2026-09-04, 대표 전용) ────────
+    async def dashboard(self, hours: int = 24 * 7, min_samples: int = 1) -> dict:
+        """대시보드 한 화면에 필요한 집계를 한 번에.
+
+        시간 축은 모두 **한국시간(Asia/Seoul)** 으로 잘라 준다 — 폭염은 낮에 오고
+        운영자는 한국에 있다. 개인 식별자는 원천에 없으므로 여기서도 없다.
+        """
+        if not self._ready:
+            return {"enabled": False}
+        out: dict = {"enabled": True, "hours": hours}
+        try:
+            async with self._session() as s:
+                # 총계
+                m = (await s.execute(text(
+                    "SELECT COUNT(*) n, MIN(observed_at) first, MAX(observed_at) last,"
+                    " COUNT(DISTINCT (lat, lon)) cells,"
+                    " COUNT(*) FILTER (WHERE observed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Seoul') AT TIME ZONE 'Asia/Seoul') today,"
+                    " COUNT(*) FILTER (WHERE indoor) indoor_n"
+                    " FROM measurement"))).mappings().first()
+                e = (await s.execute(text(
+                    "SELECT COUNT(*) n, MAX(observed_at) last FROM engine_check"))).mappings().first()
+                f = (await s.execute(text(
+                    "SELECT COUNT(*) n FROM field_check"))).mappings().first()
+                out["totals"] = {
+                    "measurement": int(m["n"] or 0), "today": int(m["today"] or 0),
+                    "cells": int(m["cells"] or 0), "indoor": int(m["indoor_n"] or 0),
+                    "first": m["first"].isoformat() if m["first"] else None,
+                    "last": m["last"].isoformat() if m["last"] else None,
+                    "engine_check": int(e["n"] or 0),
+                    "engine_check_last": e["last"].isoformat() if e["last"] else None,
+                    "field_check": int(f["n"] or 0),
+                }
+                # 일별 적재 (최근 30일, KST)
+                r = await s.execute(text(
+                    "SELECT to_char(observed_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') d,"
+                    " COUNT(*) n, ROUND(AVG(pvpti)::numeric,1) avg_pvpti, ROUND(MAX(pvpti)::numeric,1) max_pvpti"
+                    " FROM measurement WHERE observed_at > NOW() - INTERVAL '30 days'"
+                    " GROUP BY d ORDER BY d"))
+                out["daily"] = [dict(x) for x in r.mappings()]
+                # 시간대별 평균 체감 (창 내, 실외만, KST 시)
+                r = await s.execute(text(
+                    "SELECT EXTRACT(HOUR FROM observed_at AT TIME ZONE 'Asia/Seoul')::int h,"
+                    " COUNT(*) n, ROUND(AVG(pvpti)::numeric,1) avg_pvpti, ROUND(MAX(pvpti)::numeric,1) max_pvpti"
+                    " FROM measurement WHERE observed_at > NOW() - make_interval(hours => :hours)"
+                    " AND indoor = FALSE AND pvpti IS NOT NULL GROUP BY h ORDER BY h"),
+                    {"hours": hours})
+                out["hourly"] = [dict(x) for x in r.mappings()]
+                # 위험등급 분포 (창 내)
+                r = await s.execute(text(
+                    "SELECT COALESCE(risk_level,'unknown') level, COUNT(*) n"
+                    " FROM measurement WHERE observed_at > NOW() - make_interval(hours => :hours)"
+                    " GROUP BY level"), {"hours": hours})
+                out["risk"] = {x["level"]: int(x["n"]) for x in r.mappings()}
+                # 지면온도 실측↔추정 (최근 7일)
+                r = await s.execute(text(
+                    "SELECT observed_at, obs_ground_c, est_ground_c, air_temp FROM engine_check"
+                    " WHERE obs_ground_c IS NOT NULL AND est_ground_c IS NOT NULL"
+                    " AND observed_at > NOW() - INTERVAL '7 days' ORDER BY observed_at"))
+                out["tsurf"] = [
+                    {"t": row[0].isoformat(), "obs": round(float(row[1]), 1),
+                     "est": round(float(row[2]), 1),
+                     "air": (round(float(row[3]), 1) if row[3] is not None else None)}
+                    for row in r]
+            out["hotspots"] = await self.hotspots(hours=hours, min_samples=min_samples, limit=1500)
+            return out
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[archive] dashboard 집계 실패: {}: {}", type(e).__name__, e)
+            out["error"] = f"{type(e).__name__}: {e}"
+            return out
+
     async def _count_measurements(self) -> int:
         try:
             async with self._session() as s:
