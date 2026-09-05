@@ -766,7 +766,7 @@ class VPTIOrchestrator:
         from vpti_core.solar import estimate_solar as _es
 
         pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
-        pano = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
+        pano, _hit, _svms, _segms = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
         views = self._build_core_views(pano)
         mats = self._build_core_materials(pano.material_ratios)
         wc = _WC(temperature_c=ta, wind_speed_ms=wind_ms,
