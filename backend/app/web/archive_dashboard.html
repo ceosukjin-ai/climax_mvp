@@ -459,7 +459,9 @@
 
   // ── 배치도 (실제 위치 항공사진 + 개입 위치) ───────────────
   async function loadSiteplan(cell, scn, m, w, rows) {
+    $("#modal").classList.remove("on");   // 열려 있던 확대창 닫기 (겹침 방지)
     const out = $("#siteplan-out"); if (!out) return;
+    out.scrollIntoView({ behavior: "smooth", block: "center" });
     out.innerHTML = `<div class="status" style="margin-top:8px">항공사진 불러오는 중…</div>`;
     try {
       const r = await fetch(`${API}/api/v1/archive/siteplan?lat=${cell.lat}&lon=${cell.lon}`, { headers: { "X-Field-Key": getKey() } });
