@@ -328,7 +328,9 @@ class Archive:
         """
         if not self._ready:
             return {"enabled": False}
-        out: dict = {"enabled": True, "hours": hours}
+        from app.config import get_settings as _gs
+        out: dict = {"enabled": True, "hours": hours,
+                     "vworld_key": getattr(_gs(), "vworld_api_key", "") or ""}
         try:
             async with self._session() as s:
                 # 총계
