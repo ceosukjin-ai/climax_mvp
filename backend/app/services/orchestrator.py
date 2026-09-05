@@ -752,6 +752,9 @@ class VPTIOrchestrator:
         rh: float,
         wind_ms: float,
         cloud_fraction: float = 0.0,
+        svf_obs: float | None = None,   # 실측 SVF(Insta360) 주입 — 3단 분해용
+        gvi_obs: float | None = None,
+        bvi_obs: float | None = None,
     ) -> dict:
         """검증 전용 — 측정 순간의 좌표·시각·기온·습도·풍속을 그대로 엔진에 넣어
         그 조건에서의 MRT·pVPTI(개인화 전)를 예측한다. 현장 실측 검증용(2026-09-05).
@@ -767,7 +770,17 @@ class VPTIOrchestrator:
 
         pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
         pano, _hit, _svms, _segms = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
-        views = self._build_core_views(pano)
+        eng_svf, eng_gvi, eng_bvi = pano.svf, pano.gvi, getattr(pano, "bvi", 0.0)
+        if svf_obs is not None:
+            # 실측 SVF/GVI/BVI 를 엔진에 주입 (거리뷰 대신) — 공간분석 오차를 배제한 순수 물리 검증
+            from vpti_core.vsi import ViewSegmentation as _VS
+            g = max(0.0, min(1.0, gvi_obs if gvi_obs is not None else pano.gvi))
+            b = max(0.0, min(1.0 - g, bvi_obs if bvi_obs is not None else getattr(pano, "bvi", 0.0)))
+            up = _VS(direction="up", sky_ratio=max(0.0, min(1.0, svf_obs)), vegetation_ratio=0.0, building_ratio=0.0)
+            views = [up] + [_VS(direction=d, sky_ratio=0.0, vegetation_ratio=g, building_ratio=b)
+                            for d in ("front", "back", "left", "right")]
+        else:
+            views = self._build_core_views(pano)
         mats = self._build_core_materials(pano.material_ratios)
         wc = _WC(temperature_c=ta, wind_speed_ms=wind_ms,
                  wind_direction_deg=0.0, humidity_pct=rh)
@@ -791,7 +804,9 @@ class VPTIOrchestrator:
                  cloud_fraction=cloud_fraction, direct_shade=direct_shade)
         return {"lat": round(clat, 5), "lon": round(clon, 5),
                 "pvpti": round(float(r.vpti), 2), "mrt": round(float(r.mrt.tmrt), 2),
-                "svf": round(pano.svf, 3), "gvi": round(pano.gvi, 3),
+                "ts": round(float(r.mrt.ground_temp_c), 2),   # 엔진 추정 표면온도 (열화상 대조용)
+                "svf_eng": round(eng_svf, 3), "gvi_eng": round(eng_gvi, 3), "bvi_eng": round(eng_bvi, 3),
+                "svf_used": round(float(r.vsi.svf), 3),        # 실제 계산에 쓴 SVF (주입 시 실측값)
                 "risk": str(r.risk_level), "shade": direct_shade,
                 "solar_elev": round(getattr(r.solar, "solar_elevation_deg", 0.0), 1)}
 

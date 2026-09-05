@@ -1453,6 +1453,9 @@ async def archive_validate(
     cloud: float = Query(0.0, ge=0, le=1),
     mrt_obs: float | None = Query(None), pet_obs: float | None = Query(None),
     wbgt_obs: float | None = Query(None), place: str | None = Query(None),
+    svf_obs: float | None = Query(None), gvi_obs: float | None = Query(None),
+    bvi_obs: float | None = Query(None), ts_obs: float | None = Query(None),
+    inject: bool = Query(False, description="실측 SVF/GVI 주입(3단 분해)"),
     save: bool = Query(False),
     x_field_key: str | None = Header(None),
 ) -> dict:
@@ -1471,7 +1474,10 @@ async def archive_validate(
     except ValueError:
         return {"ok": False, "reason": "when 형식 오류(ISO)"}
     try:
-        r = await orch.validate_at(lat, lon, w, ta, rh, wind, cloud)
+        r = await orch.validate_at(lat, lon, w, ta, rh, wind, cloud,
+                                   svf_obs=(svf_obs if inject else None),
+                                   gvi_obs=(gvi_obs if inject else None),
+                                   bvi_obs=(bvi_obs if inject else None))
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
     if save:
