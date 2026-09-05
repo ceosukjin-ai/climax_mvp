@@ -1444,21 +1444,6 @@ async def archive_whatif(
     return await cell_whatif(getattr(request.app.state, "archive", None), lat, lon, hours)
 
 
-@router.get("/archive/concept", include_in_schema=False)
-async def archive_concept(
-    request: Request,
-    lat: float = Query(...), lon: float = Query(...),
-    scenario: str = Query("shade"),
-    svf: float = Query(0.5, ge=0, le=1), gvi: float = Query(0.1, ge=0, le=1), bvi: float = Query(0.3, ge=0, le=1),
-    force: bool = Query(False),
-    x_field_key: str | None = Header(None),
-) -> dict:
-    """개선 시뮬 개념도 before/after (대표 전용, 2026-09-05). Gemini 이미지 생성, 디스크 캐시."""
-    _require_field_key(x_field_key)
-    from app.services.concept import concept_pair
-    return await concept_pair(lat, lon, scenario, svf, gvi, bvi, force=force)
-
-
 @router.get("/archive/siteplan", include_in_schema=False)
 async def archive_siteplan(
     request: Request,
