@@ -609,7 +609,13 @@
     const b = [];
     cells.forEach(c => {
       const p = c.avg_pvpti == null ? null : +c.avg_pvpti;
-      const tipHtml = `평균 ${p ?? "–"}° · 최고 ${c.max_pvpti ?? "–"}°<br>${fmt(c.n)}건 · 기온 ${c.avg_air ?? "–"}° · SVF ${c.avg_svf ?? "–"}`;
+      const dm = iso => iso ? new Date(iso).toLocaleString("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "–";
+      const dd = iso => iso ? new Date(iso).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul",month:"numeric",day:"numeric"}) : "–";
+      const span = (c.first_obs && c.last_obs) ? (dd(c.first_obs)===dd(c.last_obs) ? dd(c.first_obs) : `${dd(c.first_obs)}~${dd(c.last_obs)}`) : "";
+      const tipHtml = `<b>평균 ${p ?? "–"}° · 최고 ${c.max_pvpti ?? "–"}°</b>`
+        + `<br>최고 기록: ${dm(c.peak_at)}`
+        + `<br>관측 ${fmt(c.n)}건${span ? " · " + span : ""}`
+        + `<br>기온 ${c.avg_air ?? "–"}° · SVF ${c.avg_svf ?? "–"}`;
       // 개요: 작은 점(표본 수만 크기에) / 상세: 큰 원 + 툴팁
       L.circleMarker([c.lat, c.lon], { radius: 2.5 + 4 * Math.sqrt((+c.n) / maxN), stroke: false, fillColor: colorFor(p), fillOpacity: .8, interactive: false }).addTo(layer);
       L.circleMarker([c.lat, c.lon], { radius: 6 + 10 * Math.sqrt((+c.n) / maxN), color: "#0f172a", weight: 1, fillColor: colorFor(p), fillOpacity: .85 })

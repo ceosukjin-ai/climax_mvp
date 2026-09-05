@@ -257,7 +257,10 @@ class Archive:
                ROUND(MAX(pvpti)::numeric, 1) AS max_pvpti,
                ROUND(AVG(air_temp)::numeric, 1) AS avg_air,
                ROUND(AVG(svf)::numeric, 2)  AS avg_svf,
-               ROUND(AVG(gvi)::numeric, 2)  AS avg_gvi
+               ROUND(AVG(gvi)::numeric, 2)  AS avg_gvi,
+               MIN(observed_at) AS first_obs,
+               MAX(observed_at) AS last_obs,
+               (array_agg(observed_at ORDER BY pvpti DESC))[1] AS peak_at
         FROM measurement
         WHERE observed_at > NOW() - make_interval(hours => :hours)
           AND indoor = FALSE AND pvpti IS NOT NULL
@@ -270,7 +273,14 @@ class Archive:
             async with self._session() as s:
                 rows = (await s.execute(text(sql), {
                     "hours": hours, "min_samples": min_samples, "limit": limit})).mappings()
-                return [dict(r) for r in rows]
+                out = []
+                for r in rows:
+                    d = dict(r)
+                    for k in ("first_obs", "last_obs", "peak_at"):
+                        if d.get(k) is not None:
+                            d[k] = d[k].isoformat()
+                    out.append(d)
+                return out
         except Exception as e:  # noqa: BLE001
             logger.warning("[archive] 집계 조회 실패: {}: {}", type(e).__name__, e)
             return []
