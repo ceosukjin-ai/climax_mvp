@@ -401,6 +401,19 @@ class Archive:
                      "est": round(float(row[2]), 1),
                      "air": (round(float(row[3]), 1) if row[3] is not None else None)}
                     for row in r]
+                # 현장 실측 검증 (field_check 전체 — 실측·엔진 짝)
+                r = await s.execute(text(
+                    "SELECT observed_at, note, meas, est FROM field_check"
+                    " WHERE meas ? 'pet' AND est ? 'pvpti' ORDER BY observed_at"))
+                fc = []
+                for row in r:
+                    m = row[2] or {}; e = row[3] or {}
+                    fc.append({"t": row[0].isoformat() if row[0] else None,
+                               "place": (row[1] or "").split(" #")[0].strip(),
+                               "pet_obs": m.get("pet"), "mrt_obs": m.get("mrt"),
+                               "pvpti_est": e.get("pvpti"), "mrt_est": e.get("mrt"),
+                               "shade": e.get("shade")})
+                out["field"] = fc
             out["hotspots"] = await self.hotspots(hours=hours, min_samples=min_samples, limit=1500)
             return out
         except Exception as e:  # noqa: BLE001

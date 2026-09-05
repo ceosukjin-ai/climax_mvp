@@ -143,6 +143,11 @@
         <svg class="chart" id="tsurf"></svg>
         <div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span><span id="tsurf-rmse"></span></div>
       </section>
+      <section class="card small" data-detail="field">
+        <h2>현장 실측 검증 <small id="field-sub">체감온도 PET ↔ 엔진</small></h2>
+        <svg class="chart" id="fieldsc"></svg>
+        <div class="legend"><span id="field-rmse">—</span></div>
+      </section>
     </div>
     <section class="card">
       <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도</small></h2>
@@ -313,6 +318,9 @@
     draw.hourly($("#hourly"), d);
     const rh = riskHtml(d); $("#riskbar").innerHTML = rh.bar; $("#risklegend").innerHTML = rh.leg;
     $("#agebar").innerHTML = ageHtml(d);
+    draw.field($("#fieldsc"), d);
+    const fp = fstat(d.field || [], "pet_obs", "pvpti_est");
+    $("#field-rmse").textContent = fp ? `PET RMSE ${fp.rmse.toFixed(1)}° · 편향 ${fp.bias>=0?"+":""}${fp.bias.toFixed(1)}° · ${fp.n}건` : "데이터 없음";
     const ts = d.tsurf || [];
     draw.tsurf($("#tsurf"), d);
     if (ts.length) {
@@ -340,6 +348,29 @@
     tsurf(svg, d) {
       lines(svg, d.tsurf || [], [{ key:"obs", name:"실측", color:"#38bdf8" }, { key:"est", name:"추정", color:"#f472b6" }]);
     },
+    field(svg, d, opt) {  // 산점도: x=실측 PET(또는 MRT), y=엔진
+      const rows = (d.field || []).filter(r => r.pet_obs != null && r.pvpti_est != null);
+      const useMrt = opt && opt.mrt;
+      const XO = r => useMrt ? r.mrt_obs : r.pet_obs, YE = r => useMrt ? r.mrt_est : r.pvpti_est;
+      const pts = rows.filter(r => XO(r) != null && YE(r) != null);
+      const W = svg.clientWidth || 400, H = svg.clientHeight || (opt && opt.big ? 300 : 120), m = { l: 34, r: 8, t: 8, b: 24 };
+      svg.innerHTML = "";
+      if (!pts.length) { svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle">데이터 없음</text>`; return; }
+      const vals = pts.flatMap(r => [XO(r), YE(r)]);
+      let lo = Math.floor(Math.min(...vals) - 1), hi = Math.ceil(Math.max(...vals) + 1);
+      const iw = W - m.l - m.r, ih = H - m.t - m.b;
+      const X = v => m.l + (v - lo) / (hi - lo) * iw, Y = v => m.t + ih - (v - lo) / (hi - lo) * ih;
+      let g = `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="#0b1220"/>`;
+      const step = Math.max(5, Math.round((hi - lo) / 4 / 5) * 5);
+      for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+        g += `<line x1="${m.l}" x2="${m.l+iw}" y1="${Y(t)}" y2="${Y(t)}" stroke="#1e2b40"/><text x="${m.l-5}" y="${Y(t)+3}" text-anchor="end">${t}</text>`;
+        g += `<text x="${X(t)}" y="${H-6}" text-anchor="middle">${t}</text>`;
+      }
+      g += `<line x1="${X(lo)}" y1="${Y(lo)}" x2="${X(hi)}" y2="${Y(hi)}" stroke="#64748b" stroke-dasharray="4 4"/>`;
+      pts.forEach(r => { const c = r.shade === 0 ? "#3b82f6" : "#38bdf8";
+        g += `<circle cx="${X(XO(r))}" cy="${Y(YE(r))}" r="${opt&&opt.big?4:2.6}" fill="${c}" fill-opacity=".75"><title>${r.place} 실측 ${XO(r)} / 엔진 ${YE(r)}</title></circle>`; });
+      svg.innerHTML = g;
+    },
   };
   const riskHtml = (d) => {
     const risk = d.risk || {}, total = Object.values(risk).reduce((a, b) => a + b, 0) || 1;
@@ -359,7 +390,19 @@
   }
 
   // ── 해석 문장 (확대 창) ───────────────────────────────
+  function fstat(rows, ox, oy){ const p=rows.filter(r=>r[ox]!=null&&r[oy]!=null); if(!p.length)return null;
+    const res=p.map(r=>r[oy]-r[ox]); const n=p.length; const bias=res.reduce((a,b)=>a+b,0)/n;
+    const rmse=Math.sqrt(res.reduce((a,b)=>a+b*b,0)/n); const mae=res.reduce((a,b)=>a+Math.abs(b),0)/n; return {n,bias,rmse,mae}; }
   const explain = {
+    field(d) {
+      const rows = d.field || [];
+      const pet = fstat(rows, "pet_obs", "pvpti_est"), mrt = fstat(rows, "mrt_obs", "mrt_est");
+      if (!pet) return "<p>현장 실측 짝이 아직 없어요. 검증 러너를 돌리면 쌓입니다.</p>";
+      return `<p>현장 흑구 실측 <b>${pet.n}건</b>과 엔진 예측 대조:</p>
+        <p><b>체감온도 PET ↔ pVPTI</b>: RMSE <b>${pet.rmse.toFixed(1)}°</b> · 편향 ${pet.bias>=0?"+":""}${pet.bias.toFixed(1)}° · MAE ${pet.mae.toFixed(1)}° — 거리뷰 추정 체감온도가 실측과 이 범위에서 일치.</p>
+        ${mrt?`<p><b>MRT 실측 ↔ 엔진</b>: RMSE ${mrt.rmse.toFixed(1)}° · 편향 ${mrt.bias>=0?"+":""}${mrt.bias.toFixed(1)}° — 엔진이 복사부하를 높게 잡음(흑구 vs 6방향 정의차 + 표면에너지수지 과대). f_stor·h_c 교정 목표.</p>`:""}
+        <p class="note">점선=완전 일치선. 파랑 진한 점=엔진 그늘판정. 위 그래프는 체감온도(PET) 기준.</p>`;
+    },
     age(d) {
       const rows = (d.age || []).filter(r => r.band !== "unknown"), unk = (d.age || []).find(r => r.band === "unknown");
       if (!rows.length) return `<p>연령대 정보가 있는 측정이 아직 없어요.${unk ? ` (연령대 미상 ${fmt(unk.n)}건 — 9/5 서버 배포 이전의 측정)` : ""}</p><p class="note">9/5 서버 배포 이후 측정부터 10년 단위 연령 구간만 함께 남깁니다(앱은 이미 나이를 보내고 있어 앱 수정 불필요). 나이 원값·기기 식별자는 저장하지 않습니다.</p>`;
@@ -411,7 +454,7 @@
   };
 
   // ── 확대 창 ───────────────────────────────────────────
-  const TITLE = { age:"연령대 분포", daily:"일별 적재 — 최근 30일", hourly:"시간대별 평균 체감", risk:"위험등급 분포", tsurf:"지면온도 실측 ↔ 엔진 추정 (ASOS, 7일)" };
+  const TITLE = { field:"현장 실측 검증 (PET·MRT 산점도)", age:"연령대 분포", daily:"일별 적재 — 최근 30일", hourly:"시간대별 평균 체감", risk:"위험등급 분포", tsurf:"지면온도 실측 ↔ 엔진 추정 (ASOS, 7일)" };
   function openDetail(kind) {
     if (!data) return;
     $("#modal-title").textContent = TITLE[kind] + (kind === "hourly" || kind === "risk" ? ` · ${LABEL()}` : "");
@@ -421,12 +464,15 @@
       body.innerHTML = `<div class="risk" style="height:28px;border-radius:14px">${bar}</div><div class="legend" style="font-size:.9rem">${leg}</div>`;
     } else if (kind === "age") {
       body.innerHTML = `<div class="agebar" style="height:200px">${ageHtml(data)}</div><div style="height:20px"></div>`;
+    } else if (kind === "field") {
+      body.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div class="status">체감온도 PET ↔ pVPTI</div><svg class="chart big" id="fsc-pet"></svg></div><div><div class="status">MRT 실측 ↔ 엔진</div><svg class="chart big" id="fsc-mrt"></svg></div></div>`;
     } else {
       body.innerHTML = `<svg class="chart big" id="modal-svg"></svg>` + (kind === "tsurf" ? `<div class="legend"><span><i style="background:#38bdf8"></i>실측</span><span><i style="background:#f472b6"></i>추정</span></div>` : "");
     }
     $("#modal-text").innerHTML = explain[kind](data);
     $("#modal").classList.add("on");
-    if (kind !== "risk" && kind !== "age") requestAnimationFrame(() => draw[kind]($("#modal-svg"), data));
+    if (kind === "field") requestAnimationFrame(() => { draw.field($("#fsc-pet"), data, {big:true}); draw.field($("#fsc-mrt"), data, {big:true, mrt:true}); });
+    else if (kind !== "risk" && kind !== "age") requestAnimationFrame(() => draw[kind]($("#modal-svg"), data));
   }
   document.querySelectorAll(".card.small").forEach(el => el.addEventListener("click", () => openDetail(el.dataset.detail)));
   $("#modal-close").addEventListener("click", () => $("#modal").classList.remove("on"));
