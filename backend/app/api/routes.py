@@ -1451,9 +1451,14 @@ async def archive_validate(
     when: str = Query(..., description="ISO 시각 (KST 가정)"),
     ta: float = Query(...), rh: float = Query(...), wind: float = Query(0.0),
     cloud: float = Query(0.0, ge=0, le=1),
+    mrt_obs: float | None = Query(None), pet_obs: float | None = Query(None),
+    wbgt_obs: float | None = Query(None), place: str | None = Query(None),
+    save: bool = Query(False),
     x_field_key: str | None = Header(None),
 ) -> dict:
-    """현장 실측 검증 — 측정 순간 조건으로 엔진 MRT·pVPTI 예측 (대표 전용, 2026-09-05)."""
+    """현장 실측 검증 — 측정 순간 조건으로 엔진 MRT·pVPTI 예측 (대표 전용, 2026-09-05).
+
+    save=true 이면 실측·엔진 짝을 field_check 테이블에 적재(대시보드 검증 카드용)."""
     _require_field_key(x_field_key)
     from datetime import datetime as _dt, timezone as _tz, timedelta as _td
     orch = getattr(request.app.state, "orchestrator", None)
@@ -1467,9 +1472,22 @@ async def archive_validate(
         return {"ok": False, "reason": "when 형식 오류(ISO)"}
     try:
         r = await orch.validate_at(lat, lon, w, ta, rh, wind, cloud)
-        return {"ok": True, **r}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+    if save:
+        archive = getattr(request.app.state, "archive", None)
+        if archive is not None:
+            archive.record_field_check(
+                lat=lat, lon=lon,
+                meas={"ta": ta, "rh": rh, "wind_ms": wind,
+                      "mrt": mrt_obs, "pet": pet_obs, "wbgt": wbgt_obs,
+                      "source": "field_20260820_csv"},
+                est={"pvpti": r["pvpti"], "mrt": r["mrt"], "svf": r["svf"],
+                     "gvi": r["gvi"], "shade": r["shade"]},
+                note=place, observed_at=w,
+            )
+            r["saved"] = True
+    return {"ok": True, **r}
 
 
 @router.get("/archive/siteplan", include_in_schema=False)
