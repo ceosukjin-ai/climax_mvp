@@ -1444,6 +1444,34 @@ async def archive_whatif(
     return await cell_whatif(getattr(request.app.state, "archive", None), lat, lon, hours)
 
 
+@router.get("/archive/validate", include_in_schema=False)
+async def archive_validate(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    when: str = Query(..., description="ISO 시각 (KST 가정)"),
+    ta: float = Query(...), rh: float = Query(...), wind: float = Query(0.0),
+    cloud: float = Query(0.0, ge=0, le=1),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """현장 실측 검증 — 측정 순간 조건으로 엔진 MRT·pVPTI 예측 (대표 전용, 2026-09-05)."""
+    _require_field_key(x_field_key)
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    orch = getattr(request.app.state, "orchestrator", None)
+    if orch is None:
+        return {"ok": False, "reason": "엔진 미기동"}
+    try:
+        w = _dt.fromisoformat(when)
+        if w.tzinfo is None:
+            w = w.replace(tzinfo=_tz(_td(hours=9)))   # KST
+    except ValueError:
+        return {"ok": False, "reason": "when 형식 오류(ISO)"}
+    try:
+        r = await orch.validate_at(lat, lon, w, ta, rh, wind, cloud)
+        return {"ok": True, **r}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+
+
 @router.get("/archive/siteplan", include_in_schema=False)
 async def archive_siteplan(
     request: Request,

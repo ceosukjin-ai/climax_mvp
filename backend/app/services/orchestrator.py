@@ -743,6 +743,58 @@ class VPTIOrchestrator:
 
     # ===== 자동 pVPTI 파이프라인 (생리 개인화, vpti_core PET 경로) =====
 
+    async def validate_at(
+        self,
+        lat: float,
+        lon: float,
+        when: "datetime",
+        ta: float,
+        rh: float,
+        wind_ms: float,
+        cloud_fraction: float = 0.0,
+    ) -> dict:
+        """검증 전용 — 측정 순간의 좌표·시각·기온·습도·풍속을 그대로 엔진에 넣어
+        그 조건에서의 MRT·pVPTI(개인화 전)를 예측한다. 현장 실측 검증용(2026-09-05).
+
+        SVF·GVI·재질·도로축은 그 좌표의 실제 거리뷰 공간분석(캐시)에서 온다.
+        일사는 시각·좌표로 계산, 운량은 인자(sun=0 / 해구름≈0.5)로 준다.
+        """
+        from datetime import timezone as _tz
+        from vpti_core.vpti import (
+            WeatherContext as _WC, compute_vpti_thermal as _cvt,
+        )
+        from vpti_core.solar import estimate_solar as _es
+
+        pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+        pano = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
+        views = self._build_core_views(pano)
+        mats = self._build_core_materials(pano.material_ratios)
+        wc = _WC(temperature_c=ta, wind_speed_ms=wind_ms,
+                 wind_direction_deg=0.0, humidity_pct=rh)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=_tz.utc)
+        # 태양방향 차폐
+        direct_shade = 1.0
+        try:
+            sun = _es(clat, clon, when, cloud_fraction=cloud_fraction)
+            if sun.is_daytime:
+                from app.services.geo import sun_blocked_outdoor
+                blocked, _ = await asyncio.wait_for(
+                    sun_blocked_outdoor(clat, clon, sun.solar_azimuth_deg,
+                                        sun.solar_elevation_deg), timeout=2.0)
+                if blocked:
+                    direct_shade = 0.0
+        except Exception:  # noqa: BLE001
+            pass
+        r = _cvt(views_5=views, materials=mats, weather=wc,
+                 road_axis_deg=pano.road_axis_deg, lat=clat, lon=clon, when=when,
+                 cloud_fraction=cloud_fraction, direct_shade=direct_shade)
+        return {"lat": round(clat, 5), "lon": round(clon, 5),
+                "pvpti": round(float(r.vpti), 2), "mrt": round(float(r.mrt.tmrt), 2),
+                "svf": round(pano.svf, 3), "gvi": round(pano.gvi, 3),
+                "risk": str(r.risk_level), "shade": direct_shade,
+                "solar_elev": round(getattr(r.solar, "solar_elevation_deg", 0.0), 1)}
+
     async def compute_personalized(
         self,
         lat: float,
