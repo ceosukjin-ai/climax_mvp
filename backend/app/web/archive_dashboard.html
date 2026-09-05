@@ -164,6 +164,7 @@
         <span style="margin-left:auto">원 크기 = 표본 수</span>
       </div>
       <div class="whatif" id="whatif"><div class="empty status">상세 지도에서 격자(원)를 클릭하면 여기에 그 지점의 개선 시뮬레이션이 뜹니다.</div></div>
+      <div class="whatif" id="btli"><div class="empty status">격자(건물)를 클릭하면 외피 재질별 냉방부하 감소(BTLI)가 여기 뜹니다.</div></div>
       <details style="margin-top:10px"><summary>상위 격자 표 (평균 체감 순, 20개) — 행 클릭하면 상세 지도로</summary>
         <div style="overflow-x:auto;margin-top:8px"><table id="toptable"></table></div>
       </details>
@@ -494,6 +495,7 @@
     const box = $("#whatif");
     box.innerHTML = `<div class="empty status">${cell.lat}, ${cell.lon} 시뮬레이션 계산 중…</div>`;
     const key = getKey();
+    loadBtli(cell);
     try {
       const r = await fetch(`${API}/api/v1/archive/whatif?lat=${cell.lat}&lon=${cell.lon}&hours=${Math.max(hours, 720)}`, { headers: { "X-Field-Key": key } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -502,6 +504,45 @@
     } catch (e) { box.innerHTML = `<div class="empty status err">시뮬레이션 실패: ${e.message}</div>`; }
   }
 
+
+  // ── BTLI 건물 외피 열부하 (2026-09-05) ───────────────
+  const FACADE_OPTS = [ {key:"coolpaint",name:"차열도료"}, {key:"lowe",name:"저방사유리"}, {key:"greenwall",name:"그린월"} ];
+  async function loadBtli(cell) {
+    if (!cell) return;
+    const box = $("#btli");
+    box.innerHTML = `<div class="empty status">건물 냉방부하(BTLI) 계산 중…</div>`;
+    const key = getKey();
+    try {
+      const res = await Promise.all(FACADE_OPTS.map(o =>
+        fetch(`${API}/api/v1/archive/btli?lat=${cell.lat}&lon=${cell.lon}&material_new=${o.key}`, { headers: { "X-Field-Key": key } })
+          .then(r => r.ok ? r.json() : { ok:false })));
+      renderBtli(res, cell);
+    } catch (e) { box.innerHTML = `<div class="empty status err">BTLI 실패: ${e.message}</div>`; }
+  }
+  function renderBtli(results, cell) {
+    const box = $("#btli");
+    const ok = results.find(r => r && r.ok);
+    if (!ok) { box.innerHTML = `<h3>건물 외피 열부하 (BTLI)</h3><div class="empty status">이 지점 건물 정보를 찾지 못했습니다.</div>`; return; }
+    const b = ok.building;
+    const name = ok.building_name ? `${ok.building_name} · ` : "";
+    const areaSum = Object.values(b.facade_area_m2).reduce((a,c)=>a+c,0);
+    const rowsH = results.map(r => {
+      if (!r || !r.ok) return "";
+      const mat = r.material_new, pct = r.cooling_load_reduction_pct;
+      return `<tr>
+        <td>${mat.name}<div class="status">반사율 R${mat.R}</div></td>
+        <td style="color:var(--accent);font-weight:600">−${pct}%</td>
+        <td style="text-align:left"><span class="bar" style="width:${Math.round(pct/40*110)}px"></span></td>
+      </tr>`;
+    }).join("");
+    box.innerHTML = `<h3>건물 외피 열부하 (BTLI)</h3>
+      <div class="sub">${name}${b.structure||"구조 미상"} · ${b.floors}층 · 외피 약 ${areaSum.toLocaleString("ko-KR")}㎡ · 일반 콘크리트 대비 냉방부하 감소</div>
+      <div style="overflow-x:auto"><table>
+        <tr><th>외피 재질 교체</th><th>냉방부하</th><th style="text-align:left;min-width:120px"></th></tr>
+        ${rowsH}
+      </table></div>
+      <p class="status" style="margin:8px 0 0">감소율(%)은 재질 물성으로 정해져 층수와 무관 · 절대 절감량(kW)은 건물이 클수록 큼 · 상대 비교는 신뢰, 절대값은 참고(벽면센서 실측으로 교정 예정) · 계수 UNCONFIRMED</p>`;
+  }
 
   // ── 배치도 (실제 위치 항공사진 + 개입 위치) ───────────────
   async function loadSiteplan(cell, scn, m, w, rows) {

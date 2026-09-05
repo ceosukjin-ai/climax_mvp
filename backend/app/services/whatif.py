@@ -145,3 +145,80 @@ async def cell_whatif(archive, lat: float, lon: float, hours: int = 24 * 30) -> 
 
 def _r(v, nd: int = 1):
     return None if v is None else round(float(v), nd)
+
+
+# ===== 도시계획·재개발 What-if (2026-09-05) — 실외 축 1단계 =====
+#
+# whatif(개입 프리셋)의 일반화: 임의의 도시계획 레버를 한 격자/구역에 적용해
+# 보행자 체감(pVPTI) 변화를 설계 폭염일 기준으로 계산한다.
+#
+# 레버(설계안):
+#   d_svf        신축(+건물)→SVF↓ / 철거·저층화→SVF↑
+#   d_gvi        녹지·가로수 → GVI↑
+#   d_bvi        건물 벽면 시계 변화(참고)
+#   ground_mat   지면 재질 교체 (아스팔트→차열포장/잔디/투수블록)
+#   direct_shade 신축 차폐·가로수 그늘 (1.0=미차폐, 0.0=완전차폐)
+GROUND_PRESETS: dict[str, tuple[tuple[str, float], ...]] = {
+    "asphalt": (("asphalt", 1.0),),
+    "coolpave": (("concrete", 1.0),),           # 차열포장 ≈ 반사율 0.30
+    "grass": (("vegetation", 1.0),),            # 잔디·초지
+    "permeable": (("concrete", 0.5), ("soil", 0.5)),  # 투수블록 근사
+    "base": BASE_MATERIALS,
+}
+
+
+def plan_cell(
+    *, svf: float, gvi: float, bvi: float,
+    lat: float, lon: float, when: datetime | None = None,
+    d_svf: float = 0.0, d_gvi: float = 0.0, d_bvi: float = 0.0,
+    ground_mat: str = "base", direct_shade: float = 1.0,
+    weather: WeatherContext | None = None,
+) -> dict:
+    """한 격자의 baseline vs 도시계획안 pVPTI. DB 불필요(값 직접 주입) — 테스트·신축 가정용."""
+    when = when or datetime(datetime.now(KST).year, 8, 1, 14, 0, tzinfo=KST)
+    weather = weather or WeatherContext(**DESIGN)
+    base = _run(svf, gvi, bvi, BASE_MATERIALS, weather, lat, lon, when, 1.0)
+    mats = GROUND_PRESETS.get(ground_mat, BASE_MATERIALS)
+    plan = _run(_clip(svf + d_svf, 0.05), _clip(gvi + d_gvi), _clip(bvi + d_bvi, 0.0, 1.0),
+                mats, weather, lat, lon, when, direct_shade)
+    d = round(plan["pvpti"] - base["pvpti"], 1)
+    return {"base": base, "plan": plan, "delta": d,
+            "pct": round(d / base["pvpti"] * 100, 1) if base["pvpti"] else None}
+
+
+async def area_whatif(archive, cells: list[dict], levers: dict) -> dict:
+    """구역(격자 목록)에 같은 도시계획안을 적용해 지점별·구역평균 pVPTI Δ.
+
+    cells: [{lat, lon, svf?, gvi?, bvi?}] — svf 등 없으면 DB 격자평균에서 조회.
+    levers: {d_svf, d_gvi, d_bvi, ground_mat, direct_shade}
+    """
+    out = []
+    for c in cells:
+        svf, gvi, bvi = c.get("svf"), c.get("gvi"), c.get("bvi")
+        if svf is None and archive is not None and archive._ready:
+            lat = round(c["lat"], 4); lon = round(c["lon"], 4)
+            sql = ("SELECT AVG(svf) svf, AVG(gvi) gvi, AVG(bvi) bvi FROM measurement "
+                   "WHERE lat=:lat AND lon=:lon AND indoor=FALSE AND pvpti IS NOT NULL")
+            try:
+                async with archive._session() as s:
+                    row = (await s.execute(text(sql), {"lat": lat, "lon": lon})).mappings().first()
+                if row and row["svf"] is not None:
+                    svf, gvi, bvi = float(row["svf"]), float(row["gvi"] or 0), float(row["bvi"] or 0)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[area_whatif] 조회 실패: {}", e)
+        if svf is None:
+            continue
+        r = plan_cell(svf=svf, gvi=gvi or 0.0, bvi=bvi or 0.0, lat=c["lat"], lon=c["lon"],
+                      d_svf=levers.get("d_svf", 0.0), d_gvi=levers.get("d_gvi", 0.0),
+                      d_bvi=levers.get("d_bvi", 0.0), ground_mat=levers.get("ground_mat", "base"),
+                      direct_shade=levers.get("direct_shade", 1.0))
+        out.append({"lat": c["lat"], "lon": c["lon"],
+                    "base_pvpti": r["base"]["pvpti"], "plan_pvpti": r["plan"]["pvpti"],
+                    "delta": r["delta"]})
+    if not out:
+        return {"ok": False, "reason": "적용할 격자 없음(공간지표 부재)"}
+    deltas = [o["delta"] for o in out]
+    return {"ok": True, "n": len(out), "levers": levers,
+            "area_mean_delta": round(sum(deltas) / len(deltas), 2),
+            "area_max_delta": round(min(deltas), 2),  # 가장 크게 내려간 곳
+            "cells": out}

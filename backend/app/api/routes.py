@@ -1509,6 +1509,61 @@ async def archive_siteplan(
     return await siteplan(getattr(request.app.state, "archive", None), lat, lon, level, size)
 
 
+@router.get("/archive/urban_whatif", include_in_schema=False)
+async def archive_urban_whatif(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    d_svf: float = Query(0.0, ge=-1, le=1),
+    d_gvi: float = Query(0.0, ge=-1, le=1),
+    d_bvi: float = Query(0.0, ge=-1, le=1),
+    ground_mat: str = Query("base"),
+    direct_shade: float = Query(1.0, ge=0, le=1),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """도시계획 재개발 what-if — 건물/지면재질/녹지 변경 시 보행자 체감 변화 (대표 전용, 2026-09-05)."""
+    _require_field_key(x_field_key)
+    from app.services.whatif import area_whatif
+    levers = {"d_svf": d_svf, "d_gvi": d_gvi, "d_bvi": d_bvi,
+              "ground_mat": ground_mat, "direct_shade": direct_shade}
+    return await area_whatif(getattr(request.app.state, "archive", None),
+                             [{"lat": lat, "lon": lon}], levers)
+
+
+@router.get("/archive/btli", include_in_schema=False)
+async def archive_btli(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    material_new: str = Query("coolpaint"),
+    footprint_m2: float = Query(600.0, ge=30, le=100000),
+    floors: int | None = Query(None, ge=1, le=200),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """BTLI 외피 열부하 what-if — 외피 재질 교체 시 냉방부하 delta% (대표 전용, 2026-09-05).
+
+    floors 미지정 시 건축물대장(building_risk)에서 자동 조회."""
+    _require_field_key(x_field_key)
+    from app.services.btli import facade_load, FACADE_PRESETS
+    if material_new not in FACADE_PRESETS:
+        return {"ok": False, "reason": f"미등록 재질: {material_new}"}
+    structure = None
+    bname = None
+    if floors is None:
+        try:
+            from app.services import building as _b
+            br = await _b.building_risk(lat, lon)
+            if br is not None:
+                floors = br.floors or floors
+                structure = br.structure
+                bname = br.building_name
+        except Exception:  # noqa: BLE001
+            pass
+    floors = floors or 15
+    r = facade_load(lat=lat, lon=lon, footprint_area_m2=footprint_m2,
+                    floors=floors, structure=structure, material_new=material_new)
+    r["building_name"] = bname
+    return r
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""
