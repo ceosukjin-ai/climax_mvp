@@ -1,16 +1,26 @@
 """
 BTLI — 건물 외부(외피) 열부하 · 냉방부하 What-if (2026-09-05, 도시계획/신축 검토용)
+v2 (2026-09-05): 냉방부하 감소율을 **건물 기하·방위·구조**에 따라 달라지게 물리화.
 
-"이 건물 외피를 차열도료/저방사유리/그린월로 바꾸면 냉방부하가 몇 % 주나?"
+"이 건물 외피를 차열도료/저방사외피/그린월로 바꾸면 냉방부하가 몇 % 주나?"
 
-원리(1차 물리 모델 — 정밀 BES 아님, 상대비교용):
-  면별 입사일사 I_face = DNI·cos(입사각) + DHI·F_sky_vert + GHI·R_ground·F_grd
-  외피 흡수    Q_abs  = (1 − R_wall)·I_face·A_face          (R_wall = materials DB 반사율)
-  실내 유입    Q_in   = Q_abs·f_cond(구조)                  (구조 U값 근사)
-  냉방부하 Δ% = (Q_in_base − Q_in_new) / Q_cool_total × 100
+── 왜 v2인가 ──────────────────────────────────────────────
+v1은 감소율 = (재질 반사율비) × 고정 외피비중(0.45) 이라, 건물 크기·층수·방위·구조가
+전혀 안 들어가 **모든 건물이 같은 %** 로 나왔다(차열도료면 무조건 −35%). 또 불투명 벽이
+햇빛을 실내로 거의 안 통과시키는 물리를 무시해 과대평가됐다.
 
-⚠️ 계수(f_cond, F_sky_vert, R_ground, 재질 프리셋 반사율, Q_cool 비외피 상수)는
-   영업비밀/UNCONFIRMED — 문헌 보수값. 실측(자작 벽면센서 MLX90614)으로 교정 예정.
+v2는 총냉방부하를 실제 항으로 나눈다:
+  Q_total = 외피 태양취득(sol-air) + 외피 관류 + 내부발열 + 환기
+  · 외피 태양취득(실내 유입) = Σ (1−R)(1−evap)·I_face·A_face · (U·u_mult / h_out)
+      → 불투명 벽은 U/h_out 만큼만 실내로 (작다). 재질 R·그린월 증발산이 이 항을 줄인다.
+  · 외피 관류        = U·u_mult · A_facade · ΔT       (저방사외피는 u_mult<1 로 이 항도 감소)
+  · 내부발열         = q_int · A_floor                (연면적 = 대지×층수)
+  · 환기             = q_vent · A_floor
+  냉방부하 Δ% = (Q_env_base − Q_env_new) / Q_total_base × 100
+  → 외피/연면적 비율(층수·모양)·방위(태양)·구조(U)에 따라 건물마다 달라진다.
+
+⚠️ 계수(U_wall, q_int, q_vent, ΔT, h_out, 재질 R·evap·u_mult)는 전부 UNCONFIRMED 문헌
+   보수값 — 자작 벽면센서(MLX90614) 실측으로 교정 예정. 상대비교용, 절대 kWh는 참고.
 """
 from __future__ import annotations
 
@@ -18,85 +28,79 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 
-from vpti_core.materials import get_properties
 from vpti_core.solar import estimate_solar
 
 KST = timezone(timedelta(hours=9))
-
-# 4방위 법선(0=북, 시계방향). 판상형은 대개 남/북 또는 동/서지만
-# 일반화를 위해 4면을 모두 계산하고 면적 배분으로 가중한다.
 ORIENTS = {"북": 0.0, "동": 90.0, "남": 180.0, "서": 270.0}
 
-# ⚠️ UNCONFIRMED — 구조별 외피 관류 근사(흡수열 중 실내로 드는 비율).
-#   철근콘크리트(단열/축열 큼)일수록 작다. indoor._damping 방향과 정합.
-F_COND: dict[str, float] = {
-    "철근콘크리트": 0.06, "철골철근콘크리트": 0.06, "철골콘크리트": 0.07,
-    "콘크리트": 0.08, "벽돌": 0.11, "조적": 0.13, "블록": 0.13,
-    "목": 0.10, "시멘트": 0.12, "기타": 0.10, "unknown": 0.10,
-}
+# ── 외피 열관류율 U [W/m²K] — 구조별 근사(단열 포함). 부분매칭으로 조회. ⚠️UNCONFIRMED
+U_WALL_TABLE: tuple[tuple[str, float], ...] = (
+    ("철골철근콘크리트", 0.45), ("철근콘크리트", 0.45), ("철골콘크리트", 0.50),
+    ("철골", 0.55), ("콘크리트", 0.70), ("벽돌", 1.20), ("조적", 1.50),
+    ("블록", 1.40), ("석", 1.30), ("목", 0.55), ("시멘트", 1.00),
+)
+U_WALL_DEFAULT = 0.80
 
-# ⚠️ UNCONFIRMED — 수직면 산란 천공시계 ≈ 0.5, 지면반사 시계 ≈ 0.5, 지면 알베도 ≈ 0.2
-F_SKY_VERT = 0.5
-F_GRD_VERT = 0.5
-R_GROUND = 0.2
+def _u_wall(structure: str | None) -> float:
+    s = structure or ""
+    for key, u in U_WALL_TABLE:
+        if key in s:
+            return u
+    return U_WALL_DEFAULT
 
-# 외피 재질 프리셋 — reflectance(R)로 표현. 그린월은 차양+증발산 추가항.
-#   일반콘크리트 R0.30(baseline), 차열도료 R0.85(cool wall), 저방사유리 SHGC↓를 유효 R로,
-#   그린월 vegetation R0.20 + 잠열냉각(evap) 계수.
+# ── 총부하 항 계수 ⚠️UNCONFIRMED (문헌 보수값)
+H_OUT = 20.0        # 외표면 열전달계수 [W/m²K] — sol-air 실내유입 비율 = U/h_out
+DT_COND = 6.0       # 설계 냉방 실내외 온도차 [K] (관류)
+Q_INT_WM2 = 12.0    # 내부발열 [W/m² 연면적] (주거 근사)
+Q_VENT_WM2 = 8.0    # 환기·침기 현열 [W/m² 연면적]
+
+F_SKY_VERT = 0.5    # 수직면 산란 천공시계
+F_GRD_VERT = 0.5    # 수직면 지면반사 시계
+R_GROUND = 0.2      # 지면 알베도
+
+
 @dataclass(frozen=True)
 class FacadeMaterial:
     key: str
     name: str
     reflectance: float
-    evap_cool: float = 0.0   # 그린월 증발산 냉각(흡수열 추가 상쇄 비율) — UNCONFIRMED
+    evap_cool: float = 0.0   # 그린월 증발산 냉각(태양취득 추가 상쇄 비율)
+    u_mult: float = 1.0      # 외피 U 배율(저방사·단열 개선이면 <1)
     note: str = ""
 
 
 FACADE_PRESETS: dict[str, FacadeMaterial] = {
     "concrete": FacadeMaterial("concrete", "일반 콘크리트/도장", 0.30, note="기준"),
     "coolpaint": FacadeMaterial("coolpaint", "차열도료(쿨월)", 0.85,
-                                note="고반사 도료, R0.30→0.85"),
-    "lowe": FacadeMaterial("lowe", "저방사(Low-E) 유리", 0.55,
-                           note="SHGC↓를 유효 반사율로 근사"),
-    "greenwall": FacadeMaterial("greenwall", "그린월(벽면녹화)", 0.20, evap_cool=0.35,
-                                note="차양+증발산 냉각. 흡수열의 35% 추가 상쇄(UNCONFIRMED)"),
+                                note="고반사 도료 R0.30→0.85 (불투명벽 태양취득만 감소)"),
+    "lowe": FacadeMaterial("lowe", "저방사·단열 외피", 0.55, u_mult=0.6,
+                           note="저방사+단열보강 — 태양취득·관류 동시 감소"),
+    "greenwall": FacadeMaterial("greenwall", "그린월(벽면녹화)", 0.20, evap_cool=0.5, u_mult=0.85,
+                                note="차양+증발산 냉각, 약간의 단열"),
 }
 
 
 def _incidence_cos(sun_az: float, sun_el: float, wall_normal_deg: float) -> float:
-    """수직 외피면에 대한 직달 입사각 cos. 음수(뒷면)면 0."""
     if sun_el <= 0:
         return 0.0
     daz = math.radians(sun_az - wall_normal_deg)
-    c = math.cos(math.radians(sun_el)) * math.cos(daz)
-    return max(0.0, c)
+    return max(0.0, math.cos(math.radians(sun_el)) * math.cos(daz))
 
 
 def _face_irradiance(sun, wall_normal_deg: float) -> float:
-    """수직면 입사일사 W/m² = 직달 + 산란 + 지면반사."""
     direct = sun.dni * _incidence_cos(sun.solar_azimuth_deg, sun.solar_elevation_deg, wall_normal_deg)
     diffuse = sun.dhi * F_SKY_VERT
     ground = sun.ghi * R_GROUND * F_GRD_VERT
     return direct + diffuse + ground
 
 
-def _facade_areas(footprint_area_m2: float, floors: int,
-                  floor_height_m: float = 2.8,
-                  is_slab: bool = True, slab_long_deg: float = 180.0) -> dict[str, float]:
-    """건물 대략 치수 → 4방위 외피면적 [m²].
-    footprint을 정사각/직사각 근사. 판상형이면 장축(2면)에 면적 집중.
-    """
+def _facade_areas(footprint_area_m2: float, floors: int, floor_height_m: float = 2.8,
+                  is_slab: bool = True) -> dict[str, float]:
     height = max(1, floors) * floor_height_m
     side = math.sqrt(max(footprint_area_m2, 1.0))
-    if is_slab:
-        long_side, short_side = side * 1.6, side / 1.6   # 장단축비 1.6 근사
-    else:
-        long_side = short_side = side
-    # 장축 외피(2면) 법선 = slab_long_deg ± 90 → 그 법선 방위에 장축길이×높이
-    # 단순화: 남/북에 장축, 동/서에 단축 (slab_long_deg 남향 가정 시). 회전은 배분만 근사.
-    A_long = long_side * height
-    A_short = short_side * height
-    return {"남": A_long, "북": A_long, "동": A_short, "서": A_short}
+    long_side, short_side = (side * 1.6, side / 1.6) if is_slab else (side, side)
+    return {"남": long_side * height, "북": long_side * height,
+            "동": short_side * height, "서": short_side * height}
 
 
 def facade_load(
@@ -107,61 +111,75 @@ def facade_load(
     structure: str | None = None,
     material_base: str = "concrete",
     material_new: str = "coolpaint",
-    hours: tuple[int, ...] = (10, 12, 14, 16, 18),  # 여름 주간 대표 시각(KST)
+    hours: tuple[int, ...] = (10, 12, 14, 16, 18),
     month: int = 8,
     floor_height_m: float = 2.8,
     is_slab: bool = True,
-    q_cool_nonfacade_ratio: float = 0.55,  # ⚠️UNCONFIRMED 총냉방부하 중 비-외피(관류·환기·내부발열) 비중
 ) -> dict:
-    """외피 재질 baseline vs new → 시간대 합산 외피취득 열부하와 냉방부하 Δ%."""
-    fcond = F_COND.get((structure or "unknown"), F_COND["unknown"])
+    u_wall = _u_wall(structure)
     areas = _facade_areas(footprint_area_m2, floors, floor_height_m, is_slab)
+    a_facade = sum(areas.values())
+    a_roof = footprint_area_m2                      # 지붕(수평) — 저층일수록 외피 비중 큼
+    a_floor = footprint_area_m2 * max(1, floors)
     base = FACADE_PRESETS[material_base]
     new = FACADE_PRESETS[material_new]
 
-    def q_in_at(hour: int, mat: FacadeMaterial) -> float:
+    # 건물·연면적에만 의존하는 상시 부하 (재질 무관)
+    q_internal = Q_INT_WM2 * a_floor
+    q_vent = Q_VENT_WM2 * a_floor
+
+    def envelope(mat: FacadeMaterial, hour: int) -> tuple[float, float]:
+        """(태양취득 실내유입 W, 관류 W) — 관류는 시각 무관이라 대표로 한 번만 쓴다."""
         when = datetime(datetime.now(KST).year, month, 1, hour, 0, tzinfo=KST)
-        sun = estimate_solar(lat, lon, when, cloud_fraction=0.0)  # 설계 폭염일=맑음
-        if not sun.is_daytime:
-            return 0.0
-        total = 0.0
-        for name, normal in ORIENTS.items():
-            I = _face_irradiance(sun, normal)
-            A = areas.get(name, 0.0)
-            q_abs = (1.0 - mat.reflectance) * I * A
-            q_abs *= (1.0 - mat.evap_cool)       # 그린월 증발산 상쇄
-            total += q_abs * fcond               # 실내 유입
-        return total  # W
+        sun = estimate_solar(lat, lon, when, cloud_fraction=0.0)
+        u = u_wall * mat.u_mult
+        solar_in = 0.0
+        if sun.is_daytime:
+            for name, normal in ORIENTS.items():
+                I = _face_irradiance(sun, normal)
+                solar_in += (1.0 - mat.reflectance) * (1.0 - mat.evap_cool) * I * areas[name]
+            solar_in += (1.0 - mat.reflectance) * (1.0 - mat.evap_cool) * sun.ghi * a_roof
+            solar_in *= (u / H_OUT)          # 불투명 외피: 흡수열 중 실내로 드는 비율
+        cond = u * (a_facade + a_roof) * DT_COND
+        return solar_in, cond
 
     by_hour = []
-    q_base_sum = q_new_sum = 0.0
+    qenv_base_sum = qenv_new_sum = 0.0
     for h in hours:
-        qb = q_in_at(h, base); qn = q_in_at(h, new)
-        q_base_sum += qb; q_new_sum += qn
-        by_hour.append({"hour": h, "q_in_base_w": round(qb), "q_in_new_w": round(qn),
+        sb, cb = envelope(base, h); sn, cn = envelope(new, h)
+        qb = sb + cb; qn = sn + cn
+        qenv_base_sum += qb; qenv_new_sum += qn
+        q_total_h = qb + q_internal + q_vent
+        by_hour.append({"hour": h, "q_env_base_w": round(qb), "q_env_new_w": round(qn),
                         "delta_w": round(qb - qn),
-                        "pct": round((qb - qn) / qb * 100, 1) if qb else None})
+                        "pct": round((qb - qn) / q_total_h * 100, 1) if q_total_h else None})
 
-    # 냉방부하 Δ% = 외피취득 감소 / 총냉방부하. 총 = 외피취득_base / (1 − 비외피비중)
-    q_total_base = q_base_sum / max(1e-6, (1.0 - q_cool_nonfacade_ratio))
-    cooling_reduction_pct = round((q_base_sum - q_new_sum) / q_total_base * 100, 1) if q_total_base else None
+    n = len(hours)
+    q_env_base = qenv_base_sum / n
+    q_env_new = qenv_new_sum / n
+    q_total_base = q_env_base + q_internal + q_vent
+    cooling_reduction_pct = round((q_env_base - q_env_new) / q_total_base * 100, 1) if q_total_base else None
+    envelope_share_pct = round(q_env_base / q_total_base * 100, 1) if q_total_base else None
 
     return {
         "ok": True, "lat": lat, "lon": lon,
         "building": {"footprint_m2": footprint_area_m2, "floors": floors,
                      "height_m": round(max(1, floors) * floor_height_m, 1),
-                     "structure": structure or "미상", "f_cond": fcond,
-                     "facade_area_m2": {k: round(v) for k, v in areas.items()}},
+                     "structure": structure or "미상", "u_wall": u_wall,
+                     "floor_area_m2": round(a_floor), "facade_area_m2": {k: round(v) for k, v in areas.items()},
+                     "facade_total_m2": round(a_facade), "roof_m2": round(a_roof),
+                     "envelope_share_pct": envelope_share_pct},
         "material_base": {"key": base.key, "name": base.name, "R": base.reflectance},
         "material_new": {"key": new.key, "name": new.name, "R": new.reflectance,
-                         "evap_cool": new.evap_cool, "note": new.note},
+                         "evap_cool": new.evap_cool, "u_mult": new.u_mult, "note": new.note},
         "by_hour": by_hour,
-        "envelope_gain_base_wsum": round(q_base_sum),
-        "envelope_gain_new_wsum": round(q_new_sum),
+        "load_base_w": round(q_total_base), "envelope_base_w": round(q_env_base),
+        "internal_w": round(q_internal), "vent_w": round(q_vent),
         "cooling_load_reduction_pct": cooling_reduction_pct,
         "assumptions": {
-            "q_cool_nonfacade_ratio": q_cool_nonfacade_ratio,
-            "F_sky_vert": F_SKY_VERT, "R_ground": R_GROUND,
-            "note": "1차 물리 근사. 상대비교(재질 A vs B) 신뢰, 절대 kWh는 참고. 계수 UNCONFIRMED.",
+            "H_OUT": H_OUT, "DT_COND": DT_COND, "Q_INT_WM2": Q_INT_WM2, "Q_VENT_WM2": Q_VENT_WM2,
+            "note": ("v2 물리모델: 총부하=외피(태양+관류)+내부발열+환기. 외피/연면적 비율·방위·구조로 "
+                     "건물마다 달라짐. 불투명벽은 태양취득이 작아 차열도료 효과는 지붕·유리보다 작다. "
+                     "상대비교 신뢰·절대값 참고, 계수 UNCONFIRMED."),
         },
     }

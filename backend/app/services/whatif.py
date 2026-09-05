@@ -87,40 +87,50 @@ def _run(svf: float, gvi: float, bvi: float, mats, weather: WeatherContext,
             "risk": str(r.risk_level), "svf": round(svf, 2), "gvi": round(gvi, 2)}
 
 
-async def cell_whatif(archive, lat: float, lon: float, hours: int = 24 * 30) -> dict:
-    """격자 하나의 기준선 + 개입 시나리오. archive 는 Archive 인스턴스."""
-    if archive is None or not archive._ready:
-        return {"ok": False, "reason": "archive 미준비"}
+async def cell_whatif(archive, lat: float, lon: float, hours: int = 24 * 30,
+                      orchestrator=None) -> dict:
+    """격자 하나의 기준선 + 개입 시나리오.
+    측정이 없는 격자는 orchestrator 로 그 지점 SVF/GVI/BVI 를 즉석 계산해 **항상** 결과를 낸다(2026-09-05)."""
     lat = round(lat, 4); lon = round(lon, 4)
-    sql = """
-    SELECT COUNT(*) n, AVG(svf) svf, AVG(gvi) gvi, AVG(bvi) bvi,
-           AVG(air_temp) ta, AVG(humidity) rh, AVG(wind_ms) wind,
-           AVG(pvpti) avg_pvpti, MAX(pvpti) max_pvpti, AVG(mrt) mrt
-    FROM measurement
-    WHERE lat = :lat AND lon = :lon AND indoor = FALSE AND pvpti IS NOT NULL
-      AND observed_at > NOW() - make_interval(hours => :hours)
-    """
-    try:
-        async with archive._session() as s:
-            row = (await s.execute(text(sql), {"lat": lat, "lon": lon, "hours": hours})).mappings().first()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[whatif] 조회 실패: {}: {}", type(e).__name__, e)
-        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
-    if not row or not row["n"] or row["svf"] is None:
-        return {"ok": False, "reason": "이 격자에 공간지표가 있는 측정이 없음"}
+    row = None
+    if archive is not None and getattr(archive, "_ready", False):
+        sql = """
+        SELECT COUNT(*) n, AVG(svf) svf, AVG(gvi) gvi, AVG(bvi) bvi,
+               AVG(air_temp) ta, AVG(humidity) rh, AVG(wind_ms) wind,
+               AVG(pvpti) avg_pvpti, MAX(pvpti) max_pvpti, AVG(mrt) mrt
+        FROM measurement
+        WHERE lat = :lat AND lon = :lon AND indoor = FALSE AND pvpti IS NOT NULL
+          AND observed_at > NOW() - make_interval(hours => :hours)
+        """
+        try:
+            async with archive._session() as s:
+                row = (await s.execute(text(sql), {"lat": lat, "lon": lon, "hours": hours})).mappings().first()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[whatif] 조회 실패: {}: {}", type(e).__name__, e)
+            row = None
 
-    svf, gvi, bvi = float(row["svf"]), float(row["gvi"] or 0), float(row["bvi"] or 0)
-    measured = {"n": int(row["n"]), "svf": round(svf, 2), "gvi": round(gvi, 2), "bvi": round(bvi, 2),
-                "air_temp": _r(row["ta"]), "humidity": _r(row["rh"]), "wind_ms": _r(row["wind"]),
-                "avg_pvpti": _r(row["avg_pvpti"]), "max_pvpti": _r(row["max_pvpti"]), "mrt": _r(row["mrt"])}
+    if row and row["n"] and row["svf"] is not None:
+        svf, gvi, bvi = float(row["svf"]), float(row["gvi"] or 0), float(row["bvi"] or 0)
+        measured = {"n": int(row["n"]), "svf": round(svf, 2), "gvi": round(gvi, 2), "bvi": round(bvi, 2),
+                    "air_temp": _r(row["ta"]), "humidity": _r(row["rh"]), "wind_ms": _r(row["wind"]),
+                    "avg_pvpti": _r(row["avg_pvpti"]), "max_pvpti": _r(row["max_pvpti"]), "mrt": _r(row["mrt"]),
+                    "source": "측정"}
+        w_meas = WeatherContext(temperature_c=float(row["ta"] or DESIGN["temperature_c"]),
+                                wind_speed_ms=float(row["wind"] or DESIGN["wind_speed_ms"]),
+                                wind_direction_deg=180.0,
+                                humidity_pct=float(row["rh"] or DESIGN["humidity_pct"]))
+    else:
+        sp = await orchestrator.spatial_at(lat, lon) if orchestrator is not None else None
+        if not sp:
+            return {"ok": False, "reason": "이 지점의 공간지표(SVF)를 구할 수 없음"}
+        svf, gvi, bvi = sp["svf"], sp["gvi"], sp["bvi"]
+        measured = {"n": 0, "svf": round(svf, 2), "gvi": round(gvi, 2), "bvi": round(bvi, 2),
+                    "air_temp": None, "humidity": None, "wind_ms": None,
+                    "avg_pvpti": None, "max_pvpti": None, "mrt": None, "source": "거리뷰 공간분석"}
+        w_meas = WeatherContext(**DESIGN)
 
-    # 설계 폭염일: 올해 8월 1일 14:00 KST (태양고도 계산용 — 연도는 결과에 거의 영향 없음)
     when = datetime(datetime.now(KST).year, 8, 1, 14, 0, tzinfo=KST)
     w_design = WeatherContext(**DESIGN)
-    w_meas = WeatherContext(temperature_c=float(row["ta"] or DESIGN["temperature_c"]),
-                            wind_speed_ms=float(row["wind"] or DESIGN["wind_speed_ms"]),
-                            wind_direction_deg=180.0,
-                            humidity_pct=float(row["rh"] or DESIGN["humidity_pct"]))
 
     def block(weather: WeatherContext) -> dict:
         base = _run(svf, gvi, bvi, BASE_MATERIALS, weather, lat, lon, when, 1.0)

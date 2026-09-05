@@ -1441,7 +1441,8 @@ async def archive_whatif(
     """격자 개선 시뮬레이션 (대표 전용, 2026-09-05) — 가로수·그늘막·차열포장 적용 시 pVPTI 변화."""
     _require_field_key(x_field_key)
     from app.services.whatif import cell_whatif
-    return await cell_whatif(getattr(request.app.state, "archive", None), lat, lon, hours)
+    return await cell_whatif(getattr(request.app.state, "archive", None), lat, lon, hours,
+                             orchestrator=getattr(request.app.state, "orchestrator", None))
 
 
 @router.get("/archive/validate", include_in_schema=False)

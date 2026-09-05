@@ -810,6 +810,18 @@ class VPTIOrchestrator:
                 "risk": str(r.risk_level), "shade": direct_shade,
                 "solar_elev": round(getattr(r.solar, "solar_elevation_deg", 0.0), 1)}
 
+    async def spatial_at(self, lat: float, lon: float) -> dict | None:
+        """좌표의 거리뷰 공간지표(SVF·GVI·BVI) — 측정 없는 격자 what-if 폴백용 (2026-09-05)."""
+        try:
+            pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+            pano, *_rest = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
+            return {"svf": float(pano.svf), "gvi": float(pano.gvi or 0.0),
+                    "bvi": float(getattr(pano, "bvi", 0.0) or 0.0),
+                    "lat": clat, "lon": clon}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[spatial_at] 실패: {}: {}", type(e).__name__, e)
+            return None
+
     async def compute_personalized(
         self,
         lat: float,
