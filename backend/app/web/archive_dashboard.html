@@ -632,6 +632,7 @@
     const rec = best ? `<div style="background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin:6px 0 10px">
         <div style="font-size:.78rem;color:var(--accent)">추천 계획 · ${bestWhy}</div>
         <div style="font-size:1.05rem;font-weight:600;margin-top:2px">${best.name} <span style="color:var(--dim);font-weight:400;font-size:.85rem">(${COST_DESC[best.key]})</span></div>
+        <div style="font-size:1.5rem;font-weight:700;color:var(--accent);margin-top:4px">옥외 체감 &minus;${Math.abs(best.pct)}% <span style="font-size:.82rem;color:var(--dim);font-weight:400">(${best.delta}&deg;C &middot; ${base.pvpti}&deg;&rarr;${best.pvpti}&deg;)</span></div>
         <div style="font-size:.9rem;margin-top:2px">체감 ${base.pvpti}° → <b style="color:${colorFor(best.pvpti)}">${best.pvpti}°</b> (${best.delta}°, ${best.pct}%) · 비용 <b>${won(best.cost)}원</b> · 1°당 ${best.perDeg ? won(Math.round(best.perDeg)) + "원" : "–"}</div>
         <div style="margin-top:8px"><button class="btn" id="siteplan-btn" style="border-color:var(--accent);color:var(--text)">배치도 만들기 (실제 위치 · 항공사진)</button></div>
         <div id="siteplan-out"></div>
