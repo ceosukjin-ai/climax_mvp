@@ -529,19 +529,23 @@
     const rowsH = results.map(r => {
       if (!r || !r.ok) return "";
       const mat = r.material_new, pct = r.cooling_load_reduction_pct;
+      const od = (r.outdoor && r.outdoor.pct != null) ? r.outdoor.pct : null;
+      const odCell = (od == null)
+        ? '<td class="status">–</td>'
+        : `<td style="font-weight:600;color:${od>0?'#e5533c':'#2f9e5b'}">${od>0?'+':''}${od}%<div class="status" style="color:${od>0?'#e5533c':'#2f9e5b'}">${od>0?'악화':'개선'}</div></td>`;
       return `<tr>
         <td>${mat.name}<div class="status">반사율 R${mat.R}</div></td>
         <td style="color:var(--accent);font-weight:600">−${pct}%</td>
-        <td style="text-align:left"><span class="bar" style="width:${Math.round(pct/40*110)}px"></span></td>
+        ${odCell}
       </tr>`;
     }).join("");
     box.innerHTML = `<h3>건물 외피 열부하 (BTLI)</h3>
       <div class="sub">${name}${b.structure||"구조 미상"} · ${b.floors}층 · 외피 약 ${areaSum.toLocaleString("ko-KR")}㎡ · 일반 콘크리트 대비 냉방부하 감소</div>
       <div style="overflow-x:auto"><table>
-        <tr><th>외피 재질 교체</th><th>냉방부하</th><th style="text-align:left;min-width:120px"></th></tr>
+        <tr><th>외피 재질 교체</th><th>실내 냉방부하</th><th>옥외 보행자 체감</th></tr>
         ${rowsH}
       </table></div>
-      <p class="status" style="margin:8px 0 0">감소율(%)은 재질 물성으로 정해져 층수와 무관 · 절대 절감량(kW)은 건물이 클수록 큼 · 상대 비교는 신뢰, 절대값은 참고(벽면센서 실측으로 교정 예정) · 계수 UNCONFIRMED</p>`;
+      <p class="status" style="margin:8px 0 0">실내 냉방부하: 재질·건물기하로 산출(작을수록 좋음). 옥외 체감: 외피가 보행자에게 주는 영향 — 고반사(차열도료)는 벽온↓지만 햇빛을 되쏘아 <b>체감 +(악화)</b>, 그린월은 <b>−(개선)</b>. 상대비교용·계수 UNCONFIRMED(벽면센서로 교정 예정)</p>`;
   }
 
   // ── 배치도 (실제 위치 항공사진 + 개입 위치) ───────────────

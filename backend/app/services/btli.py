@@ -33,6 +33,9 @@ from vpti_core.solar import estimate_solar
 KST = timezone(timedelta(hours=9))
 ORIENTS = {"북": 0.0, "동": 90.0, "남": 180.0, "서": 270.0}
 
+# 설계 폭염일 (whatif와 동일: 부산 8월 맑은 날 14시)
+DESIGN = {"temperature_c": 33.0, "humidity_pct": 55.0, "wind_speed_ms": 1.5, "wind_direction_deg": 180.0}
+
 # ── 외피 열관류율 U [W/m²K] — 구조별 근사(단열 포함). 부분매칭으로 조회. ⚠️UNCONFIRMED
 U_WALL_TABLE: tuple[tuple[str, float], ...] = (
     ("철골철근콘크리트", 0.45), ("철근콘크리트", 0.45), ("철골콘크리트", 0.50),
@@ -66,18 +69,23 @@ class FacadeMaterial:
     reflectance: float
     evap_cool: float = 0.0   # 그린월 증발산 냉각(태양취득 추가 상쇄 비율)
     u_mult: float = 1.0      # 외피 U 배율(저방사·단열 개선이면 <1)
+    emissivity: float = 0.92 # 장파 방사율(옥외 MRT용)
     note: str = ""
 
 
 FACADE_PRESETS: dict[str, FacadeMaterial] = {
-    "concrete": FacadeMaterial("concrete", "일반 콘크리트/도장", 0.30, note="기준"),
-    "coolpaint": FacadeMaterial("coolpaint", "차열도료(쿨월)", 0.85,
+    "concrete": FacadeMaterial("concrete", "일반 콘크리트/도장", 0.30, emissivity=0.92, note="기준"),
+    "coolpaint": FacadeMaterial("coolpaint", "차열도료(쿨월)", 0.85, emissivity=0.90,
                                 note="고반사 도료 R0.30→0.85 (불투명벽 태양취득만 감소)"),
-    "lowe": FacadeMaterial("lowe", "저방사·단열 외피", 0.55, u_mult=0.6,
+    "lowe": FacadeMaterial("lowe", "저방사·단열 외피", 0.55, u_mult=0.6, emissivity=0.84,
                            note="저방사+단열보강 — 태양취득·관류 동시 감소"),
-    "greenwall": FacadeMaterial("greenwall", "그린월(벽면녹화)", 0.20, evap_cool=0.5, u_mult=0.85,
+    "greenwall": FacadeMaterial("greenwall", "그린월(벽면녹화)", 0.20, evap_cool=0.5, u_mult=0.85, emissivity=0.98,
                                 note="차양+증발산 냉각, 약간의 단열"),
 }
+
+
+def _clip01(x: float) -> float:
+    return max(0.0, min(1.0, x))
 
 
 def _incidence_cos(sun_az: float, sun_el: float, wall_normal_deg: float) -> float:
@@ -183,3 +191,73 @@ def facade_load(
                      "상대비교 신뢰·절대값 참고, 계수 UNCONFIRMED."),
         },
     }
+
+
+# ===== 외피 재질 → 옥외 보행자 체감(pVPTI) 영향 (2026-09-06) =====
+#
+# BTLI(실내 냉방부하)의 옥외 짝. 엔진 compute_mrt 는 외피를 지면과 한 덩어리로 처리하므로
+# 외피 재질을 바꿔도 옥외 MRT가 안 변한다. 여기서 **별도 물리 항**으로 그 델타를 얹는다
+# (엔진 기본 동작·라이브 앱은 불변). 두 상반 효과를 모두 반영:
+#   · 반사 단파: 고반사 외피(차열도료)는 햇빛을 보행자에게 더 되쏨 → 체감 ↑ (역효과)
+#   · 장파 복사: 고반사 외피는 벽면온도 ↓ → 장파 열복사 ↓ → 체감 ↓
+# 순효과 = 둘의 합. 그린월은 증발산·저반사로 대체로 체감 ↓.
+# ⚠️ 계수 UNCONFIRMED (벽 저장율 0.10, 건물시계=BVI 근사 등) — 실측으로 교정 대상.
+def facade_outdoor_delta(*, lat: float, lon: float, svf: float, gvi: float, bvi: float,
+                         material_new: str, material_base: str = "concrete",
+                         hour: int = 14, month: int = 8, weather=None) -> dict:
+    from vpti_core.mrt import (sky_emissivity as _skye, convective_coefficient as _hc,
+                               STEFAN_BOLTZMANN as _SB, KELVIN as _K)
+    from vpti_core.comfort import compute_comfort as _cc
+    from vpti_core.config import DEFAULT_CONFIG as _CFG
+    from vpti_core.vpti import compute_vpti_thermal as _cvt, WeatherContext as _WC
+    from vpti_core.vsi import ViewSegmentation as _VS
+    from vpti_core.smti import MaterialFraction as _MF
+    w = weather or _WC(**DESIGN)
+    when = datetime(datetime.now(KST).year, month, 1, hour, 0, tzinfo=KST)
+    g = _clip01(gvi); b = max(0.0, min(1.0 - g, bvi))
+    views = [_VS(direction="up", sky_ratio=_clip01(svf), vegetation_ratio=0.0, building_ratio=0.0)] + \
+            [_VS(direction=d, sky_ratio=0.0, vegetation_ratio=g, building_ratio=b)
+             for d in ("front", "back", "left", "right")]
+    mats = [_MF(material="unknown", fraction=1.0)]
+    r = _cvt(views_5=views, materials=mats, weather=w, road_axis_deg=0.0, lat=lat, lon=lon,
+             when=when, cloud_fraction=0.0, direct_shade=1.0)
+    base_mrt = float(r.mrt.tmrt); base_pvpti = float(r.vpti)
+    sun = estimate_solar(lat, lon, when, cloud_fraction=0.0)
+    I_face = sum(_face_irradiance(sun, n) for n in ORIENTS.values()) / 4.0
+    eps_sky = _skye(w.temperature_c, w.humidity_pct, sun.cloud_fraction, _CFG.mrt)
+    hc = _hc(0.5, _CFG.mrt)
+    a_k, eps_p = _CFG.mrt.a_k, _CFG.mrt.eps_p
+    bvic = max(0.0, min(1.0, bvi))
+
+    def facade_temp(mat: "FacadeMaterial") -> float:
+        absb = (1.0 - mat.reflectance) * (1.0 - mat.evap_cool) * I_face
+        avail = absb * (1.0 - 0.10)   # 벽 저장 10% (UNCONFIRMED)
+        l_down = _SB * (w.temperature_c + _K) ** 4 * (0.5 * eps_sky + 0.5 * _CFG.mrt.env_emissivity)
+        eps = mat.emissivity; T = w.temperature_c
+        for _ in range(40):
+            Tk = T + _K
+            fx = avail + eps * (l_down - _SB * Tk ** 4) - hc * (T - w.temperature_c)
+            fp = -4.0 * eps * _SB * Tk ** 3 - hc
+            T -= fx / fp
+            if abs(fx / fp) < 1e-4:
+                break
+        return T
+
+    def facade_flux(mat: "FacadeMaterial"):
+        Tf = facade_temp(mat)
+        sw = a_k * bvic * mat.reflectance * I_face          # 반사 단파(건물시계 비례)
+        lw = eps_p * bvic * _SB * (Tf + _K) ** 4            # 장파
+        return sw + lw, Tf
+
+    fb, Tb = facade_flux(FACADE_PRESETS[material_base])
+    fn, Tn = facade_flux(FACADE_PRESETS[material_new])
+    tmrt_new = ((base_mrt + _K) ** 4 + (fn - fb) / (eps_p * _SB)) ** 0.25 - _K
+    dmrt = tmrt_new - base_mrt
+    season = w.season(_CFG)
+    newc = _cc(w.temperature_c, base_mrt + dmrt, r.pedestrian_wind_ms, w.humidity_pct, season, _CFG.comfort)
+    new_pvpti = float(newc.value)
+    d = round(new_pvpti - base_pvpti, 1)
+    return {"base_pvpti": round(base_pvpti, 1), "new_pvpti": round(new_pvpti, 1),
+            "delta": d, "pct": round(d / base_pvpti * 100, 1) if base_pvpti else None,
+            "dmrt": round(dmrt, 2),
+            "facade_temp_base": round(Tb, 1), "facade_temp_new": round(Tn, 1)}

@@ -1562,6 +1562,20 @@ async def archive_btli(
     r = facade_load(lat=lat, lon=lon, footprint_area_m2=footprint_m2,
                     floors=floors, structure=structure, material_new=material_new)
     r["building_name"] = bname
+    # 옥외 짝: 외피 재질 → 보행자 체감(pVPTI) 영향 (그 지점 SVF/GVI/BVI 필요)
+    try:
+        from app.services.btli import facade_outdoor_delta
+        orch = getattr(request.app.state, "orchestrator", None)
+        sp = await orch.spatial_at(lat, lon) if orch is not None else None
+        if sp:
+            r["outdoor"] = facade_outdoor_delta(
+                lat=lat, lon=lon, svf=sp["svf"], gvi=sp["gvi"], bvi=sp["bvi"],
+                material_new=material_new)
+            r["outdoor"]["svf"] = round(sp["svf"], 2); r["outdoor"]["bvi"] = round(sp["bvi"], 2)
+        else:
+            r["outdoor"] = {"ok": False, "reason": "이 지점 SVF 없음"}
+    except Exception as e:  # noqa: BLE001
+        r["outdoor"] = {"ok": False, "reason": f"{type(e).__name__}: {e}"}
     return r
 
 
