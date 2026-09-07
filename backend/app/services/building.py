@@ -51,6 +51,12 @@ class BuildingRisk:
     score: int                 # 취약 점수 (0~7)
     level: str                 # low / mid / high
     reasons: list[str]         # 판정 근거 (화면 표시용)
+    # ── 풍속 물리(거칠기) 산출용 형태값 (2026-09-07) ──
+    height_m: float | None = None      # 건물 높이(heit) or 층수×층고
+    cov_ratio: float | None = None     # 건폐율 λp (bcRat/100 or archArea/platArea)
+    plat_area_m2: float | None = None  # 대지면적
+    arch_area_m2: float | None = None  # 건축면적(footprint)
+    frontal_ratio: float | None = None # 정면적밀도 λf (기하 근사)
 
 
 async def building_risk(lat: float, lon: float) -> BuildingRisk | None:
@@ -323,6 +329,28 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
     purpose = (top.get("mainPurpsCdNm") or "").strip() or None
     name = (top.get("bldNm") or "").strip() or None
 
+    # ── ③-b 풍속 물리(거칠기)용 형태값 추출 (2026-09-07) ──
+    def _f(key: str) -> float | None:
+        try:
+            v = float(str(top.get(key) or "").strip())
+            return v if v > 0 else None
+        except (TypeError, ValueError):
+            return None
+    heit = _f("heit")                       # 건축물대장 높이 [m]
+    plat_area = _f("platArea")              # 대지면적
+    arch_area = _f("archArea")              # 건축면적(footprint)
+    bc_rat = _f("bcRat")                    # 건폐율 [%]
+    height_m = heit if heit else (float(floors) * 3.3 if floors else None)
+    cov_ratio = (bc_rat / 100.0 if bc_rat else
+                 (arch_area / plat_area if (arch_area and plat_area) else None))
+    if cov_ratio is not None:
+        cov_ratio = min(max(cov_ratio, 0.0), 0.95)
+    # λf 정면적밀도 ≈ (건물 정면폭 √archArea × 높이) / 대지면적 — 단일필지 기하 근사
+    frontal_ratio = None
+    if arch_area and plat_area and height_m:
+        import math as _m
+        frontal_ratio = min((_m.sqrt(arch_area) * height_m) / plat_area, 0.9)
+
     # ── ③ 취약 점수 (v1 heuristic) ──
     score = 0
     reasons: list[str] = []
@@ -351,6 +379,8 @@ async def _lookup(lat: float, lon: float) -> BuildingRisk | None:
         address=address, building_name=name, built_year=built_year,
         floors=floors, structure=structure, roof=roof, purpose=purpose,
         score=score, level=level, reasons=reasons,
+        height_m=height_m, cov_ratio=cov_ratio,
+        plat_area_m2=plat_area, arch_area_m2=arch_area, frontal_ratio=frontal_ratio,
     )
 
 

@@ -1579,6 +1579,74 @@ async def archive_btli(
     return r
 
 
+@router.get("/archive/wind_compare", include_in_schema=False)
+async def archive_wind_compare(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    wind_ms: float = Query(3.0, ge=0.0, le=40.0),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """보행자 풍속 병기 — 지금 앱 방식(app.core.pwi, 고정지수 0.30) vs
+    물리 방식(Macdonald 거칠기 + 로그분포 + Cionco 캐노피 감쇠).
+
+    건물 형태(높이·건폐율 λp·정면밀도 λf)는 건축물대장(building_risk)에서 자동조회,
+    λf 결측 시 거리영상 BVI 로 대리. 실측 풍속계 교정 전까지 물리는 '병기' 참고용.
+    """
+    _require_field_key(x_field_key)
+    orch = getattr(request.app.state, "orchestrator", None)
+    sp = await orch.spatial_at(lat, lon) if orch is not None else None
+    if not sp:
+        return {"ok": False, "reason": "이 지점 SVF/BVI 없음(거리뷰 커버리지 밖)"}
+    svf, bvi, gvi = sp["svf"], sp["bvi"], sp.get("gvi", 0.0)
+
+    # ── 지금 앱 방식 ──
+    from app.core.pwi import compute_pwi as _pwi_now, WindCondition as _WC
+    now = _pwi_now(_WC(speed_ms=wind_ms, direction_deg=270.0, temperature_c=28.0),
+                   svf=svf, bvi=bvi)
+
+    # ── 건물 형태 자동조회 ──
+    height_m = lam_p = lam_f = None
+    bname = None
+    lf_src = "건축물대장(기하)"
+    try:
+        from app.services import building as _b
+        br = await _b.building_risk(lat, lon)
+        if br is not None:
+            bname = br.building_name
+            height_m = br.height_m
+            lam_p = br.cov_ratio
+            lam_f = br.frontal_ratio
+    except Exception:  # noqa: BLE001
+        pass
+    if lam_f is None:               # 건축물대장 기하 결측 → BVI 대리
+        lam_f = min(max(bvi, 0.02), 0.9); lf_src = "BVI 대리"
+    if lam_p is None:
+        lam_p = min(max(1.0 - svf, 0.05), 0.9)  # 개방도 역수 근사
+
+    # ── 물리 방식 ──
+    from vpti_core.pwi_physics import pedestrian_wind_physics
+    phy = pedestrian_wind_physics(wind_ms, lambda_p=lam_p, lambda_f=lam_f, height_m=height_m)
+
+    u_now = now.pedestrian_wind_speed_ms
+    u_phy = phy.pedestrian_wind_speed_ms
+    return {
+        "ok": True, "lat": lat, "lon": lon, "wind_ref_10m_ms": wind_ms,
+        "building_name": bname,
+        "spatial": {"svf": round(svf, 3), "bvi": round(bvi, 3), "gvi": round(gvi, 3)},
+        "morphology": {"height_m": phy.height_m, "lambda_p": phy.lambda_p,
+                       "lambda_f": phy.lambda_f, "lambda_f_src": lf_src},
+        "now": {"u_p_ms": round(u_now, 3), "pct_of_ref": round(u_now / wind_ms * 100, 1) if wind_ms else None,
+                "profile_exponent": 0.30, "urban_reduction": round(now.urban_reduction, 3)},
+        "physics": {"u_p_ms": round(u_phy, 3), "pct_of_ref": round(u_phy / wind_ms * 100, 1) if wind_ms else None,
+                    "z0_urban_m": phy.z0_urban_m, "disp_height_m": phy.disp_height_m,
+                    "profile_exponent_equiv": phy.profile_exponent_equiv,
+                    "u_canopy_top_ms": phy.u_canopy_top_ms, "canopy_atten_a": phy.canopy_atten_a},
+        "note": ("지금 방식=고정 프로파일지수 0.30(밀도는 SVF·BVI로 약하게). "
+                 "물리 방식=건물밀도→거칠기로 프로파일 자체를 밀도에 묶음. "
+                 "절대 m/s는 참고, 밀도 상대패턴 신뢰 — 풍속계 실측으로 교정 예정."),
+    }
+
+
 @router.get("/cache/stats", summary="캐시 상태 (관리자용)")
 async def cache_stats(request: Request) -> dict:
     """현재 캐시된 panoId 수 등 모니터링 정보."""

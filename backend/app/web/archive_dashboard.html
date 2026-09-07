@@ -165,6 +165,7 @@
       </div>
       <div class="whatif" id="whatif"><div class="empty status">상세 지도에서 격자(원)를 클릭하면 여기에 그 지점의 개선 시뮬레이션이 뜹니다.</div></div>
       <div class="whatif" id="btli"><div class="empty status">격자(건물)를 클릭하면 외피 재질별 냉방부하 감소(BTLI)가 여기 뜹니다.</div></div>
+      <div class="whatif" id="wind"><div class="empty status">격자를 클릭하면 보행자 풍속(지금 방식 vs 물리 방식)이 여기 병기됩니다.</div></div>
       <details style="margin-top:10px"><summary>상위 격자 표 (평균 체감 순, 20개) — 행 클릭하면 상세 지도로</summary>
         <div style="overflow-x:auto;margin-top:8px"><table id="toptable"></table></div>
       </details>
@@ -496,6 +497,7 @@
     box.innerHTML = `<div class="empty status">${cell.lat}, ${cell.lon} 시뮬레이션 계산 중…</div>`;
     const key = getKey();
     loadBtli(cell);
+    loadWind(cell);
     try {
       const r = await fetch(`${API}/api/v1/archive/whatif?lat=${cell.lat}&lon=${cell.lon}&hours=${Math.max(hours, 720)}`, { headers: { "X-Field-Key": key } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -546,6 +548,39 @@
         ${rowsH}
       </table></div>
       <p class="status" style="margin:8px 0 0">실내 냉방부하: 재질·건물기하로 산출(작을수록 좋음). 옥외 체감: 외피가 보행자에게 주는 영향 — 고반사(차열도료)는 벽온↓지만 햇빛을 되쏘아 <b>체감 +(악화)</b>, 그린월은 <b>−(개선)</b>. 상대비교용·계수 UNCONFIRMED(벽면센서로 교정 예정)</p>`;
+  }
+
+  // ── 보행자 풍속 병기: 지금 방식 vs 물리(거칠기) 방식 (2026-09-07) ──
+  async function loadWind(cell) {
+    if (!cell) return;
+    const box = $("#wind");
+    box.innerHTML = `<div class="empty status">보행자 풍속(병기) 계산 중…</div>`;
+    const key = getKey();
+    try {
+      const r = await fetch(`${API}/api/v1/archive/wind_compare?lat=${cell.lat}&lon=${cell.lon}&wind_ms=3.0`, { headers: { "X-Field-Key": key } });
+      const res = r.ok ? await r.json() : { ok:false };
+      renderWind(res, cell);
+    } catch (e) { box.innerHTML = `<h3>보행자 풍속 (병기)</h3><div class="empty status err">풍속 병기 실패: ${e.message}</div>`; }
+  }
+  function renderWind(res, cell) {
+    const box = $("#wind");
+    if (!res || !res.ok) {
+      box.innerHTML = `<h3>보행자 풍속 (병기)</h3><div class="empty status">${(res&&res.reason)||"이 지점 정보를 찾지 못했습니다."}</div>`;
+      return;
+    }
+    const m = res.morphology, n = res.now, p = res.physics;
+    const name = res.building_name ? `${res.building_name} · ` : "";
+    const fmt = v => (v==null? "–" : v.toFixed(2));
+    box.innerHTML = `<h3>보행자 풍속 (병기 · 기준 AWS 10m ${res.wind_ref_10m_ms}m/s)</h3>
+      <div class="sub">${name}건물높이 ${m.height_m??"–"}m · 건폐율 λp ${m.lambda_p} · 정면밀도 λf ${m.lambda_f}(${m.lambda_f_src}) · SVF ${res.spatial.svf} · BVI ${res.spatial.bvi}</div>
+      <div style="overflow-x:auto"><table>
+        <tr><th>방식</th><th>보행자 풍속(1.5m)</th><th>기준 대비</th><th>프로파일 지수 α</th></tr>
+        <tr><td>지금 앱 방식<div class="status">고정지수·밀도 약반영</div></td>
+            <td style="font-weight:600">${fmt(n.u_p_ms)} m/s</td><td>${n.pct_of_ref}%</td><td>${n.profile_exponent.toFixed(2)} (고정)</td></tr>
+        <tr><td>물리 방식<div class="status">거칠기·캐노피 감쇠</div></td>
+            <td style="font-weight:600;color:var(--accent)">${fmt(p.u_p_ms)} m/s</td><td>${p.pct_of_ref}%</td><td>${fmt(p.profile_exponent_equiv)} (밀도)</td></tr>
+      </table></div>
+      <p class="status" style="margin:8px 0 0">물리 방식: 건물밀도→공기역학 거칠기 z0 ${fmt(p.z0_urban_m)}m·변위고도 ${fmt(p.disp_height_m)}m 로 프로파일을 밀도에 묶음. 밀도 높을수록 α↑(바람 급감). <b>절대 m/s는 참고, 밀도 상대패턴 신뢰</b> — 풍속계 실측으로 교정 예정.</p>`;
   }
 
   // ── 배치도 (실제 위치 항공사진 + 개입 위치) ───────────────
