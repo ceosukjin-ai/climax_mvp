@@ -58,6 +58,9 @@ services:
       - hf_cache:/app/.cache/huggingface
       # 개념도(개선 시뮬 이미지) 캐시 — 같은 격자·개입은 다시 생성하지 않는다
       - concept_cache:/app/.cache/concept
+      # 사전적재 건물 타일(전세계 파일럿) — 호스트 git 저장소를 그대로 마운트.
+      # 도시 추가 시 git pull + 컨테이너 재시작만으로 반영(이미지 재빌드 불필요).
+      - ../../backend/data/buildings:/app/data/buildings:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
       interval: 30s
