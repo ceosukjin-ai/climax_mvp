@@ -241,50 +241,74 @@ async def sun_blocked_outdoor(
     return False, None
 
 
+def _ray_ring_hit(dx: float, dy: float, ring: list[tuple[float, float]]) -> float | None:
+    """원점(0,0)에서 방위벡터 (dx,dy) 로 쏜 광선이 폴리곤 외곽선에 처음 닿는 거리(m). 없으면 None."""
+    best = None
+    n = len(ring)
+    for i in range(n - 1):
+        x1, y1 = ring[i]
+        x2, y2 = ring[i + 1]
+        ex, ey = x2 - x1, y2 - y1
+        det = ex * dy - dx * ey
+        if abs(det) < 1e-9:
+            continue
+        t = (-x1 * ey + ex * y1) / det          # 광선 파라미터(거리)
+        u = (dx * y1 - dy * x1) / det            # 세그먼트 파라미터 [0,1]
+        if t > 0.0 and 0.0 <= u <= 1.0:
+            if best is None or t < best:
+                best = t
+    return best
+
+
 async def svf_geometric(
-    lat: float, lon: float, eye_height_m: float = 1.5, az_step_deg: int = 2
+    lat: float, lon: float, eye_height_m: float = 1.5, az_step_deg: int = 2,
+    default_floors: int = 2,
 ) -> dict:
-    """건물 GIS 기하만으로 SVF(천공시계) 산출 — 스트리트뷰 없이(2026-09-08).
+    """건물 GIS 기하만으로 SVF — 방위별 ray-cast(건물 외곽선 실측 거리) 방식(2026-09-08 v2).
 
-    V-World(우선)/OSM 건물 폴리곤 + 층수 → 이웃 건물의 방위·각폭·높이·거리
-    (sun_blocked_outdoor와 같은 기하) → 하늘 전 방위(0~360)로 지평선 상승각 β(az)를
-    구해 SVF = 1 − mean(sin²β) (Oke/UMEP 표준 지평선각 적분).
-
-    반환: svf, source(vworld/osm/""), n_neighbors, radius 관련 진단.
-    ⚠️ 층수 없는 건물은 제외(그림자 지어내기 금지) → 데이터 결측 시 SVF 과대평가.
-       실서버 V-World 아웃바운드가 막히면 OSM 폴백(높이 결측 많음) → n_neighbors로 품질 판단.
+    V-World/OSM 건물 폴리곤+층수 → 각 방위(0~360)에서 건물 외곽선에 광선을 쏴 실제
+    교차거리로 지평선 상승각 β(az) 산출 → SVF = 1 − mean(sin²β) (Oke/UMEP 표준).
+    중심±각폭 근사(과차폐)를 버리고 모서리까지 정확 거리를 씀. 층수 결측은 보수적 기본높이.
     """
     rings, src = await _rings_cached(lat, lon)
     if not rings:
-        return {"svf": None, "source": src or "", "n_neighbors": 0,
-                "reason": "건물 폴리곤 없음"}
-    outside = [(r, p) for r, p in rings if not _point_in_ring(0.0, 0.0, r)]
-    neighbors = _collect_neighbors(outside, home_ring=None, max_n=200, default_floors=2)
-    if not neighbors:
-        # 주변에 (층수 아는) 건물이 없다 = 사실상 완전 개방
-        return {"svf": 1.0, "source": src, "n_neighbors": 0,
-                "reason": "층수 아는 이웃 건물 없음(개방 가정)"}
+        return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 폴리곤 없음"}
+
+    # (외곽선 좌표, 높이) — 점을 품은 건물은 제외(그 안이면 판정불가), 층수결측은 기본높이
+    blds: list[tuple[list[tuple[float, float]], float]] = []
+    for ring, props in rings:
+        if len(ring) < 4 or _point_in_ring(0.0, 0.0, ring):
+            continue
+        try:
+            floors = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
+        except (TypeError, ValueError):
+            floors = 0
+        if floors <= 0:
+            floors = default_floors
+        h = floors * FLOOR_HEIGHT_M - eye_height_m
+        if h <= 0:
+            continue
+        blds.append((ring, h))
+    if not blds:
+        return {"svf": 1.0, "source": src, "n_buildings": 0, "reason": "차폐 건물 없음(개방)"}
 
     n_sectors = max(1, int(360 / az_step_deg))
     sin2_sum = 0.0
     for i in range(n_sectors):
-        az = i * az_step_deg
-        beta_max = 0.0  # 이 방위의 최대 지평선 상승각(rad)
-        for n in neighbors:
-            d_az = abs(((az - n.az_deg + 180) % 360) - 180)
-            if d_az > n.half_deg:
+        az = math.radians(i * az_step_deg)
+        dx, dy = math.sin(az), math.cos(az)      # x=동, y=북, 방위 0=북
+        beta_max = 0.0
+        for ring, h in blds:
+            t = _ray_ring_hit(dx, dy, ring)
+            if t is None:
                 continue
-            rise = n.height_m - eye_height_m
-            if rise <= 0:
-                continue
-            beta = math.atan2(rise, n.dist_m)
+            beta = math.atan2(h, t)
             if beta > beta_max:
                 beta_max = beta
         sin2_sum += math.sin(beta_max) ** 2
     svf = 1.0 - sin2_sum / n_sectors
     return {"svf": round(max(0.0, min(1.0, svf)), 3), "source": src,
-            "n_neighbors": len(neighbors),
-            "nearest_m": neighbors[0].dist_m, "tallest_m": max(n.height_m for n in neighbors)}
+            "n_buildings": len(blds)}
 
 
 def _dist_to_ring(px: float, py: float, ring: list[tuple[float, float]]) -> float:

@@ -25,7 +25,7 @@ for i, (place, lat, lon, obs) in enumerate(PTS, 1):
     try:
         r = geo_svf(lat, lon)
         pred = r.get("svf")
-        rows.append((place, lat, lon, obs, pred, r.get("source", ""), r.get("n_neighbors", 0)))
+        rows.append((place, lat, lon, obs, pred, r.get("source", ""), r.get("n_buildings", r.get("n_neighbors", 0))))
         print(f"[{i:2}/{len(PTS)}] {place} ({lat},{lon}) 실측 {obs:.3f} / 기하 {pred if pred is None else round(pred,3)} "
               f"[{r.get('source','')},{r.get('n_neighbors',0)}동]")
     except Exception as e:
