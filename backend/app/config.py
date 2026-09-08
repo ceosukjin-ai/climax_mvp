@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # 건물 열취약 판정 (실내축 2단계) — V-World 리버스지오코딩 + 건축HUB 건축물대장
     vworld_api_key: str = ""
     building_api_key: str = ""
+    # Mapillary(Meta) 거리영상 액세스 토큰 — CC BY-SA, 저장·학습 합법(GSV와 달리).
+    # 비어 있으면 Mapillary 미사용 → 기존처럼 GSV만(하위호환, opt-in).
+    # 있으면 파노 해석에서 Mapillary(360 구면) 우선 → 없으면 GSV 폴백.
+    mapillary_access_token: str = ""
 
     # 거리영상(Street View) 월 호출 상한 — **이미지 요청 수** 기준.
     # 파노라마 1지점 = 5-view = 5요청. 구글 무료 한도가 SKU당 월 1만이라 9,000에서 멈춘다.

@@ -74,6 +74,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             api_key=settings.google_streetview_api_key,
             signing_secret=settings.google_streetview_signing_secret,
         )
+        # Mapillary(우선 원천) — 토큰 있을 때만. 없으면 GSV만(하위호환).
+        mly_client = None
+        if settings.mapillary_access_token:
+            from app.services.mapillary import MapillaryClient
+            mly_client = MapillaryClient(access_token=settings.mapillary_access_token)
+            logger.info("Mapillary 클라이언트 ready — 우선 원천(360 구면), GSV 폴백")
+        else:
+            logger.info("MAPILLARY_ACCESS_TOKEN 없음 → GSV만 사용(하위호환)")
         kma_client = KMAClient(api_key=settings.kma_api_key)
 
         # ASOS 실측(일사·전운량·지면온도) — API허브 키 있을 때만 (없으면 SKY 예보만)
@@ -103,6 +111,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             orchestrator = VPTIOrchestrator(
                 cache=cache,
                 street_view=sv_client,
+                mapillary=mly_client,
                 kma=kma_client,
                 segformer=segformer,
                 asos=asos_client,

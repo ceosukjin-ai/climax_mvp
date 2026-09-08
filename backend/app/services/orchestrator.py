@@ -61,6 +61,7 @@ from app.services.street_view import (
     StreetViewFetchResult,
     StreetViewNotFound,
 )
+from app.services.mapillary import is_mapillary_pano
 
 if TYPE_CHECKING:
     from app.ml.segformer import SegFormerService
@@ -175,6 +176,7 @@ class VPTIOrchestrator:
         street_view: GoogleStreetViewClient,
         kma: KMAClient,
         segformer: "SegFormerService",
+        mapillary=None,          # app.services.mapillary.MapillaryClient — 우선 원천(선택)
         asos: ASOSClient | None = None,
         aws_obs=None,          # app.services.aws_obs.AWSObsClient — 강수 판정용(선택)
         archive=None,          # app.services.archive.Archive — 측정 이력 적재(선택)
@@ -182,6 +184,7 @@ class VPTIOrchestrator:
     ) -> None:
         self.cache = cache
         self.street_view = street_view
+        self.mapillary = mapillary   # 있으면 Mapillary 우선 → 없으면/실패 시 GSV 폴백
         self.kma = kma
         self.segformer = segformer
         self.asos = asos
@@ -215,16 +218,30 @@ class VPTIOrchestrator:
             return cached, lat, lon
 
         meta = None
-        for radius_m in self.PANO_SEARCH_RADII_M:
-            meta = await self.street_view.get_pano_metadata(lat, lon, radius_m=radius_m)
-            if meta.status == "OK" and meta.pano_id:
-                if radius_m > self.PANO_SEARCH_RADII_M[0]:
-                    logger.info(
-                        "Street View: 지점 50m 내 없음 → 반경 {}m에서 인근 파노라마 사용 "
-                        "({}, {}) → pano={}",
-                        radius_m, lat, lon, meta.pano_id,
-                    )
-                break
+        # ① Mapillary 우선(있으면) — CC BY-SA, 저장·학습 합법 + 무료
+        if self.mapillary is not None:
+            for radius_m in self.PANO_SEARCH_RADII_M:
+                try:
+                    m = await self.mapillary.get_pano_metadata(lat, lon, radius_m=radius_m)
+                except Exception as e:  # noqa: BLE001 — Mapillary 실패는 치명적 아님, GSV로 폴백
+                    logger.warning("Mapillary 조회 실패({}) → GSV 폴백: {}", type(e).__name__, e)
+                    break
+                if m.status == "OK" and m.pano_id:
+                    meta = m
+                    logger.info("Mapillary 사용(반경 {}m): ({}, {}) → {}", radius_m, lat, lon, m.pano_id)
+                    break
+        # ② GSV 폴백 — Mapillary 없음/실패/커버리지 밖
+        if meta is None or meta.status != "OK" or not meta.pano_id:
+            for radius_m in self.PANO_SEARCH_RADII_M:
+                meta = await self.street_view.get_pano_metadata(lat, lon, radius_m=radius_m)
+                if meta.status == "OK" and meta.pano_id:
+                    if radius_m > self.PANO_SEARCH_RADII_M[0]:
+                        logger.info(
+                            "Street View: 지점 50m 내 없음 → 반경 {}m에서 인근 파노라마 사용 "
+                            "({}, {}) → pano={}",
+                            radius_m, lat, lon, meta.pano_id,
+                        )
+                    break
 
         if meta is None or meta.status != "OK" or not meta.pano_id:
             status = meta.status if meta else "UNKNOWN"
@@ -256,7 +273,8 @@ class VPTIOrchestrator:
 
         # 캐시 miss: Street View fetch + SegFormer 추론
         # ⚠️ 신규 다운로드 전 월 상한 확인 — 과금 차단 + bulk download 방지.
-        await self._check_imagery_budget()
+        if not is_mapillary_pano(pano_id):   # Mapillary는 무료·합법 → GSV 예산 미적용
+            await self._check_imagery_budget()
         logger.info("Pano cache MISS, fetching and analyzing: {}", pano_id)
 
         sv_start = time.perf_counter()
@@ -321,6 +339,12 @@ class VPTIOrchestrator:
         fake_meta = PanoMetadata(
             pano_id=pano_id, lat=lat, lon=lon, date=None, status="OK"
         )
+        # 출처는 pano_id 접두어로 라우팅: "mly:" → Mapillary, 그 외 → GSV
+        if is_mapillary_pano(pano_id):
+            if self.mapillary is None:
+                from app.services.street_view import StreetViewNotFound
+                raise StreetViewNotFound("Mapillary 파노인데 클라이언트가 없음")
+            return await self.mapillary.fetch_five_views(fake_meta)
         return await self.street_view.fetch_five_views(fake_meta)
 
     async def _analyze_views(
@@ -395,7 +419,7 @@ class VPTIOrchestrator:
             road_axis_source=road.source,
             # 이 지표가 어느 영상에서 나왔는지 반드시 남긴다 (2026-08-21).
             # 원천 교체(Mapillary/자체촬영) 시 GSV 유래만 골라 폐기·재계산한다.
-            imagery_source=getattr(self.street_view, "IMAGERY_SOURCE", "gsv"),
+            imagery_source=("mapillary" if is_mapillary_pano(sv_result.pano_id) else "gsv"),
         )
 
     # ===== 기상 조회 =====
