@@ -1638,22 +1638,42 @@ async def archive_geo_vpti(
                 gvi = _g; gvi_src = "sentinel2-ndvi"
         except Exception:  # noqa: BLE001
             pass
-        m = compute_mrt(sol, obs.temperature_c, obs.humidity_pct, svf, gvi,
-                        0.15, 0.95, wind_ms=obs.wind_speed_ms,
-                        config=DEFAULT_CONFIG.mrt, direct_shade=direct_shade)
+        # 완전한 체감값(VPTI) — 스칼라 SVF/GVI로 5-view 합성 → 교정 물리 경로(UTCI/PET)
+        from vpti_core.vsi import ViewSegmentation
+        from vpti_core.smti import MaterialFraction
+        from vpti_core.vpti import WeatherContext, compute_vpti_thermal
+        g = max(0.0, min(1.0, gvi))
+        b = max(0.0, min(1.0 - g, 1.0 - svf))
+        views = [ViewSegmentation(direction="up", sky_ratio=max(0.0, min(1.0, svf)),
+                                  vegetation_ratio=0.0, building_ratio=0.0)]
+        # 수평뷰 sky=SVF/2 → reconstruct_svf(0.293·up + 0.707·ring)가 원래 SVF 복원
+        sky_h = max(0.0, min(0.5, svf / 2.0))
+        views += [ViewSegmentation(direction=d, sky_ratio=sky_h, vegetation_ratio=g,
+                                   building_ratio=b)
+                  for d in ("front", "back", "left", "right")]
+        mats = [MaterialFraction(material="unknown", fraction=1.0)]
+        wc = WeatherContext(temperature_c=obs.temperature_c, humidity_pct=obs.humidity_pct,
+                            wind_speed_ms=obs.wind_speed_ms,
+                            wind_direction_deg=obs.wind_direction_deg)
+        r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
+                                 road_axis_deg=0.0, lat=lat, lon=lon, when=now,
+                                 direct_shade=direct_shade)
         return {
             "ok": True, "lat": lat, "lon": lon,
-            "mrt_c": round(m.tmrt, 1),
+            "vpti": round(float(r.vpti), 1),
+            "risk": str(r.risk_level),
+            "mrt_c": round(float(r.mrt.tmrt), 1),
             "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
             "svf_source": svf_r.get("source"),
             "exposure": exposure, "shade_note": shade_note,
+            "gvi": round(gvi, 3), "gvi_src": gvi_src,
             "weather": {"ta": round(obs.temperature_c, 1),
                         "rh": round(obs.humidity_pct, 0),
                         "wind_ms": round(obs.wind_speed_ms, 1),
                         "src": "Open-Meteo"},
             "solar": {"elev": round(sol.solar_elevation_deg, 1),
                       "az": round(sol.solar_azimuth_deg, 1)},
-            "gvi": round(gvi, 3), "gvi_src": gvi_src, "note": "GSV 미사용",
+            "note": "GSV 미사용",
         }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "reason": f"{type(e).__name__}: {e}", "lat": lat, "lon": lon}
