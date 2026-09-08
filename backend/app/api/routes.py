@@ -1625,6 +1625,8 @@ async def archive_geo_vpti(
         blocked, shade_note = await sun_blocked_outdoor(
             lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
         direct_shade = 0.0 if blocked else 1.0
+        night = sol.solar_elevation_deg <= 0.0
+        exposure = "야간" if night else ("그늘" if blocked else "양지")
 
         gvi = 0.0  # TODO: Sentinel-2 NDVI (미연결) — 보수적 0
         m = compute_mrt(sol, obs.temperature_c, obs.humidity_pct, svf, gvi,
@@ -1635,7 +1637,7 @@ async def archive_geo_vpti(
             "mrt_c": round(m.tmrt, 1),
             "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
             "svf_source": svf_r.get("source"),
-            "exposure": "그늘" if blocked else "양지", "shade_note": shade_note,
+            "exposure": exposure, "shade_note": shade_note,
             "weather": {"ta": round(obs.temperature_c, 1),
                         "rh": round(obs.humidity_pct, 0),
                         "wind_ms": round(obs.wind_speed_ms, 1),
