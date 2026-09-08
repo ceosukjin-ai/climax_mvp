@@ -1596,6 +1596,58 @@ async def archive_geo_svf(
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
 
 
+@router.get("/archive/geo_vpti", include_in_schema=False)
+async def archive_geo_vpti(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """진단 — GSV 없이 전세계 체감 산출(전세계 파일럿, 2026-09-08).
+
+    기하 SVF(사전적재 건물) + 기하 그늘판정 + Open-Meteo 날씨 + 교정엔진 → MRT.
+    라이브 /vpti(GSV 기반)와 별개. ⚠️ GVI(식생)는 아직 0(NDVI 미연결) — 노면 위주 보수값.
+    """
+    _require_field_key(x_field_key)
+    from datetime import datetime, timezone
+    from app.services.geo import svf_geometric, sun_blocked_outdoor
+    from app.services.open_meteo import get_current_observation
+    from vpti_core import estimate_solar, compute_mrt, DEFAULT_CONFIG
+    try:
+        svf_r = await svf_geometric(lat, lon)
+        if svf_r.get("svf") is None:
+            return {"ok": False, "reason": svf_r.get("reason", "SVF 없음"),
+                    "svf": None, "lat": lat, "lon": lon}
+        svf = float(svf_r["svf"])
+
+        obs = await get_current_observation(lat, lon)
+        now = datetime.now(timezone.utc)
+        sol = estimate_solar(lat, lon, now, config=DEFAULT_CONFIG.solar)
+        blocked, shade_note = await sun_blocked_outdoor(
+            lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
+        direct_shade = 0.0 if blocked else 1.0
+
+        gvi = 0.0  # TODO: Sentinel-2 NDVI (미연결) — 보수적 0
+        m = compute_mrt(sol, obs.temperature_c, obs.humidity_pct, svf, gvi,
+                        0.15, 0.95, wind_ms=obs.wind_speed_ms,
+                        config=DEFAULT_CONFIG.mrt, direct_shade=direct_shade)
+        return {
+            "ok": True, "lat": lat, "lon": lon,
+            "mrt_c": round(m.tmrt, 1),
+            "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
+            "svf_source": svf_r.get("source"),
+            "exposure": "그늘" if blocked else "양지", "shade_note": shade_note,
+            "weather": {"ta": round(obs.temperature_c, 1),
+                        "rh": round(obs.humidity_pct, 0),
+                        "wind_ms": round(obs.wind_speed_ms, 1),
+                        "src": "Open-Meteo"},
+            "solar": {"elev": round(sol.solar_elevation_deg, 1),
+                      "az": round(sol.solar_azimuth_deg, 1)},
+            "gvi": gvi, "note": "GVI=0(NDVI 미연결) · GSV 미사용",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}", "lat": lat, "lon": lon}
+
+
 @router.get("/archive/mapillary_probe", include_in_schema=False)
 async def archive_mapillary_probe(
     request: Request,
