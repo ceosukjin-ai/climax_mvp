@@ -498,6 +498,28 @@ class VPTIOrchestrator:
         Returns:
             (weather, is_cache_hit, elapsed_ms, weather_source)
         """
+        # 한국 밖 좌표 → 기상청 격자 불가 → Open-Meteo(전지구). (2026-09-08 전세계 파일럿)
+        if not (33.0 <= lat <= 39.6 and 124.0 <= lon <= 132.0):
+            start = time.perf_counter()
+            try:
+                from app.services.open_meteo import get_current_observation as _om
+                obs = await asyncio.wait_for(_om(lat, lon), timeout=3.0)
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                return (
+                    WeatherContext(
+                        temperature_c=obs.temperature_c,
+                        humidity_pct=obs.humidity_pct,
+                        wind_speed_ms=obs.wind_speed_ms,
+                        wind_direction_deg=obs.wind_direction_deg,
+                        precipitation_mm=obs.precipitation_mm,
+                    ),
+                    False, elapsed_ms, "실측",
+                )
+            except Exception as e:  # noqa: BLE001
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                logger.warning("[timing] 기상(Open-Meteo) 실패({:.0f}ms): {} → 추정", elapsed_ms, e)
+                return (WeatherContext(**_DEFAULT_WEATHER), False, elapsed_ms, "추정")
+
         grid = latlon_to_grid(lat, lon)
 
         # 10분 신선 캐시 hit — 실측 데이터를 캐시한 것.
