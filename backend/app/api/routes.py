@@ -1596,87 +1596,120 @@ async def archive_geo_svf(
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
 
 
+async def _geo_vpti_compute(lat: float, lon: float) -> dict:
+    """GSV 없이 좌표 → 완전한 체감(VPTI). 기하 SVF(사전적재 건물)+기하 그늘+Open-Meteo
+    날씨+Sentinel-2 위성 GVI+교정엔진(compute_vpti_thermal, UTCI/PET). 전세계 파일럿.
+    /archive/geo_vpti(진단)와 /vpti/geo/at(앱)가 공유한다.
+    """
+    from datetime import datetime, timezone
+    from app.services.geo import svf_geometric, sun_blocked_outdoor
+    from app.services.open_meteo import get_current_observation
+    from app.services.sentinel_hub import get_gvi as _get_gvi
+    from vpti_core import estimate_solar, DEFAULT_CONFIG
+    from vpti_core.vsi import ViewSegmentation
+    from vpti_core.smti import MaterialFraction
+    from vpti_core.vpti import WeatherContext, compute_vpti_thermal
+
+    svf_r = await svf_geometric(lat, lon)
+    if svf_r.get("svf") is None:
+        return {"ok": False, "reason": svf_r.get("reason", "SVF 없음"),
+                "svf": None, "lat": lat, "lon": lon}
+    svf = float(svf_r["svf"])
+
+    obs = await get_current_observation(lat, lon)
+    now = datetime.now(timezone.utc)
+    sol = estimate_solar(lat, lon, now, config=DEFAULT_CONFIG.solar)
+    blocked, shade_note = await sun_blocked_outdoor(
+        lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
+    direct_shade = 0.0 if blocked else 1.0
+    night = sol.solar_elevation_deg <= 0.0
+    exposure = "야간" if night else ("그늘" if blocked else "양지")
+
+    gvi = 0.0
+    gvi_src = "none"
+    try:
+        _g = await _get_gvi(lat, lon)
+        if _g is not None:
+            gvi = _g; gvi_src = "sentinel2-ndvi"
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 스칼라 SVF/GVI → 5-view 합성(up.sky=SVF, 수평.sky=SVF/2 로 reconstruct_svf 가 원래 SVF
+    # 복원, 수평.veg=GVI) → compute_vpti_thermal 전체 물리 경로.
+    g = max(0.0, min(1.0, gvi))
+    b = max(0.0, min(1.0 - g, 1.0 - svf))
+    sky_h = max(0.0, min(0.5, svf / 2.0))
+    views = [ViewSegmentation(direction="up", sky_ratio=max(0.0, min(1.0, svf)),
+                              vegetation_ratio=0.0, building_ratio=0.0)]
+    views += [ViewSegmentation(direction=d, sky_ratio=sky_h, vegetation_ratio=g,
+                               building_ratio=b)
+              for d in ("front", "back", "left", "right")]
+    mats = [MaterialFraction(material="unknown", fraction=1.0)]
+    wc = WeatherContext(temperature_c=obs.temperature_c, humidity_pct=obs.humidity_pct,
+                        wind_speed_ms=obs.wind_speed_ms,
+                        wind_direction_deg=obs.wind_direction_deg)
+    r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
+                             road_axis_deg=0.0, lat=lat, lon=lon, when=now,
+                             direct_shade=direct_shade)
+    return {
+        "ok": True, "lat": lat, "lon": lon,
+        "vpti": round(float(r.vpti), 1),
+        "risk": str(r.risk_level),
+        "stress_category": r.stress_category,
+        "comfort_index": r.comfort_index,
+        "mrt_c": round(float(r.mrt.tmrt), 1),
+        "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
+        "svf_source": svf_r.get("source"),
+        "gvi": round(gvi, 3), "gvi_src": gvi_src,
+        "exposure": exposure, "shade_note": shade_note,
+        "weather": {"ta": round(obs.temperature_c, 1),
+                    "rh": round(obs.humidity_pct, 0),
+                    "wind_ms": round(obs.wind_speed_ms, 1),
+                    "src": "Open-Meteo"},
+        "solar": {"elev": round(sol.solar_elevation_deg, 1),
+                  "az": round(sol.solar_azimuth_deg, 1)},
+        "note": "GSV 미사용",
+    }
+
+
 @router.get("/archive/geo_vpti", include_in_schema=False)
 async def archive_geo_vpti(
     request: Request,
     lat: float = Query(...), lon: float = Query(...),
     x_field_key: str | None = Header(None),
 ) -> dict:
-    """진단 — GSV 없이 전세계 체감 산출(전세계 파일럿, 2026-09-08).
-
-    기하 SVF(사전적재 건물) + 기하 그늘판정 + Open-Meteo 날씨 + 교정엔진 → MRT.
-    라이브 /vpti(GSV 기반)와 별개. ⚠️ GVI(식생)는 아직 0(NDVI 미연결) — 노면 위주 보수값.
-    """
+    """진단 — GSV 없이 전세계 체감(VPTI) 산출. X-Field-Key 게이트."""
     _require_field_key(x_field_key)
-    from datetime import datetime, timezone
-    from app.services.geo import svf_geometric, sun_blocked_outdoor
-    from app.services.open_meteo import get_current_observation
-    from vpti_core import estimate_solar, compute_mrt, DEFAULT_CONFIG
     try:
-        svf_r = await svf_geometric(lat, lon)
-        if svf_r.get("svf") is None:
-            return {"ok": False, "reason": svf_r.get("reason", "SVF 없음"),
-                    "svf": None, "lat": lat, "lon": lon}
-        svf = float(svf_r["svf"])
-
-        obs = await get_current_observation(lat, lon)
-        now = datetime.now(timezone.utc)
-        sol = estimate_solar(lat, lon, now, config=DEFAULT_CONFIG.solar)
-        blocked, shade_note = await sun_blocked_outdoor(
-            lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
-        direct_shade = 0.0 if blocked else 1.0
-        night = sol.solar_elevation_deg <= 0.0
-        exposure = "야간" if night else ("그늘" if blocked else "양지")
-
-        # 식생 GVI — Sentinel-2 NDVI(위성). 비활성/실패 시 0(보수적).
-        from app.services.sentinel_hub import get_gvi as _get_gvi
-        gvi = 0.0
-        gvi_src = "none"
-        try:
-            _g = await _get_gvi(lat, lon)
-            if _g is not None:
-                gvi = _g; gvi_src = "sentinel2-ndvi"
-        except Exception:  # noqa: BLE001
-            pass
-        # 완전한 체감값(VPTI) — 스칼라 SVF/GVI로 5-view 합성 → 교정 물리 경로(UTCI/PET)
-        from vpti_core.vsi import ViewSegmentation
-        from vpti_core.smti import MaterialFraction
-        from vpti_core.vpti import WeatherContext, compute_vpti_thermal
-        g = max(0.0, min(1.0, gvi))
-        b = max(0.0, min(1.0 - g, 1.0 - svf))
-        views = [ViewSegmentation(direction="up", sky_ratio=max(0.0, min(1.0, svf)),
-                                  vegetation_ratio=0.0, building_ratio=0.0)]
-        # 수평뷰 sky=SVF/2 → reconstruct_svf(0.293·up + 0.707·ring)가 원래 SVF 복원
-        sky_h = max(0.0, min(0.5, svf / 2.0))
-        views += [ViewSegmentation(direction=d, sky_ratio=sky_h, vegetation_ratio=g,
-                                   building_ratio=b)
-                  for d in ("front", "back", "left", "right")]
-        mats = [MaterialFraction(material="unknown", fraction=1.0)]
-        wc = WeatherContext(temperature_c=obs.temperature_c, humidity_pct=obs.humidity_pct,
-                            wind_speed_ms=obs.wind_speed_ms,
-                            wind_direction_deg=obs.wind_direction_deg)
-        r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
-                                 road_axis_deg=0.0, lat=lat, lon=lon, when=now,
-                                 direct_shade=direct_shade)
-        return {
-            "ok": True, "lat": lat, "lon": lon,
-            "vpti": round(float(r.vpti), 1),
-            "risk": str(r.risk_level),
-            "mrt_c": round(float(r.mrt.tmrt), 1),
-            "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
-            "svf_source": svf_r.get("source"),
-            "exposure": exposure, "shade_note": shade_note,
-            "gvi": round(gvi, 3), "gvi_src": gvi_src,
-            "weather": {"ta": round(obs.temperature_c, 1),
-                        "rh": round(obs.humidity_pct, 0),
-                        "wind_ms": round(obs.wind_speed_ms, 1),
-                        "src": "Open-Meteo"},
-            "solar": {"elev": round(sol.solar_elevation_deg, 1),
-                      "az": round(sol.solar_azimuth_deg, 1)},
-            "note": "GSV 미사용",
-        }
+        return await _geo_vpti_compute(lat, lon)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "reason": f"{type(e).__name__}: {e}", "lat": lat, "lon": lon}
+
+
+@router.get("/vpti/geo/at", include_in_schema=False)
+async def vpti_geo_at(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+) -> dict:
+    """앱용 공개 — 좌표 → 지금 이 순간 체감기후(VPTI). GSV 없이 전세계.
+
+    기하 SVF(사전적재 건물이 있는 지역) + 기하 그늘 + Open-Meteo 실시간 날씨 +
+    Sentinel-2 위성 GVI + 교정엔진. '이동 중 체감' 경험의 서버 엔진.
+    건물 미적재 지역은 404(reason). 몸씨(한국·GSV) 경로와 별개의 새 앱용.
+    """
+    try:
+        out = await _geo_vpti_compute(lat, lon)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"geo vpti error: {e}",
+        ) from e
+    if not out.get("ok"):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=out.get("reason", "해당 좌표 데이터 없음"),
+        )
+    return out
 
 
 @router.get("/archive/mapillary_probe", include_in_schema=False)
