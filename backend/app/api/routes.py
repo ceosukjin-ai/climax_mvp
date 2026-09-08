@@ -1579,6 +1579,23 @@ async def archive_btli(
     return r
 
 
+@router.get("/archive/geo_svf", include_in_schema=False)
+async def archive_geo_svf(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """진단 — 건물 GIS 기하만으로 SVF 산출 (스트리트뷰 없이). 실측 대조용."""
+    _require_field_key(x_field_key)
+    from app.services.geo import svf_geometric
+    try:
+        r = await svf_geometric(lat, lon)
+        r["ok"] = True; r["lat"] = lat; r["lon"] = lon
+        return r
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+
+
 @router.get("/archive/mapillary_probe", include_in_schema=False)
 async def archive_mapillary_probe(
     request: Request,

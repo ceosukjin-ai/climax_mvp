@@ -241,6 +241,52 @@ async def sun_blocked_outdoor(
     return False, None
 
 
+async def svf_geometric(
+    lat: float, lon: float, eye_height_m: float = 1.5, az_step_deg: int = 2
+) -> dict:
+    """건물 GIS 기하만으로 SVF(천공시계) 산출 — 스트리트뷰 없이(2026-09-08).
+
+    V-World(우선)/OSM 건물 폴리곤 + 층수 → 이웃 건물의 방위·각폭·높이·거리
+    (sun_blocked_outdoor와 같은 기하) → 하늘 전 방위(0~360)로 지평선 상승각 β(az)를
+    구해 SVF = 1 − mean(sin²β) (Oke/UMEP 표준 지평선각 적분).
+
+    반환: svf, source(vworld/osm/""), n_neighbors, radius 관련 진단.
+    ⚠️ 층수 없는 건물은 제외(그림자 지어내기 금지) → 데이터 결측 시 SVF 과대평가.
+       실서버 V-World 아웃바운드가 막히면 OSM 폴백(높이 결측 많음) → n_neighbors로 품질 판단.
+    """
+    rings, src = await _rings_cached(lat, lon)
+    if not rings:
+        return {"svf": None, "source": src or "", "n_neighbors": 0,
+                "reason": "건물 폴리곤 없음"}
+    outside = [(r, p) for r, p in rings if not _point_in_ring(0.0, 0.0, r)]
+    neighbors = _collect_neighbors(outside, home_ring=None)
+    if not neighbors:
+        # 주변에 (층수 아는) 건물이 없다 = 사실상 완전 개방
+        return {"svf": 1.0, "source": src, "n_neighbors": 0,
+                "reason": "층수 아는 이웃 건물 없음(개방 가정)"}
+
+    n_sectors = max(1, int(360 / az_step_deg))
+    sin2_sum = 0.0
+    for i in range(n_sectors):
+        az = i * az_step_deg
+        beta_max = 0.0  # 이 방위의 최대 지평선 상승각(rad)
+        for n in neighbors:
+            d_az = abs(((az - n.az_deg + 180) % 360) - 180)
+            if d_az > n.half_deg:
+                continue
+            rise = n.height_m - eye_height_m
+            if rise <= 0:
+                continue
+            beta = math.atan2(rise, n.dist_m)
+            if beta > beta_max:
+                beta_max = beta
+        sin2_sum += math.sin(beta_max) ** 2
+    svf = 1.0 - sin2_sum / n_sectors
+    return {"svf": round(max(0.0, min(1.0, svf)), 3), "source": src,
+            "n_neighbors": len(neighbors),
+            "nearest_m": neighbors[0].dist_m, "tallest_m": max(n.height_m for n in neighbors)}
+
+
 def _dist_to_ring(px: float, py: float, ring: list[tuple[float, float]]) -> float:
     """점에서 다각형 **외곽선**까지의 최단거리(m). 중심점 거리가 아니다."""
     best = float("inf")
