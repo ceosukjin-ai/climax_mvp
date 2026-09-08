@@ -259,7 +259,7 @@ async def svf_geometric(
         return {"svf": None, "source": src or "", "n_neighbors": 0,
                 "reason": "건물 폴리곤 없음"}
     outside = [(r, p) for r, p in rings if not _point_in_ring(0.0, 0.0, r)]
-    neighbors = _collect_neighbors(outside, home_ring=None)
+    neighbors = _collect_neighbors(outside, home_ring=None, max_n=200, default_floors=2)
     if not neighbors:
         # 주변에 (층수 아는) 건물이 없다 = 사실상 완전 개방
         return {"svf": 1.0, "source": src, "n_neighbors": 0,
@@ -421,6 +421,8 @@ async def _rings_from_vworld(
 def _collect_neighbors(
     rings: list[tuple[list[tuple[float, float]], dict]],
     home_ring: list[tuple[float, float]] | None,
+    max_n: int = MAX_NEIGHBORS,
+    default_floors: int | None = None,
 ) -> list[Neighbor]:
     """이웃 건물들의 방위·각도폭·거리·높이 — 차폐 계산 재료 (2026-08-15).
 
@@ -436,7 +438,9 @@ def _collect_neighbors(
         except (TypeError, ValueError):
             floors = 0
         if floors <= 0:
-            continue
+            if default_floors is None:
+                continue          # 기존(차폐)엔 높이 결측 건물 제외(그림자 지어내기 금지)
+            floors = default_floors  # SVF엔 footprint가 실재하므로 보수적 기본높이로 포함
         dist = _dist_to_ring(0.0, 0.0, ring)
         if dist < 1.0:
             continue                     # 사실상 같은 건물
@@ -456,7 +460,7 @@ def _collect_neighbors(
             label=f"{label}({floors}층)",
         ))
     out.sort(key=lambda n: n.dist_m)
-    return out[:MAX_NEIGHBORS]
+    return out[:max_n]
 
 
 def shading_factor(
