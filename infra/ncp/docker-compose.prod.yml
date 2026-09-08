@@ -34,6 +34,9 @@ services:
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:-}
       VWORLD_API_KEY: ${VWORLD_API_KEY:-}
       BUILDING_API_KEY: ${BUILDING_API_KEY:-}
+      # Mapillary(우선 원천) — CC BY-SA, 저장·학습 합법. ENABLED=true 여야 라이브 사용
+      MAPILLARY_ACCESS_TOKEN: ${MAPILLARY_ACCESS_TOKEN:-}
+      MAPILLARY_ENABLED: ${MAPILLARY_ENABLED:-false}
       # 현장 대조 도구 접근키 (2026-08-16, 대표 전용) — 없으면 /field/check 404
       FIELD_KEY: ${FIELD_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
