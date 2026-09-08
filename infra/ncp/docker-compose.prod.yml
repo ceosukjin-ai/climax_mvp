@@ -66,7 +66,14 @@ services:
     image: redis:7-alpine
     container_name: climax-redis
     restart: unless-stopped
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    # 2026-09-08 변경 — 거리뷰 분석 캐시 보호
+    #  · allkeys-lru 였을 때: 메모리가 차면 TTL 없는 파노라마 분석 결과까지 지워졌다.
+    #    지워진 좌표는 캐시 미스가 나서 구글에 재요청 → 재과금된다(9월 실측 18만원 규모).
+    #  · volatile-lru: TTL 이 걸린 키(날씨·기상 캐시)만 제거 대상. 파노라마 분석은 보존.
+    #  · appendonly: 서버가 강제 종료돼도 최대 1초치만 손실.
+    command: >
+      redis-server --maxmemory 512mb --maxmemory-policy volatile-lru
+      --appendonly yes --appendfsync everysec
     volumes:
       - redis_data:/data
     healthcheck:
