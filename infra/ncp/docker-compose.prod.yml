@@ -39,6 +39,9 @@ services:
       MAPILLARY_ENABLED: ${MAPILLARY_ENABLED:-false}
       # 현장 대조 도구 접근키 (2026-08-16, 대표 전용) — 없으면 /field/check 404
       FIELD_KEY: ${FIELD_KEY:-}
+      # Sentinel-2 NDVI(식생 GVI) — Copernicus Data Space Sentinel Hub OAuth
+      SENTINEL_CLIENT_ID: ${SENTINEL_CLIENT_ID:-}
+      SENTINEL_CLIENT_SECRET: ${SENTINEL_CLIENT_SECRET:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
 
       NCP_OBJECT_ACCESS_KEY: ${NCP_OBJECT_ACCESS_KEY:-}

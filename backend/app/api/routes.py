@@ -1628,7 +1628,16 @@ async def archive_geo_vpti(
         night = sol.solar_elevation_deg <= 0.0
         exposure = "야간" if night else ("그늘" if blocked else "양지")
 
-        gvi = 0.0  # TODO: Sentinel-2 NDVI (미연결) — 보수적 0
+        # 식생 GVI — Sentinel-2 NDVI(위성). 비활성/실패 시 0(보수적).
+        from app.services.sentinel_hub import get_gvi as _get_gvi
+        gvi = 0.0
+        gvi_src = "none"
+        try:
+            _g = await _get_gvi(lat, lon)
+            if _g is not None:
+                gvi = _g; gvi_src = "sentinel2-ndvi"
+        except Exception:  # noqa: BLE001
+            pass
         m = compute_mrt(sol, obs.temperature_c, obs.humidity_pct, svf, gvi,
                         0.15, 0.95, wind_ms=obs.wind_speed_ms,
                         config=DEFAULT_CONFIG.mrt, direct_shade=direct_shade)
@@ -1644,7 +1653,7 @@ async def archive_geo_vpti(
                         "src": "Open-Meteo"},
             "solar": {"elev": round(sol.solar_elevation_deg, 1),
                       "az": round(sol.solar_azimuth_deg, 1)},
-            "gvi": gvi, "note": "GVI=0(NDVI 미연결) · GSV 미사용",
+            "gvi": round(gvi, 3), "gvi_src": gvi_src, "note": "GSV 미사용",
         }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "reason": f"{type(e).__name__}: {e}", "lat": lat, "lon": lon}
