@@ -24,7 +24,9 @@
 """
 from __future__ import annotations
 
+import json
 import math
+import os
 import time
 from dataclasses import dataclass
 
@@ -58,6 +60,38 @@ FLOOR_HEIGHT_M = 2.8
 # 차폐 시 일사 배율 — 직달일사가 사라지고 산란 성분만 남는다.
 SHADED_GAIN = 0.35
 MAX_NEIGHBORS = 12
+
+# === 사전적재 건물 저장소 (2026-09-08, 전세계 파일럿) ===
+# 프로덕션 서버는 Overpass 아웃바운드가 막혀 있다(일본 등 해외 건물 실시간 조회 불가).
+# 타깃 도시 건물을 0.01°(≈1.1km) 타일로 미리 적재해두고 로컬에서 조회한다.
+# 형식은 Overpass 그대로({"elements":[{geometry,tags,id}]}) — _rings_from_osm과 동일 파싱.
+_LOCAL_BUILDING_DIR = os.environ.get("LOCAL_BUILDING_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "buildings"
+)
+_LOCAL_TILE_CACHE: dict[str, list] = {}
+
+
+def _height_m_from_props(props: dict, default_floors: int | None = None) -> float | None:
+    """건물 절대높이[m]. OSM height 태그(실측 m) 우선, 없으면 층수×층고.
+
+    일본 OSM은 height 태그가 풍부(시부야 102동 중 71동) → 층수만인 한국보다 정확.
+    높이를 전혀 모르고 default_floors도 없으면 None(그림자 지어내기 금지).
+    """
+    h = props.get("height")
+    if h is not None:
+        try:
+            return float(str(h).strip().split()[0])
+        except (TypeError, ValueError, IndexError):
+            pass
+    try:
+        floors = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
+    except (TypeError, ValueError):
+        floors = 0
+    if floors <= 0:
+        if default_floors is None:
+            return None
+        floors = default_floors
+    return floors * FLOOR_HEIGHT_M
 
 
 @dataclass
@@ -192,7 +226,9 @@ async def _rings_cached(
         if time.time() - hit[0] < ttl:
             return hit[1] or [], hit[2]
 
-    for name, fn in (("V-World", _rings_from_vworld), ("OSM", _rings_from_osm)):
+    for name, fn in (("V-World", _rings_from_vworld),
+                     ("Local", _rings_from_local),
+                     ("OSM", _rings_from_osm)):
         try:
             rings = await fn(lat, lon)
         except Exception as e:  # noqa: BLE001
@@ -279,13 +315,10 @@ async def svf_geometric(
     for ring, props in rings:
         if len(ring) < 4 or _point_in_ring(0.0, 0.0, ring):
             continue
-        try:
-            floors = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
-        except (TypeError, ValueError):
-            floors = 0
-        if floors <= 0:
-            floors = default_floors
-        h = floors * FLOOR_HEIGHT_M - eye_height_m
+        H = _height_m_from_props(props, default_floors=default_floors)
+        if H is None:
+            continue
+        h = H - eye_height_m
         if h <= 0:
             continue
         blds.append((ring, h))
@@ -380,6 +413,52 @@ async def nearest_building_parcel_hint(
     return clat, clon, props
 
 
+def _load_local_tile(tkey: str) -> list:
+    """0.01° 타일 하나의 건물 elements(Overpass 형식). 정적이라 메모리 캐시."""
+    cached = _LOCAL_TILE_CACHE.get(tkey)
+    if cached is not None:
+        return cached
+    path = os.path.join(_LOCAL_BUILDING_DIR, tkey + ".json")
+    elements: list = []
+    if os.path.isfile(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                elements = (json.load(f) or {}).get("elements") or []
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"local building tile {tkey} load failed: {e}")
+            elements = []
+    _LOCAL_TILE_CACHE[tkey] = elements
+    return elements
+
+
+async def _rings_from_local(
+    lat: float, lon: float
+) -> list[tuple[list[tuple[float, float]], dict]]:
+    """사전적재 타일(3×3)에서 반경 내 건물 링. 서버 Overpass 차단 우회(해외 커버)."""
+    base_la = int(math.floor(lat * 100))
+    base_lo = int(math.floor(lon * 100))
+    out: list[tuple[list[tuple[float, float]], dict]] = []
+    seen: set = set()
+    lim2 = (SEARCH_RADIUS_M + 60.0) ** 2
+    for dla in (-1, 0, 1):
+        for dlo in (-1, 0, 1):
+            for el in _load_local_tile(f"{base_la + dla}_{base_lo + dlo}"):
+                eid = el.get("id")
+                if eid is not None:
+                    if eid in seen:
+                        continue
+                    seen.add(eid)
+                geom = el.get("geometry") or []
+                if len(geom) < 4:
+                    continue
+                x0, y0 = _to_local_m(geom[0]["lat"], geom[0]["lon"], lat, lon)
+                if x0 * x0 + y0 * y0 > lim2:       # 반경 밖 넉넉히 컷
+                    continue
+                ring = [_to_local_m(g["lat"], g["lon"], lat, lon) for g in geom]
+                out.append((ring, el.get("tags") or {}))
+    return out
+
+
 async def _rings_from_osm(
     lat: float, lon: float
 ) -> list[tuple[list[tuple[float, float]], dict]]:
@@ -457,14 +536,13 @@ def _collect_neighbors(
     for ring, props in rings:
         if ring is home_ring or len(ring) < 4:
             continue
+        H = _height_m_from_props(props, default_floors=default_floors)
+        if H is None:
+            continue              # 높이 결측(태그·층수 없음) → 그림자 지어내기 금지
         try:
             floors = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
         except (TypeError, ValueError):
             floors = 0
-        if floors <= 0:
-            if default_floors is None:
-                continue          # 기존(차폐)엔 높이 결측 건물 제외(그림자 지어내기 금지)
-            floors = default_floors  # SVF엔 footprint가 실재하므로 보수적 기본높이로 포함
         dist = _dist_to_ring(0.0, 0.0, ring)
         if dist < 1.0:
             continue                     # 사실상 같은 건물
@@ -480,8 +558,8 @@ def _collect_neighbors(
                     or props.get("name") or "이웃 건물")
         out.append(Neighbor(
             az_deg=round(center_az, 1), half_deg=round(half, 1),
-            dist_m=round(dist, 1), height_m=round(floors * FLOOR_HEIGHT_M, 1),
-            label=f"{label}({floors}층)",
+            dist_m=round(dist, 1), height_m=round(H, 1),
+            label=f"{label}({floors}층)" if floors > 0 else f"{label}({round(H)}m)",
         ))
     out.sort(key=lambda n: n.dist_m)
     return out[:max_n]
