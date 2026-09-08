@@ -25,7 +25,7 @@ VSI·SMTI 연결(설계 요구사항):
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from .config import DEFAULT_CONFIG, MRTConfig
 from .solar import SolarResult
@@ -214,6 +214,15 @@ def compute_mrt(
             raise ValueError(f"{name}={value} out of [0, 1]")
 
     a_k, eps_p = config.a_k, config.eps_p
+
+    # --- 직달일사 탁도 감쇠 (2026-09-08 실측 교정) ---
+    # 청천 DNI가 연무 낀 여름 하늘의 직달을 과대추정 → 빔만 config.dni_turbidity 로 감쇠.
+    # DHI(산란)·장파는 불변. GHI 는 감쇠된 빔의 수평성분 + 원 DHI 로 재구성.
+    _k = min(max(config.dni_turbidity, 0.0), 1.0)
+    if _k < 1.0:
+        _beta = math.radians(max(solar.solar_elevation_deg, 0.0))
+        _dni = solar.dni * _k
+        solar = replace(solar, dni=_dni, ghi=_dni * math.sin(_beta) + solar.dhi)
 
     # --- 6방향 입체각 투영계수와 천공/지면 시계분배 ---
     # 천공시계 ψ_sky: 상향=SVF, 측면=0.5·SVF(수직면은 하늘 절반), 하향=0.
