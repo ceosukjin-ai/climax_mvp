@@ -285,12 +285,21 @@ class VPTIOrchestrator:
             try:
                 sv = await client.fetch_five_views(meta)
                 a = await self._analyze_views(sv)
+                # 방향별 하늘/건물/식생 비율 — 재투영 구조 검증용(up=하늘, 수평=건물이어야)
+                import asyncio as _aio
+                segs = await _aio.gather(*[
+                    _aio.to_thread(self.segformer.segment, sv.images[d]) for d in sv.images
+                ])
+                perview = {d: {"sky": round(sg.sky_ratio, 2), "bld": round(sg.building_ratio, 2),
+                               "veg": round(sg.vegetation_ratio, 2)}
+                           for d, sg in zip(sv.images.keys(), segs)}
             except Exception as e:  # noqa: BLE001
                 return {"found": True, "radius_m": radius, "distance_m": dist,
                         "reason": f"분석 실패 {type(e).__name__}: {e}"}
             return {"found": True, "radius_m": radius, "distance_m": dist,
                     "pano_id": meta.pano_id, "date": meta.date,
-                    "svf": round(a.svf, 3), "gvi": round(a.gvi, 3), "bvi": round(a.bvi, 3)}
+                    "svf": round(a.svf, 3), "gvi": round(a.gvi, 3), "bvi": round(a.bvi, 3),
+                    "per_view": perview}
 
         mly = await _one(self.mapillary, "Mapillary")
         gsv = await _one(self.street_view, "GSV")
