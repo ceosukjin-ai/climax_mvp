@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     # 비어 있으면 Mapillary 미사용 → 기존처럼 GSV만(하위호환, opt-in).
     # 있으면 파노 해석에서 Mapillary(360 구면) 우선 → 없으면 GSV 폴백.
     mapillary_access_token: str = ""
+    # Mapillary 라이브 사용 스위치. 토큰이 있어도 이게 True 여야 실제 서비스 경로에서
+    # Mapillary 우선을 쓴다(기본 False = 진단만 가능, 라이브는 GSV 그대로).
+    # 진단 엔드포인트로 품질 확인 후 True 로 켤 것.
+    mapillary_enabled: bool = False
 
     # 거리영상(Street View) 월 호출 상한 — **이미지 요청 수** 기준.
     # 파노라마 1지점 = 5-view = 5요청. 구글 무료 한도가 SKU당 월 1만이라 9,000에서 멈춘다.

@@ -177,6 +177,7 @@ class VPTIOrchestrator:
         kma: KMAClient,
         segformer: "SegFormerService",
         mapillary=None,          # app.services.mapillary.MapillaryClient — 우선 원천(선택)
+        mapillary_enabled: bool = False,  # True 여야 라이브 경로에서 Mapillary 우선 사용
         asos: ASOSClient | None = None,
         aws_obs=None,          # app.services.aws_obs.AWSObsClient — 강수 판정용(선택)
         archive=None,          # app.services.archive.Archive — 측정 이력 적재(선택)
@@ -185,6 +186,7 @@ class VPTIOrchestrator:
         self.cache = cache
         self.street_view = street_view
         self.mapillary = mapillary   # 있으면 Mapillary 우선 → 없으면/실패 시 GSV 폴백
+        self.mapillary_enabled = mapillary_enabled
         self.kma = kma
         self.segformer = segformer
         self.asos = asos
@@ -219,7 +221,7 @@ class VPTIOrchestrator:
 
         meta = None
         # ① Mapillary 우선(있으면) — CC BY-SA, 저장·학습 합법 + 무료
-        if self.mapillary is not None:
+        if self.mapillary is not None and self.mapillary_enabled:
             for radius_m in self.PANO_SEARCH_RADII_M:
                 try:
                     m = await self.mapillary.get_pano_metadata(lat, lon, radius_m=radius_m)
@@ -255,6 +257,48 @@ class VPTIOrchestrator:
         return meta.pano_id, meta.lat, meta.lon
 
     # ===== 공간 분석 =====
+
+    async def probe_sources(self, lat: float, lon: float) -> dict:
+        """진단 전용 — 한 좌표에서 Mapillary와 GSV 각각으로 SVF/GVI/BVI를 산출해 비교.
+
+        라이브 경로·캐시·enabled 플래그와 무관하게 두 원천을 직접 호출한다.
+        Mapillary 켜기 전 품질/커버리지 확인용.
+        """
+        from app.services.mapillary import _haversine_m
+
+        async def _one(client, name):
+            if client is None:
+                return {"available": False, "reason": f"{name} 클라이언트 없음"}
+            meta = None
+            for r in self.PANO_SEARCH_RADII_M:
+                try:
+                    m = await client.get_pano_metadata(lat, lon, radius_m=r)
+                except Exception as e:  # noqa: BLE001
+                    return {"available": False, "reason": f"{type(e).__name__}: {e}"}
+                if m.status == "OK" and m.pano_id:
+                    meta = m
+                    radius = r
+                    break
+            if meta is None:
+                return {"found": False, "reason": "≤400m 내 없음"}
+            dist = round(_haversine_m(lat, lon, meta.lat, meta.lon), 1)
+            try:
+                sv = await client.fetch_five_views(meta)
+                a = await self._analyze_views(sv)
+            except Exception as e:  # noqa: BLE001
+                return {"found": True, "radius_m": radius, "distance_m": dist,
+                        "reason": f"분석 실패 {type(e).__name__}: {e}"}
+            return {"found": True, "radius_m": radius, "distance_m": dist,
+                    "pano_id": meta.pano_id, "date": meta.date,
+                    "svf": round(a.svf, 3), "gvi": round(a.gvi, 3), "bvi": round(a.bvi, 3)}
+
+        mly = await _one(self.mapillary, "Mapillary")
+        gsv = await _one(self.street_view, "GSV")
+        out = {"lat": lat, "lon": lon, "mapillary": mly, "gsv": gsv}
+        if mly.get("found") and gsv.get("found"):
+            out["delta"] = {k: round(mly[k] - gsv[k], 3) for k in ("svf", "gvi", "bvi")
+                            if k in mly and k in gsv}
+        return out
 
     async def _get_or_compute_pano_analysis(
         self,

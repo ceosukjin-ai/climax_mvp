@@ -112,6 +112,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 cache=cache,
                 street_view=sv_client,
                 mapillary=mly_client,
+                mapillary_enabled=settings.mapillary_enabled,
                 kma=kma_client,
                 segformer=segformer,
                 asos=asos_client,

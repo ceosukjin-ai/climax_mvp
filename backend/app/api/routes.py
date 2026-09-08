@@ -1579,6 +1579,28 @@ async def archive_btli(
     return r
 
 
+@router.get("/archive/mapillary_probe", include_in_schema=False)
+async def archive_mapillary_probe(
+    request: Request,
+    lat: float = Query(...), lon: float = Query(...),
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """진단 — 한 좌표에서 Mapillary vs GSV 로 SVF/GVI/BVI 비교 (켜기 전 품질 확인용).
+
+    라이브 경로·캐시와 무관. Mapillary 커버리지·재투영 품질을 GSV와 나란히 본다.
+    """
+    _require_field_key(x_field_key)
+    orch = getattr(request.app.state, "orchestrator", None)
+    if orch is None:
+        return {"ok": False, "reason": "orchestrator 미초기화"}
+    try:
+        r = await orch.probe_sources(lat, lon)
+        r["ok"] = True
+        return r
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+
+
 @router.get("/archive/wind_compare", include_in_schema=False)
 async def archive_wind_compare(
     request: Request,
