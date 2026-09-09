@@ -1596,6 +1596,21 @@ async def archive_geo_svf(
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
 
 
+@router.get("/geo/form", summary="좌표의 공간 형태 — 기하 SVF·가로폭·협곡비 (건물GIS만, 키 불필요)")
+async def geo_form(lat: float = Query(...), lon: float = Query(...)) -> dict:
+    """정적 공간형태만 반환(날씨·위성 호출 없음). 몸씨 기록 좌표의 골목/폭 분포 집계용 (2026-09-10)."""
+    from app.services.geo import svf_geometric, street_width_geometric
+    try:
+        s = await svf_geometric(lat, lon)
+        w = await street_width_geometric(lat, lon)
+        return {"ok": True, "lat": lat, "lon": lon, "svf": s.get("svf"),
+                "n_buildings": s.get("n_buildings"), "svf_source": s.get("source"),
+                "street_width_m": w.get("width_m"), "hw_ratio": w.get("hw_ratio"),
+                "street_axis_deg": w.get("axis_deg"), "snapped_m": w.get("snapped_m")}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+
+
 async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     """GSV 없이 좌표 → 완전한 체감(VPTI). 기하 SVF(사전적재 건물)+기하 그늘+Open-Meteo
     날씨+Sentinel-2 위성 GVI+교정엔진(compute_vpti_thermal, UTCI/PET). 전세계 파일럿.
