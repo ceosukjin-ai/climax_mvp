@@ -206,6 +206,64 @@ def estimate_wall_temp(
     return ts
 
 
+def estimate_wall_temp_transient(
+    samples: list, wall_albedo: float, wall_emissivity: float, sunlit_frac: float,
+    wind_ms: float, eps_sky: float, heat_capacity: float,
+    config: MRTConfig = DEFAULT_CONFIG.mrt, dt: float = 120.0,
+) -> float:
+    """과도상태 벽면 온도 [°C] — 열질량 저장항 포함(2026-09-09, 열지연 v1).
+
+    estimate_wall_temp 정상상태 balance 에 C·dT/dt 저장항을 더해 과거 몇 시간의
+    기온·일사 forcing 을 적분한다. 콘크리트(C 큼)는 저녁까지 열을 붙들고, 목조(C 작음)는
+    빨리 식는다 → 같은 순간에도 재질별 벽온도가 갈린다. samples 없으면 정상상태로 폴백.
+
+    samples: (age_s, air_temp_c, dni, dhi, solar_elev_deg) 를 **과거→현재**(마지막 age≈0) 순.
+    """
+    if not samples or heat_capacity <= 0:
+        return None  # 호출부에서 정상상태 폴백
+    eps_w = min(max(wall_emissivity, 0.0), 1.0)
+    alb = min(max(wall_albedo, 0.0), 1.0)
+    sf = max(0.0, min(1.0, sunlit_frac))
+    h_c = convective_coefficient(wind_ms, config)
+    env = config.env_emissivity
+
+    def sw_abs(dni, dhi, el):
+        beta = math.radians(max(el, 0.0))
+        return (1.0 - alb) * max(0.0, dni * math.cos(beta) * sf + dhi * 0.5)
+
+    def l_down(ta):
+        return STEFAN_BOLTZMANN * (ta + KELVIN) ** 4 * (0.5 * eps_sky + 0.5 * env)
+
+    def interp(age):
+        for i in range(len(samples) - 1):
+            a0 = samples[i][0]; a1 = samples[i + 1][0]
+            if a0 >= age >= a1:
+                f = 0.0 if a0 == a1 else (a0 - age) / (a0 - a1)
+                return tuple(samples[i][j] + (samples[i + 1][j] - samples[i][j]) * f
+                             for j in range(1, 5))
+        return samples[-1][1:5] if age <= samples[-1][0] else samples[0][1:5]
+
+    # 초기: 가장 오래된 샘플의 정상상태
+    ta, dni, dhi, el = samples[0][1:5]
+    ts = ta
+    for _ in range(30):
+        ts_k = ts + KELVIN
+        fv = sw_abs(dni, dhi, el) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
+        fp = -4.0 * eps_w * STEFAN_BOLTZMANN * ts_k ** 3 - h_c
+        ts -= fv / fp
+        if abs(fv / fp) < 1e-4:
+            break
+    # 과거→현재 적분(explicit Euler, dt)
+    age = samples[0][0]
+    while age > 0:
+        ta, dni, dhi, el = interp(age)
+        ts_k = ts + KELVIN
+        flux = sw_abs(dni, dhi, el) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
+        ts += dt * flux / heat_capacity
+        age -= dt
+    return ts
+
+
 def compute_mrt(
     solar: SolarResult,
     air_temp_c: float,

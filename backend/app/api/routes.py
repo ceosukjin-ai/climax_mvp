@@ -1662,13 +1662,29 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     # ⚠️ v1: 벽 재질 콘크리트 기본(alb0.30), sunlit_frac 0.45 근사. 방위 정밀화·PLATEAU 재질은 다음 단계.
     wall_temp = None
     wall_mat = await dominant_wall_material(lat, lon)
-    if sol.solar_elevation_deg > 0.0 and svf < 0.92:
-        from vpti_core.mrt import estimate_wall_temp, sky_emissivity
+    if svf < 0.92:                             # 둘러싸인 곳: 벽 복사 유효
+        from vpti_core.mrt import (estimate_wall_temp, estimate_wall_temp_transient,
+                                   sky_emissivity)
+        from app.services.open_meteo import get_hourly_air_series
         _epsk = sky_emissivity(obs.temperature_c, obs.humidity_pct,
                                sol.cloud_fraction, DEFAULT_CONFIG.mrt)
-        wall_temp = estimate_wall_temp(obs.temperature_c, sol,
-                                       wall_mat["albedo"], wall_mat["emissivity"], 0.45,
-                                       obs.wind_speed_ms, _epsk, DEFAULT_CONFIG.mrt)
+        _a, _e, _hc = wall_mat["albedo"], wall_mat["emissivity"], wall_mat.get("hc", 100000.0)
+        # 과거 12h forcing(시간별 기온 + 시간별 기하 일사) → 열질량 과도 벽온도
+        _series = []
+        try:
+            for _age, _ta in await get_hourly_air_series(lat, lon, 12):
+                _sh = estimate_solar(lat, lon, now - timedelta(seconds=_age),
+                                     config=DEFAULT_CONFIG.solar)
+                _series.append((_age, _ta, _sh.dni, _sh.dhi, _sh.solar_elevation_deg))
+        except Exception:  # noqa: BLE001
+            _series = []
+        if _series:
+            _series.append((0.0, obs.temperature_c, sol.dni, sol.dhi, sol.solar_elevation_deg))
+            wall_temp = estimate_wall_temp_transient(
+                _series, _a, _e, 0.45, obs.wind_speed_ms, _epsk, _hc, DEFAULT_CONFIG.mrt)
+        if wall_temp is None and sol.solar_elevation_deg > 0.0:   # 시리즈 없으면 정상상태
+            wall_temp = estimate_wall_temp(obs.temperature_c, sol, _a, _e, 0.45,
+                                           obs.wind_speed_ms, _epsk, DEFAULT_CONFIG.mrt)
     r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
                              road_axis_deg=0.0, lat=lat, lon=lon, when=now,
                              direct_shade=direct_shade, wall_temp_c=wall_temp)

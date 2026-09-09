@@ -21,6 +21,7 @@ from app.services.kma import KMAObservation
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 _CACHE_TTL_SEC = 600.0
 _cache: dict[tuple[float, float], tuple[float, KMAObservation]] = {}
+_hourly_cache: dict[tuple[float, float], tuple[float, list]] = {}
 _client: httpx.AsyncClient | None = None
 
 
@@ -69,3 +70,39 @@ async def get_current_observation(lat: float, lon: float) -> KMAObservation:
     logger.info("[timing] 기상(Open-Meteo) 조회: ({:.4f},{:.4f}) T{:.1f} RH{:.0f} W{:.1f}",
                 lat, lon, obs.temperature_c, obs.humidity_pct, obs.wind_speed_ms)
     return obs
+
+
+async def get_hourly_air_series(lat: float, lon: float, hours_back: int = 12) -> list:
+    """과거 hours_back 시간의 시간별 기온 → [(age_s, temp_c)] **과거→현재** 순.
+
+    열질량 벽온도(estimate_wall_temp_transient)의 forcing 히스토리. 실패 시 [](정상상태 폴백).
+    """
+    key = (round(lat, 2), round(lon, 2))
+    hit = _hourly_cache.get(key)
+    if hit is not None and time.time() - hit[0] < _CACHE_TTL_SEC:
+        return hit[1]
+    params = {
+        "latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}",
+        "hourly": "temperature_2m", "past_days": "1", "forecast_days": "1",
+        "timeformat": "unixtime",
+    }
+    try:
+        r = await _get_client().get(OPEN_METEO_URL, params=params)
+        r.raise_for_status()
+        h = (r.json() or {}).get("hourly") or {}
+        times = h.get("time") or []
+        temps = h.get("temperature_2m") or []
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[open-meteo] hourly 실패 ({}): {}", type(e).__name__, e)
+        return []
+    now = time.time()
+    out = []
+    for t, tc in zip(times, temps):
+        if tc is None:
+            continue
+        age = now - float(t)
+        if -1800.0 <= age <= hours_back * 3600.0 + 1800.0:
+            out.append((max(0.0, age), float(tc)))
+    out.sort(key=lambda x: -x[0])            # 과거→현재
+    _hourly_cache[key] = (now, out)
+    return out

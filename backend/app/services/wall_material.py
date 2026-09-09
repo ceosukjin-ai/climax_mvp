@@ -15,13 +15,15 @@ albedo/emissivity 출처: 도시기상·건물외피 문헌 통용값(콘크리�
 from __future__ import annotations
 
 # 재질 클래스 → {albedo(단파 반사), emissivity(장파 방사율)}
+# hc = 면적열용량 [J/m²K] = ρ·c·(일주 열침투깊이). 열질량 → 시간지연(과도 벽온도)의 근거.
+# 콘크리트/석재는 크고(저녁까지 더움), 목조·유리·금속은 작다(빨리 식음).
 MATERIAL_PROPS: dict[str, dict[str, float]] = {
-    "glass":    {"albedo": 0.20, "emissivity": 0.90},   # 커튼월 — 경면반사는 후속
-    "concrete": {"albedo": 0.30, "emissivity": 0.92},   # RC/SRC, 도시 기본
-    "brick":    {"albedo": 0.35, "emissivity": 0.93},   # 벽돌·조적
-    "wood":     {"albedo": 0.30, "emissivity": 0.90},   # 목조(일본 주택 다수)
-    "metal":    {"albedo": 0.50, "emissivity": 0.30},   # 금속외피 — ε 낮아 야간 덜 식음
-    "stone":    {"albedo": 0.33, "emissivity": 0.93},
+    "glass":    {"albedo": 0.20, "emissivity": 0.90, "hc": 13000.0},   # 얇은 판+공기층
+    "concrete": {"albedo": 0.30, "emissivity": 0.92, "hc": 237000.0},  # RC/SRC 큰 열질량
+    "brick":    {"albedo": 0.35, "emissivity": 0.93, "hc": 177000.0},
+    "wood":     {"albedo": 0.30, "emissivity": 0.90, "hc": 54000.0},   # 저열질량 → 빨리 식음
+    "metal":    {"albedo": 0.50, "emissivity": 0.30, "hc": 12000.0},   # 얇은 외피
+    "stone":    {"albedo": 0.33, "emissivity": 0.93, "hc": 388000.0},
 }
 DEFAULT_MATERIAL = "concrete"   # 용도 불명(building=yes 등) 도시 기본 = 현행 하드코딩과 동일
 
@@ -129,18 +131,19 @@ def blend(weighted: list[tuple[str, float]]) -> dict:
     if not weighted:
         p = props_for(DEFAULT_MATERIAL)
         return {"material": DEFAULT_MATERIAL, "albedo": p["albedo"],
-                "emissivity": p["emissivity"], "mix": {}}
+                "emissivity": p["emissivity"], "hc": p.get("hc", 100000.0), "mix": {}}
     wsum = sum(max(0.0, w) for _, w in weighted) or 1.0
-    alb = emi = 0.0
+    alb = emi = hc = 0.0
     mix: dict[str, float] = {}
     for m, w in weighted:
         w = max(0.0, w)
         p = props_for(m)
         alb += p["albedo"] * w
         emi += p["emissivity"] * w
+        hc += p.get("hc", 100000.0) * w
         mix[m] = mix.get(m, 0.0) + w
     dominant = max(mix.items(), key=lambda kv: kv[1])[0]
     return {"material": dominant, "albedo": round(alb / wsum, 3),
-            "emissivity": round(emi / wsum, 3),
+            "emissivity": round(emi / wsum, 3), "hc": round(hc / wsum, 0),
             "mix": {k: round(v / wsum, 2) for k, v in
                     sorted(mix.items(), key=lambda kv: -kv[1])}}
