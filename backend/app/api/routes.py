@@ -1651,11 +1651,14 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
                              road_axis_deg=0.0, lat=lat, lon=lon, when=now,
                              direct_shade=direct_shade)
+    cat = str(r.stress_category)
+    direction = "heat" if "heat" in cat else ("cold" if "cold" in cat else "neutral")
     return {
         "ok": True, "lat": lat, "lon": lon,
         "vpti": round(float(r.vpti), 1),
         "risk": str(r.risk_level),
-        "stress_category": r.stress_category,
+        "stress_category": cat,
+        "stress_direction": direction,   # heat/cold/neutral — UI 색상 방향
         "comfort_index": r.comfort_index,
         "mrt_c": round(float(r.mrt.tmrt), 1),
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
