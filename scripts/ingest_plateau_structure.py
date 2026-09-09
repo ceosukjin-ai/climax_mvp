@@ -50,29 +50,33 @@ def tile_key(lat: float, lon: float) -> str:
 
 def load_codelist(udx_root: str) -> dict:
     """데이터셋 코드리스트 → {코드: 재질클래스}. 못 찾으면 빈 dict(코드표 폴백 사용)."""
-    cands = glob.glob(os.path.join(udx_root, "..", "codelists",
-                                   "BuildingDetailAttribute_buildingStructureType.xml"))
-    cands += glob.glob(os.path.join(udx_root, "**",
-                                    "BuildingDetailAttribute_buildingStructureType.xml"),
-                       recursive=True)
+    cldir = os.path.join(udx_root, "..", "codelists")
+    files = ["BuildingDetailAttribute_buildingStructureType.xml",
+             "KeyValuePairAttribute_key100.xml"]
     code2mat: dict[str, str] = {}
-    for path in cands[:1]:
+    paths = []
+    for fn in files:
+        paths += (glob.glob(os.path.join(cldir, fn))
+                  or glob.glob(os.path.join(udx_root, "**", fn), recursive=True))[:1]
+    for path in paths:
         try:
             tree = etree.parse(path)
         except Exception:
             continue
-        name = desc = None
-        for el in tree.iter():
-            ln = _lname(el.tag)
-            if ln == "name":
-                name = (el.text or "").strip()
-            elif ln == "description":
-                desc = (el.text or "").strip()
-            if name and desc is not None:      # 한 엔트리의 코드+라벨이 모이면 매핑
-                mat = WM.struct_label_to_material(desc)
+        for defn in tree.iter():
+            if _lname(defn.tag) != "Definition":     # 엔트리 단위(사전 최상위 name 무시)
+                continue
+            nm = dsc = None
+            for c in defn.iter():
+                ln = _lname(c.tag)
+                if ln == "name":
+                    nm = (c.text or "").strip()
+                elif ln == "description":
+                    dsc = (c.text or "").strip()
+            if nm and dsc:
+                mat = WM.struct_label_to_material(dsc)
                 if mat:
-                    code2mat[name] = mat
-                name = desc = None
+                    code2mat[nm] = mat
     return code2mat
 
 
@@ -96,25 +100,21 @@ def parse_gml(path: str, code2mat: dict, bbox, buckets: dict) -> int:
     W, S, E, N = bbox if bbox else (-999, -999, 999, 999)
     n = 0
     ctx = etree.iterparse(path, events=("end",), tag="{*}Building", huge_tree=True)
+    # 방대한 LOD2 지오메트리를 피해 필요한 것만 얕은 XPath(C 레벨)로 추출
+    XP_CODE = "./*[local-name()='buildingDetailAttribute']//*[local-name()='buildingStructureType']/text()"
+    XP_KEY100 = ("./*[local-name()='bldgKeyValuePairAttribute']"
+                 "//*[local-name()='KeyValuePairAttribute']"
+                 "[./*[local-name()='key']='100']/*[local-name()='codeValue']/text()")
+    XP_ROOF = "./*[local-name()='lod0RoofEdge']//*[local-name()='posList']/text()"
+    XP_FOOT = "./*[local-name()='lod0FootPrint']//*[local-name()='posList']/text()"
     for _, bldg in ctx:
-        code = None
-        roof = foot = anyp = None
-        for el in bldg.iter():
-            ln = _lname(el.tag)
-            if ln == "buildingStructureType" and el.text:
-                code = el.text.strip()
-            elif ln in ("lod0RoofEdge", "lod0FootPrint", "lod0Geometry"):
-                pls = [e.text for e in el.iter()
-                       if _lname(e.tag) == "posList" and e.text]
-                if pls:
-                    if ln == "lod0RoofEdge" and roof is None:
-                        roof = pls[0]
-                    elif foot is None:
-                        foot = pls[0]
-            elif ln == "posList" and el.text and anyp is None:
-                anyp = el.text
-        src = roof or foot or anyp
-        cen = _centroid_from_poslist(src) if src else None
+        codes = bldg.xpath(XP_CODE) or bldg.xpath(XP_KEY100)
+        code = codes[0].strip() if codes and codes[0] else None
+        cen = None
+        if code:                                   # 구조 없으면 지오메트리도 안 봄
+            pls = bldg.xpath(XP_ROOF) or bldg.xpath(XP_FOOT)
+            if pls and pls[0]:
+                cen = _centroid_from_poslist(pls[0])
         if code and cen:
             la, lo = cen
             if W <= lo <= E and S <= la <= N:

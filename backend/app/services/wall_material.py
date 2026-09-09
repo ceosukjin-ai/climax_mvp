@@ -99,6 +99,10 @@ def struct_label_to_material(label: str) -> str | None:
         return "concrete"
     if "鉄骨" in s:                     # S/軽量鉄骨 = 철골(ALC 패널 가정)
         return "concrete"
+    if "耐火" in s or "準防火" in s:      # 방화분류(建物構造コード): 내화/준방화 → 콘크리트급
+        return "concrete"
+    if "防火" in s:                        # 방화조(모르타르 마감 목조) → 목재급
+        return "wood"
     return None
 
 
