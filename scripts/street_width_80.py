@@ -33,13 +33,15 @@ def main():
             print(f"  {i} 실패 {e}"); d = {}
         w, hw = d.get("street_width_m"), d.get("hw_ratio")
         out.append({**r, "width_m": w if w is not None else "", "hw_ratio": hw if hw is not None else "",
-                    "api_svf": d.get("svf", ""), "폭등급": cls(w)})
+                    "api_svf": d.get("svf", ""), "snapped_m": d.get("snapped_m", ""), "폭등급": cls(w)})
         if i % 10 == 0:
             print(f"  {i}/80", flush=True)
         time.sleep(0.2)
     with open(OUT, "w", encoding="utf-8-sig", newline="") as f:
         wr = csv.DictWriter(f, fieldnames=list(out[0].keys())); wr.writeheader(); wr.writerows(out)
     print(f"저장: {OUT}")
+    ns = sum(1 for o in out if o["snapped_m"] not in ("", None, 0, 0.0) and float(o["snapped_m"]) > 0)
+    print(f"GPS 오차로 건물 안에 찍혀 골목으로 끌어낸 지점: {ns}/80")
 
     print("\n=== 폭등급별 (n, 폭, H/W, SVF, 실측PET, 엔진v2 bias, MAE, 그늘비율) ===")
     for c in ("보행골목(<6m)", "혼합골목(6-12m)", "큰길(12m+)", "개방"):

@@ -1733,7 +1733,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "wall_material": wall_mat["material"],
         "wall_albedo": wall_mat["albedo"], "wall_mix": wall_mat["mix"],
         "street_width_m": _sw.get("width_m"), "hw_ratio": _sw.get("hw_ratio"),
-        "street_axis_deg": _sw.get("axis_deg"),
+        "street_axis_deg": _sw.get("axis_deg"), "snapped_m": _sw.get("snapped_m"),
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
         "svf_source": svf_r.get("source"),
         "gvi": round(gvi, 3), "gvi_src": gvi_src,

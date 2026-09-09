@@ -296,6 +296,48 @@ def _ray_ring_hit(dx: float, dy: float, ring: list[tuple[float, float]]) -> floa
     return best
 
 
+def _closest_on_ring(px: float, py: float, ring: list[tuple[float, float]]) -> tuple[float, float]:
+    """점에서 폴리곤 외곽선까지 최근접점."""
+    best = None
+    bd = float("inf")
+    for i in range(len(ring) - 1):
+        x1, y1 = ring[i]; x2, y2 = ring[i + 1]
+        ex, ey = x2 - x1, y2 - y1
+        L2 = ex * ex + ey * ey
+        t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - x1) * ex + (py - y1) * ey) / L2))
+        qx, qy = x1 + t * ex, y1 + t * ey
+        d = (qx - px) ** 2 + (qy - py) ** 2
+        if d < bd:
+            bd, best = d, (qx, qy)
+    return best or (px, py)
+
+
+def _snap_outside(rings: list, clearance_m: float = 1.0, max_iter: int = 3) -> tuple[list, float]:
+    """GPS 오차로 점이 건물 폴리곤 안에 떨어지면, 가장 가까운 외곽선 밖 clearance_m 로 이동
+    (2026-09-09). 좁은 골목(3~5m)에서 5~10m GPS 오차면 흔함 — 그 건물을 '제외'하면 폭·SVF가
+    블록 반대편까지 열려 크게 틀린다. 반환: (평행이동된 rings, 이동거리 m). 원점은 (0,0) 유지."""
+    ox = oy = 0.0
+    moved = 0.0
+    for _ in range(max_iter):
+        inside = next((r for r, _p in rings if len(r) >= 4 and _point_in_ring(ox, oy, r)), None)
+        if inside is None:
+            break
+        qx, qy = _closest_on_ring(ox, oy, inside)
+        dx, dy = qx - ox, qy - oy
+        n = math.hypot(dx, dy)
+        if n < 1e-6:              # 정확히 외곽선 위 → 폴리곤 중심 반대 방향으로
+            cx = sum(x for x, _ in inside[:-1]) / (len(inside) - 1)
+            cy = sum(y for _, y in inside[:-1]) / (len(inside) - 1)
+            dx, dy = ox - cx, oy - cy
+            n = math.hypot(dx, dy) or 1.0
+        ox, oy = qx + dx / n * clearance_m, qy + dy / n * clearance_m
+        moved = math.hypot(ox, oy)
+    if moved == 0.0:
+        return rings, 0.0
+    shifted = [([(x - ox, y - oy) for x, y in r], p) for r, p in rings]
+    return shifted, moved
+
+
 async def svf_geometric(
     lat: float, lon: float, eye_height_m: float = 1.5, az_step_deg: int = 2,
     default_floors: int = 2,
@@ -309,6 +351,7 @@ async def svf_geometric(
     rings, src = await _rings_cached(lat, lon)
     if not rings:
         return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 폴리곤 없음"}
+    rings, snapped = _snap_outside(rings)   # GPS 오차로 건물 안이면 골목으로 끌어냄
 
     # (외곽선 좌표, 높이) — 점을 품은 건물은 제외(그 안이면 판정불가), 층수결측은 기본높이
     blds: list[tuple[list[tuple[float, float]], float]] = []
@@ -341,7 +384,7 @@ async def svf_geometric(
         sin2_sum += math.sin(beta_max) ** 2
     svf = 1.0 - sin2_sum / n_sectors
     return {"svf": round(max(0.0, min(1.0, svf)), 3), "source": src,
-            "n_buildings": len(blds)}
+            "n_buildings": len(blds), "snapped_m": round(snapped, 1)}
 
 
 async def street_width_geometric(
@@ -357,6 +400,7 @@ async def street_width_geometric(
     rings, src = await _rings_cached(lat, lon)
     if not rings:
         return {"width_m": None, "hw_ratio": None, "axis_deg": None, "source": src or ""}
+    rings, snapped = _snap_outside(rings)
     blds: list[tuple[list[tuple[float, float]], float]] = []
     for ring, props in rings:
         if len(ring) < 4 or _point_in_ring(0.0, 0.0, ring):
@@ -390,7 +434,7 @@ async def street_width_geometric(
     w, hm, az_perp = best
     return {"width_m": round(w, 1), "hw_ratio": round(hm / w, 2) if w > 0 else None,
             "axis_deg": (az_perp + 90) % 180,     # 도로축 방향(폭 방향에 수직)
-            "source": src}
+            "source": src, "snapped_m": round(snapped, 1)}
 
 
 async def dominant_wall_material(
