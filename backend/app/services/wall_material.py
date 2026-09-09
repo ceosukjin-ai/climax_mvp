@@ -60,14 +60,16 @@ _OSM_MATERIAL: dict[str, str] = {
 # 607 보강콘크리트블록 / 608 석조 / 610 기타 / 611 불명
 _PLATEAU_STRUCT: dict[str, str] = {
     "601": "wood", "602": "concrete", "603": "concrete",
-    "604": "glass", "605": "glass", "606": "brick",
+    "604": "concrete", "605": "concrete", "606": "brick",
     "607": "concrete", "608": "stone",
 }
 # 문자 표기(RC/SRC/S/W)도 지원
 _PLATEAU_ALPHA: dict[str, str] = {
     "W": "wood", "RC": "concrete", "SRC": "concrete",
-    "S": "glass", "LS": "glass", "CB": "brick", "B": "brick", "ST": "stone",
+    "S": "concrete", "LS": "concrete", "CB": "brick", "B": "brick", "ST": "stone",
 }
+# 유리(glass)는 구조가 아니라 외피 신호 → OSM 용도(office 등)로만 판정. PLATEAU 구조는
+# 목조/콘크리트/철골(ALC≈콘크리트)/조적/석재의 열질량 구분에만 사용.
 
 
 def material_from_osm(tags: dict) -> str:
@@ -79,6 +81,25 @@ def material_from_osm(tags: dict) -> str:
         return _OSM_MATERIAL[bm]
     bt = str(tags.get("building", "")).strip().lower()
     return _OSM_TYPE.get(bt, DEFAULT_MATERIAL)
+
+
+def struct_label_to_material(label: str) -> str | None:
+    """PLATEAU 코드리스트의 구조 라벨(일본어) → 재질 클래스. 코드값 변동에 무관하게 견고.
+    예: "鉄筋コンクリート造"→concrete, "木造"→wood, "鉄骨造"→concrete(ALC 외피), "石造"→stone."""
+    if not label:
+        return None
+    s = str(label)
+    if "木" in s or "土蔵" in s:
+        return "wood"
+    if "ブロック" in s or "れんが" in s or "レンガ" in s or "煉瓦" in s:
+        return "brick"
+    if "石造" in s or ("石" in s and "コンクリート" not in s):
+        return "stone"
+    if "コンクリート" in s:            # 鉄筋/鉄骨鉄筋 コンクリート = RC/SRC
+        return "concrete"
+    if "鉄骨" in s:                     # S/軽量鉄骨 = 철골(ALC 패널 가정)
+        return "concrete"
+    return None
 
 
 def material_from_plateau(struct_code: str) -> str | None:
