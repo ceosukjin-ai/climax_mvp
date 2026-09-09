@@ -171,6 +171,13 @@ def estimate_ground_temp(
         if abs(step) < 1e-4:
             break
 
+    # 지면 열관성(2026-09-09): 그늘(직달 차단)에서도 승온분의 shade_ground_retention 만큼 유지
+    ret = min(max(getattr(config, "shade_ground_retention", 0.0), 0.0), 1.0)
+    if direct_shade < 1.0 and ret > 0.0:
+        ts_full = estimate_ground_temp(air_temp_c, solar, ground_albedo, ground_emissivity,
+                                       svf, 0.0, wind_ms, eps_sky, config, 1.0)
+        ts = ts + ret * (ts_full - ts)
+
     g = min(max(gvi, 0.0), 1.0)
     return g * air_temp_c + (1.0 - g) * ts
 

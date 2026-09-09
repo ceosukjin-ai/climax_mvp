@@ -76,4 +76,4 @@ def main(path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1 else "data/tier3_engine_output_80_v2.csv")
+    main(sys.argv[1] if len(sys.argv) > 1 else "data/tier3_engine_output_80_v4.csv")
