@@ -1699,6 +1699,18 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
                              road_axis_deg=0.0, lat=lat, lon=lon, when=now,
                              direct_shade=direct_shade, wall_temp_c=wall_temp)
+    # PET 잔차 AI — 물리 뼈대 위 학습 보정(부산 실측 80점, LOSO 2.66). 분포 밖이면 물리 폴백.
+    from vpti_core.comfort import compute_pet
+    from vpti_core.pet_residual import apply_pet_residual
+    _pet_phys = float(compute_pet(tdb=obs.temperature_c, tr=float(r.mrt.tmrt),
+                                  v=r.pedestrian_wind_ms, rh=obs.humidity_pct,
+                                  season=r.season, config=DEFAULT_CONFIG.comfort).value)
+    _feats = {"볕": direct_shade, "tier3_svf": svf, "tier3_gvi": gvi,
+              "Ta": obs.temperature_c, "RH": obs.humidity_pct, "v": obs.wind_speed_ms,
+              "태양고도": sol.solar_elevation_deg, "run_C_Tmrt": float(r.mrt.tmrt),
+              "run_C_PET": _pet_phys,
+              "ndvi30": (surface["ndvi"] if surface is not None else None)}
+    _pet_ai, _ai_on, _ai_conf = apply_pet_residual(_pet_phys, _feats)
     cat = str(r.stress_category)
     direction = "heat" if "heat" in cat else ("cold" if "cold" in cat else "neutral")
     return {
@@ -1708,6 +1720,9 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "stress_category": cat,
         "stress_direction": direction,   # heat/cold/neutral — UI 색상 방향
         "comfort_index": r.comfort_index,
+        "pet_physics": round(_pet_phys, 1),          # 물리 엔진 PET
+        "pet_ai": round(_pet_ai, 1),                 # 잔차 AI 보정 PET(분포 밖이면 =물리)
+        "ai_applied": _ai_on, "ai_confidence": round(_ai_conf, 2),
         "mrt_c": round(float(r.mrt.tmrt), 1),
         "wall_c": (round(sum(wall_temp.values()) / len(wall_temp), 1)
                    if isinstance(wall_temp, dict)
