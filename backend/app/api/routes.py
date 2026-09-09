@@ -1669,19 +1669,30 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         _epsk = sky_emissivity(obs.temperature_c, obs.humidity_pct,
                                sol.cloud_fraction, DEFAULT_CONFIG.mrt)
         _a, _e, _hc = wall_mat["albedo"], wall_mat["emissivity"], wall_mat.get("hc", 100000.0)
-        # 과거 12h forcing(시간별 기온 + 시간별 기하 일사) → 열질량 과도 벽온도
+        # 과거 12h forcing(시간별 기온 + 시간별 기하 일사·방위) → 열질량 과도 벽온도
         _series = []
         try:
             for _age, _ta in await get_hourly_air_series(lat, lon, 12):
                 _sh = estimate_solar(lat, lon, now - timedelta(seconds=_age),
                                      config=DEFAULT_CONFIG.solar)
-                _series.append((_age, _ta, _sh.dni, _sh.dhi, _sh.solar_elevation_deg))
+                _series.append((_age, _ta, _sh.dni, _sh.dhi,
+                                _sh.solar_elevation_deg, _sh.solar_azimuth_deg))
         except Exception:  # noqa: BLE001
             _series = []
         if _series:
-            _series.append((0.0, obs.temperature_c, sol.dni, sol.dhi, sol.solar_elevation_deg))
-            wall_temp = estimate_wall_temp_transient(
-                _series, _a, _e, 0.45, obs.wind_speed_ms, _epsk, _hc, DEFAULT_CONFIG.mrt)
+            _series.append((0.0, obs.temperature_c, sol.dni, sol.dhi,
+                            sol.solar_elevation_deg, sol.solar_azimuth_deg))
+            # look 방향 d 가 마주보는 파사드 법선 = d방위 + 180 (동향벽=아침, 서향벽=오후)
+            _FN = {"N": 180.0, "E": 270.0, "S": 0.0, "W": 90.0}
+            _wd = {}
+            for _d, _fn in _FN.items():
+                _wt = estimate_wall_temp_transient(
+                    _series, _a, _e, 0.45, obs.wind_speed_ms, _epsk, _hc,
+                    DEFAULT_CONFIG.mrt, facade_normal_deg=_fn)
+                if _wt is not None:
+                    _wd[_d] = _wt
+            if _wd:
+                wall_temp = _wd
         if wall_temp is None and sol.solar_elevation_deg > 0.0:   # 시리즈 없으면 정상상태
             wall_temp = estimate_wall_temp(obs.temperature_c, sol, _a, _e, 0.45,
                                            obs.wind_speed_ms, _epsk, DEFAULT_CONFIG.mrt)
@@ -1698,7 +1709,11 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "stress_direction": direction,   # heat/cold/neutral — UI 색상 방향
         "comfort_index": r.comfort_index,
         "mrt_c": round(float(r.mrt.tmrt), 1),
-        "wall_c": round(wall_temp, 1) if wall_temp is not None else None,
+        "wall_c": (round(sum(wall_temp.values()) / len(wall_temp), 1)
+                   if isinstance(wall_temp, dict)
+                   else (round(wall_temp, 1) if wall_temp is not None else None)),
+        "wall_dirs": ({k: round(v, 1) for k, v in wall_temp.items()}
+                      if isinstance(wall_temp, dict) else None),
         "wall_material": wall_mat["material"],
         "wall_albedo": wall_mat["albedo"], "wall_mix": wall_mat["mix"],
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),

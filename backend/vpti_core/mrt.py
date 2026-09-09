@@ -210,6 +210,7 @@ def estimate_wall_temp_transient(
     samples: list, wall_albedo: float, wall_emissivity: float, sunlit_frac: float,
     wind_ms: float, eps_sky: float, heat_capacity: float,
     config: MRTConfig = DEFAULT_CONFIG.mrt, dt: float = 120.0,
+    facade_normal_deg: float | None = None,
 ) -> float:
     """과도상태 벽면 온도 [°C] — 열질량 저장항 포함(2026-09-09, 열지연 v1).
 
@@ -217,7 +218,9 @@ def estimate_wall_temp_transient(
     기온·일사 forcing 을 적분한다. 콘크리트(C 큼)는 저녁까지 열을 붙들고, 목조(C 작음)는
     빨리 식는다 → 같은 순간에도 재질별 벽온도가 갈린다. samples 없으면 정상상태로 폴백.
 
-    samples: (age_s, air_temp_c, dni, dhi, solar_elev_deg) 를 **과거→현재**(마지막 age≈0) 순.
+    samples: (age_s, air_temp_c, dni, dhi, solar_elev_deg, solar_az_deg) 과거→현재.
+    facade_normal_deg 주면 그 벽 파사드 법선방위로 직달 입사(방위별 비대칭); None이면
+    sunlit_frac 근사(등방).
     """
     if not samples or heat_capacity <= 0:
         return None  # 호출부에서 정상상태 폴백
@@ -227,9 +230,14 @@ def estimate_wall_temp_transient(
     h_c = convective_coefficient(wind_ms, config)
     env = config.env_emissivity
 
-    def sw_abs(dni, dhi, el):
-        beta = math.radians(max(el, 0.0))
-        return (1.0 - alb) * max(0.0, dni * math.cos(beta) * sf + dhi * 0.5)
+    def sw_abs(dni, dhi, el, az):
+        if facade_normal_deg is None:            # 등방 근사(대표 sunlit_frac)
+            direct = dni * math.cos(math.radians(max(el, 0.0))) * sf
+        else:                                    # 방위별: 수직 벽면 직달 입사
+            cos_inc = (math.cos(math.radians(max(el, 0.0)))
+                       * math.cos(math.radians(az - facade_normal_deg)))
+            direct = dni * max(0.0, cos_inc)
+        return (1.0 - alb) * max(0.0, direct + dhi * 0.5)
 
     def l_down(ta):
         return STEFAN_BOLTZMANN * (ta + KELVIN) ** 4 * (0.5 * eps_sky + 0.5 * env)
@@ -240,15 +248,15 @@ def estimate_wall_temp_transient(
             if a0 >= age >= a1:
                 f = 0.0 if a0 == a1 else (a0 - age) / (a0 - a1)
                 return tuple(samples[i][j] + (samples[i + 1][j] - samples[i][j]) * f
-                             for j in range(1, 5))
-        return samples[-1][1:5] if age <= samples[-1][0] else samples[0][1:5]
+                             for j in range(1, 6))
+        return samples[-1][1:6] if age <= samples[-1][0] else samples[0][1:6]
 
     # 초기: 가장 오래된 샘플의 정상상태
-    ta, dni, dhi, el = samples[0][1:5]
+    ta, dni, dhi, el, az = samples[0][1:6]
     ts = ta
     for _ in range(30):
         ts_k = ts + KELVIN
-        fv = sw_abs(dni, dhi, el) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
+        fv = sw_abs(dni, dhi, el, az) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
         fp = -4.0 * eps_w * STEFAN_BOLTZMANN * ts_k ** 3 - h_c
         ts -= fv / fp
         if abs(fv / fp) < 1e-4:
@@ -256,9 +264,9 @@ def estimate_wall_temp_transient(
     # 과거→현재 적분(explicit Euler, dt)
     age = samples[0][0]
     while age > 0:
-        ta, dni, dhi, el = interp(age)
+        ta, dni, dhi, el, az = interp(age)
         ts_k = ts + KELVIN
-        flux = sw_abs(dni, dhi, el) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
+        flux = sw_abs(dni, dhi, el, az) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
         ts += dt * flux / heat_capacity
         age -= dt
     return ts
@@ -347,15 +355,22 @@ def compute_mrt(
 
     # 벽(측면·상향의 막힌 부분)은 별도 온도로 방사 — sunlit 벽이 뜨거우면 반영.
     # 하향(down)은 지면온도. wall_temp_c=None이면 기존과 동일(벽=지면).
-    if wall_temp_c is not None:
-        l_wall_flux = config.env_emissivity * STEFAN_BOLTZMANN * (wall_temp_c + KELVIN) ** 4
-    else:
-        l_wall_flux = l_surf_flux
+    def _wall_flux(temp_c):
+        return config.env_emissivity * STEFAN_BOLTZMANN * (temp_c + KELVIN) ** 4
+    if isinstance(wall_temp_c, dict):          # 방위별 벽온도(N/E/S/W), up=평균
+        _mean = sum(wall_temp_c.values()) / max(1, len(wall_temp_c))
+        wall_flux = {d: _wall_flux(wall_temp_c.get(d, _mean)) for d in ("N", "E", "S", "W")}
+        wall_flux["up"] = _wall_flux(_mean)
+    elif wall_temp_c is not None:              # 단일 벽온도(기존)
+        _wf = _wall_flux(wall_temp_c)
+        wall_flux = {d: _wf for d in f}
+    else:                                      # 벽=지면(기존 폴백)
+        wall_flux = {d: l_surf_flux for d in f}
     lw_sky = 0.0
     lw_surface = 0.0
     for d in f:
         lw_sky += eps_p * f[d] * (l_sky_flux * psi_sky[d])
-        flux = l_surf_flux if d == "down" else l_wall_flux
+        flux = l_surf_flux if d == "down" else wall_flux[d]
         lw_surface += eps_p * f[d] * (flux * psi_grd[d])
 
     # --- 평균복사속 → Tmrt ---
