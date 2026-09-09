@@ -1603,7 +1603,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     """
     from datetime import datetime, timezone
     from app.services.geo import (svf_geometric, sun_blocked_outdoor,
-                                  dominant_wall_material)
+                                  dominant_wall_material, street_width_geometric)
     from app.services.open_meteo import get_current_observation
     from app.services.sentinel_hub import (get_surface as _get_surface,
         ndvi_to_gvi as _ndvi_to_gvi, surface_to_materials as _surf_to_mats)
@@ -1617,6 +1617,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         return {"ok": False, "reason": svf_r.get("reason", "SVF 없음"),
                 "svf": None, "lat": lat, "lon": lon}
     svf = float(svf_r["svf"])
+    _sw = await street_width_geometric(lat, lon)   # 가로 폭·협곡비 (2026-09-09)
 
     obs = await get_current_observation(lat, lon)
     now = datetime.now(timezone.utc)
@@ -1731,6 +1732,8 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
                       if isinstance(wall_temp, dict) else None),
         "wall_material": wall_mat["material"],
         "wall_albedo": wall_mat["albedo"], "wall_mix": wall_mat["mix"],
+        "street_width_m": _sw.get("width_m"), "hw_ratio": _sw.get("hw_ratio"),
+        "street_axis_deg": _sw.get("axis_deg"),
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
         "svf_source": svf_r.get("source"),
         "gvi": round(gvi, 3), "gvi_src": gvi_src,

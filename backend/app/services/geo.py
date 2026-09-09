@@ -344,6 +344,55 @@ async def svf_geometric(
             "n_buildings": len(blds)}
 
 
+async def street_width_geometric(
+    lat: float, lon: float, az_step_deg: int = 5, max_m: float = 60.0,
+    default_floors: int = 2,
+) -> dict:
+    """건물 GIS 기하로 가로 폭 W·협곡비 H/W (2026-09-09).
+
+    각 방위로 광선을 쏴 첫 건물 외곽선까지 거리 d(az). 마주보는 쌍 d(az)+d(az+180) 중
+    최소가 가로 폭 W(도로축에 수직 방향), 그 방위의 양쪽 건물 평균높이 H → H/W.
+    max_m 안에 양쪽 다 건물이 없으면 개방(폭 None). 위성 폭 분류 AI 의 라벨로도 쓴다.
+    """
+    rings, src = await _rings_cached(lat, lon)
+    if not rings:
+        return {"width_m": None, "hw_ratio": None, "axis_deg": None, "source": src or ""}
+    blds: list[tuple[list[tuple[float, float]], float]] = []
+    for ring, props in rings:
+        if len(ring) < 4 or _point_in_ring(0.0, 0.0, ring):
+            continue
+        H = _height_m_from_props(props, default_floors=default_floors) or 0.0
+        blds.append((ring, H))
+    if not blds:
+        return {"width_m": None, "hw_ratio": None, "axis_deg": None, "source": src}
+    n = max(1, int(360 / az_step_deg))
+    d = [None] * n
+    h = [0.0] * n
+    for i in range(n):
+        az = math.radians(i * az_step_deg)
+        dx, dy = math.sin(az), math.cos(az)
+        for ring, H in blds:
+            t = _ray_ring_hit(dx, dy, ring)
+            if t is not None and t <= max_m and (d[i] is None or t < d[i]):
+                d[i], h[i] = t, H
+    best = None
+    half = n // 2
+    for i in range(half):
+        j = i + half
+        if d[i] is None or d[j] is None:
+            continue
+        w = d[i] + d[j]
+        if best is None or w < best[0]:
+            best = (w, (h[i] + h[j]) / 2.0, i * az_step_deg)
+    if best is None:
+        return {"width_m": None, "hw_ratio": None, "axis_deg": None, "source": src,
+                "reason": "양측 건물 없음(개방)"}
+    w, hm, az_perp = best
+    return {"width_m": round(w, 1), "hw_ratio": round(hm / w, 2) if w > 0 else None,
+            "axis_deg": (az_perp + 90) % 180,     # 도로축 방향(폭 방향에 수직)
+            "source": src}
+
+
 async def dominant_wall_material(
     lat: float, lon: float, eye_height_m: float = 1.5, default_floors: int = 2,
 ) -> dict:
