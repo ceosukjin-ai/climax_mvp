@@ -1604,7 +1604,8 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     from datetime import datetime, timezone
     from app.services.geo import svf_geometric, sun_blocked_outdoor
     from app.services.open_meteo import get_current_observation
-    from app.services.sentinel_hub import get_gvi as _get_gvi
+    from app.services.sentinel_hub import (get_surface as _get_surface,
+        ndvi_to_gvi as _ndvi_to_gvi, surface_to_materials as _surf_to_mats)
     from vpti_core import estimate_solar, DEFAULT_CONFIG
     from vpti_core.vsi import ViewSegmentation
     from vpti_core.smti import MaterialFraction
@@ -1627,12 +1628,13 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
 
     gvi = 0.0
     gvi_src = "none"
+    surface = None
     try:
-        _g = await _get_gvi(lat, lon)
-        if _g is not None:
-            gvi = _g; gvi_src = "sentinel2-ndvi"
+        surface = await _get_surface(lat, lon)
     except Exception:  # noqa: BLE001
-        pass
+        surface = None
+    if surface is not None:
+        gvi = _ndvi_to_gvi(surface["ndvi"]); gvi_src = "sentinel2-ndvi"
 
     # 스칼라 SVF/GVI → 5-view 합성(up.sky=SVF, 수평.sky=SVF/2 로 reconstruct_svf 가 원래 SVF
     # 복원, 수평.veg=GVI) → compute_vpti_thermal 전체 물리 경로.
@@ -1644,7 +1646,14 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     views += [ViewSegmentation(direction=d, sky_ratio=sky_h, vegetation_ratio=g,
                                building_ratio=b)
               for d in ("front", "back", "left", "right")]
-    mats = [MaterialFraction(material="unknown", fraction=1.0)]
+    # 지표 재질 — 위성(NDVI/NDWI/알베도)→SMTI 재질 분율. 실패 시 기본(unknown).
+    mat_src = "default"
+    if surface is not None:
+        _pairs, _ga = _surf_to_mats(surface)
+        mats = [MaterialFraction(material=m, fraction=f) for m, f in _pairs]
+        mat_src = "sentinel2"
+    else:
+        mats = [MaterialFraction(material="unknown", fraction=1.0)]
     wc = WeatherContext(temperature_c=obs.temperature_c, humidity_pct=obs.humidity_pct,
                         wind_speed_ms=obs.wind_speed_ms,
                         wind_direction_deg=obs.wind_direction_deg)
@@ -1664,6 +1673,9 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
         "svf_source": svf_r.get("source"),
         "gvi": round(gvi, 3), "gvi_src": gvi_src,
+        "material_src": mat_src,
+        "materials": [{"m": m, "f": round(f, 2)} for m, f in
+                      ((mm.material, mm.fraction) for mm in mats)],
         "exposure": exposure, "shade_note": shade_note,
         "weather": {"ta": round(obs.temperature_c, 1),
                     "rh": round(obs.humidity_pct, 0),
