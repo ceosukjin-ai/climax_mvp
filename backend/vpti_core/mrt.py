@@ -175,6 +175,37 @@ def estimate_ground_temp(
     return g * air_temp_c + (1.0 - g) * ts
 
 
+def estimate_wall_temp(
+    air_temp_c: float, solar: "SolarResult", wall_albedo: float,
+    wall_emissivity: float, sunlit_frac: float, wind_ms: float,
+    eps_sky: float, config: MRTConfig = DEFAULT_CONFIG.mrt,
+) -> float:
+    """수직 벽면 온도 [°C] — 표면 에너지수지(지면과 동일 원리, 수직면 버전, 2026-09-09).
+
+    벽은 지면과 달리: (1) 직달이 수직면에 cos(고도)로 입사(낮은 해가 더 때림),
+    (2) 하늘/주변을 각각 절반씩 봄, (3) 지중저장 없음. sunlit_frac=태양 마주보는
+    벽 비율(0=그늘벽≈기온, 1=완전 sunlit). 방위별 sunlit 벽 복사의 온도원.
+    """
+    beta = math.radians(max(solar.solar_elevation_deg, 0.0))
+    s_direct = solar.dni * math.cos(beta) * max(0.0, min(1.0, sunlit_frac))
+    s_diffuse = solar.dhi * 0.5
+    sw_abs = (1.0 - min(max(wall_albedo, 0.0), 1.0)) * max(0.0, s_direct + s_diffuse)
+    l_down = STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4 * (
+        0.5 * eps_sky + 0.5 * config.env_emissivity)
+    h_c = convective_coefficient(wind_ms, config)
+    eps_w = min(max(wall_emissivity, 0.0), 1.0)
+    ts = air_temp_c
+    for _ in range(20):
+        ts_k = ts + KELVIN
+        fv = sw_abs + eps_w * (l_down - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - air_temp_c)
+        fp = -4.0 * eps_w * STEFAN_BOLTZMANN * ts_k ** 3 - h_c
+        step = fv / fp
+        ts -= step
+        if abs(step) < 1e-4:
+            break
+    return ts
+
+
 def compute_mrt(
     solar: SolarResult,
     air_temp_c: float,
@@ -186,6 +217,7 @@ def compute_mrt(
     wind_ms: float = 0.0,
     config: MRTConfig = DEFAULT_CONFIG.mrt,
     direct_shade: float = 1.0,   # 태양방향 건물 차폐 (2026-08-16): 1.0=직사 노출, 0.0=그늘
+    wall_temp_c: float | None = None,   # 측면 벽 온도 [°C] — None이면 벽=지면온도(기존)
 ) -> MRTResult:
     """6방향 복사속 적분으로 평균복사온도 Tmrt 산출 (VDI 3787 Part 2).
 
@@ -255,11 +287,18 @@ def compute_mrt(
     )
     l_surf_flux = ground_emissivity * STEFAN_BOLTZMANN * (tsurf + KELVIN) ** 4
 
+    # 벽(측면·상향의 막힌 부분)은 별도 온도로 방사 — sunlit 벽이 뜨거우면 반영.
+    # 하향(down)은 지면온도. wall_temp_c=None이면 기존과 동일(벽=지면).
+    if wall_temp_c is not None:
+        l_wall_flux = config.env_emissivity * STEFAN_BOLTZMANN * (wall_temp_c + KELVIN) ** 4
+    else:
+        l_wall_flux = l_surf_flux
     lw_sky = 0.0
     lw_surface = 0.0
     for d in f:
         lw_sky += eps_p * f[d] * (l_sky_flux * psi_sky[d])
-        lw_surface += eps_p * f[d] * (l_surf_flux * psi_grd[d])
+        flux = l_surf_flux if d == "down" else l_wall_flux
+        lw_surface += eps_p * f[d] * (flux * psi_grd[d])
 
     # --- 평균복사속 → Tmrt ---
     sstr = sw_direct + sw_diffuse + sw_reflected + lw_sky + lw_surface
