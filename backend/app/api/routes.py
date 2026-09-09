@@ -1706,7 +1706,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
                                   v=r.pedestrian_wind_ms, rh=obs.humidity_pct,
                                   season=r.season, config=DEFAULT_CONFIG.comfort).value)
     _feats = {"볕": direct_shade, "tier3_svf": svf, "tier3_gvi": gvi,
-              "Ta": obs.temperature_c, "RH": obs.humidity_pct, "v": obs.wind_speed_ms,
+              "Ta": obs.temperature_c, "RH": obs.humidity_pct, "v": r.pedestrian_wind_ms,
               "태양고도": sol.solar_elevation_deg, "run_C_Tmrt": float(r.mrt.tmrt),
               "run_C_PET": _pet_phys,
               "ndvi30": (surface["ndvi"] if surface is not None else None)}

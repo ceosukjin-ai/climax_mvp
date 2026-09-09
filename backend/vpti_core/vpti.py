@@ -21,7 +21,7 @@ VPTI (Visualized Personal Thermal Index) — 통합 체감 기후 지수 코어 
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Literal
 
@@ -310,6 +310,7 @@ def compute_vpti_thermal(
     config: VPTICoreConfig = DEFAULT_CONFIG,
     direct_shade: float = 1.0,   # 태양방향 건물 차폐 (2026-08-16) — 그늘이면 0.0
     wall_temp_c: float | None = None,   # 측면 벽 온도 [°C] (2026-09-09) — None=벽=지면(기존)
+    wind_is_pedestrian: bool = False,   # 입력 풍속이 이미 1.5m 현장 풍속이면 PWI 감쇠 생략 (2026-09-09)
 ) -> ThermalVPTIResult:
     """물리 기반 VPTI — 일사 → MRT → UTCI/PET.
 
@@ -353,6 +354,9 @@ def compute_vpti_thermal(
         ai_confidence=ai_confidence,
         config=config.pwi,
     )
+    if wind_is_pedestrian:
+        # 현장 1.5m 실측 풍속 → PWI를 또 곱하면 이중 감쇠(실측80점 run_C에서 확인). u_p = 입력 그대로.
+        pwi = replace(pwi, pedestrian_wind_speed_ms=weather.wind_speed_ms, pwi=1.0)
 
     # --- ① 일사 추정 ---
     solar = estimate_solar(lat, lon, when, sky_code=sky_code,
