@@ -1773,6 +1773,57 @@ async def vpti_geo_at(
     return out
 
 
+@router.post("/archive/backfill_sv_status", include_in_schema=False)
+async def archive_backfill_sv_status(
+    request: Request,
+    gsv: int = 0,
+    limit: int = 200,
+    x_field_key: str | None = Header(None),
+):
+    """기존 기록의 pano_dist_m·sv_status 백필 (X-Field-Key 필요, 2026-09-09).
+
+    - Tier1(항상): 분석 실패(SVF≈0) → sv_status='failed'. 정확·GSV 불필요.
+    - Tier2(gsv=1): 미정 격자를 _resolve_pano_id 로 재조회해 거리→ok/substituted.
+      ⚠️ 재조회는 **현재** 파노라마 기준(과거 분석 당시와 다를 수 있음) → 근사.
+      파노 원본(ID·좌표·날짜)은 저장하지 않고 파생 거리·상태만 UPDATE.
+      한 번에 limit 격자만 처리 → remaining>0 이면 반복 호출.
+    """
+    _require_field_key(x_field_key)
+    import asyncio as _asyncio
+    from app.services.street_view import StreetViewNotFound
+    arch = getattr(request.app.state, "archive", None)
+    orch = getattr(request.app.state, "orchestrator", None)
+    if arch is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="archive 미초기화")
+    failed_n = await arch.backfill_sv_failed()
+    grids_done = rows_updated = 0
+    remaining = 0
+    if gsv and orch is not None:
+        grids = await arch.grids_needing_sv(limit=limit)
+        for g in grids:
+            la, lo = g["lat"], g["lon"]
+            try:
+                _pid, _pl, _po, dist = await orch._resolve_pano_id(la, lo)
+                if dist is None:
+                    continue
+                st = "ok" if dist <= 50 else "substituted"
+                rows_updated += await arch.apply_sv_grid(la, lo, int(dist), st)
+            except StreetViewNotFound:
+                rows_updated += await arch.apply_sv_grid(la, lo, None, "failed")
+            except Exception:  # noqa: BLE001
+                continue
+            grids_done += 1
+            await _asyncio.sleep(0.05)
+        rem = await arch.grids_needing_sv(limit=1)
+        remaining = 1 if rem else 0
+    return {"failed_marked": failed_n, "grids_processed": grids_done,
+            "rows_updated": rows_updated,
+            "more_remaining": bool(remaining),
+            "note": "Tier2 거리는 현재 파노라마 기준 근사(과거≠현재)" if gsv else
+                    "Tier1만 실행(gsv=1 로 거리 백필)"}
+
+
 @router.get("/archive/export_training", include_in_schema=False)
 async def archive_export_training(
     request: Request,
@@ -1790,7 +1841,8 @@ async def archive_export_training(
     rows = await arch.export_training()
     cols = ["observed_at", "lat", "lon", "svf", "gvi", "bvi", "air_temp",
             "humidity", "wind_ms", "pvpti", "mrt", "risk_level", "cloud",
-            "cloud_src", "imagery_src", "indoor", "source"]
+            "cloud_src", "imagery_src", "indoor", "source",
+            "pano_dist_m", "sv_status"]
     buf = io.StringIO()
     w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
     w.writeheader()

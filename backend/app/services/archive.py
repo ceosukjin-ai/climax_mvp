@@ -251,6 +251,48 @@ class Archive:
         except Exception as e:  # noqa: BLE001
             logger.warning("[archive] {} 적재 실패: {}: {}", what, type(e).__name__, e)
 
+    # ── 라벨 품질 백필 (2026-09-09) ──────────────────────────
+    async def backfill_sv_failed(self) -> int:
+        """분석 실패(SVF≈0)를 사실로 확정 — sv_status='failed'. GSV 재조회 불필요(정확)."""
+        if not self._ready:
+            return 0
+        sql = ("UPDATE measurement SET sv_status='failed' "
+               "WHERE sv_status IS NULL AND (svf IS NULL OR svf < 0.02)")
+        async with self._session() as s:
+            res = await s.execute(text(sql))
+            await s.commit()
+            return res.rowcount or 0
+
+    async def grids_needing_sv(self, limit: int = 200) -> list[dict]:
+        """sv_status 미정 + 분석 성공(svf≥0.02) 격자 — GSV 재조회 대상(거리 산출)."""
+        if not self._ready:
+            return []
+        sql = """
+        SELECT lat, lon, COUNT(*) AS n
+        FROM measurement
+        WHERE sv_status IS NULL AND indoor = FALSE AND svf >= 0.02
+          AND (imagery_src IN ('gsv', 'mapillary') OR imagery_src IS NULL)
+        GROUP BY lat, lon
+        ORDER BY n DESC
+        LIMIT :lim
+        """
+        async with self._session() as s:
+            return [dict(r) for r in
+                    (await s.execute(text(sql), {"lim": limit})).mappings()]
+
+    async def apply_sv_grid(self, lat: float, lon: float,
+                            dist_m: int | None, status: str) -> int:
+        """격자의 미정 기록에 pano_dist_m·sv_status 채움(파생 스칼라만)."""
+        if not self._ready:
+            return 0
+        sql = ("UPDATE measurement SET pano_dist_m=:d, sv_status=:st "
+               "WHERE lat=:la AND lon=:lo AND sv_status IS NULL")
+        async with self._session() as s:
+            res = await s.execute(text(sql),
+                                  {"d": dist_m, "st": status, "la": lat, "lo": lon})
+            await s.commit()
+            return res.rowcount or 0
+
     # ── 집계 조회 (B2G·연구용) ───────────────────────────────
     async def hotspots(self, hours: int = 24, min_samples: int = 1,
                        limit: int = 500) -> list[dict]:
