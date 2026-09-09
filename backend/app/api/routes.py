@@ -1727,6 +1727,49 @@ async def vpti_geo_at(
     return out
 
 
+@router.get("/archive/export_training", include_in_schema=False)
+async def archive_export_training(
+    request: Request,
+    x_field_key: str | None = Header(None),
+):
+    """학습층 CSV 내보내기 — 실외 측정 전체(인수인계 260909 명세). X-Field-Key 필요.
+    ⚠️ imagery_src='gsv' 유래 svf/gvi/bvi는 약관상 ML 학습 불가(출처 컬럼으로 노출)."""
+    _require_field_key(x_field_key)
+    from fastapi.responses import Response
+    import csv, io
+    arch = getattr(request.app.state, "archive", None)
+    if arch is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="archive 미초기화")
+    rows = await arch.export_training()
+    cols = ["observed_at", "lat", "lon", "svf", "gvi", "bvi", "air_temp",
+            "humidity", "wind_ms", "pvpti", "mrt", "risk_level", "cloud",
+            "cloud_src", "imagery_src", "indoor", "source"]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore")
+    w.writeheader()
+    for r in rows:
+        w.writerow(r)
+    return Response(
+        content=buf.getvalue(), media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition":
+                 "attachment; filename=momssi_measurements_export_260909.csv"})
+
+
+@router.get("/archive/training_counts", include_in_schema=False)
+async def archive_training_counts(
+    request: Request,
+    x_field_key: str | None = Header(None),
+) -> dict:
+    """학습층 요약(전체·격자·기간·출처별). X-Field-Key 필요."""
+    _require_field_key(x_field_key)
+    arch = getattr(request.app.state, "archive", None)
+    if arch is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="archive 미초기화")
+    return await arch.training_counts()
+
+
 @router.get("/archive/mapillary_probe", include_in_schema=False)
 async def archive_mapillary_probe(
     request: Request,

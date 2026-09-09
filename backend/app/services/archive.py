@@ -329,6 +329,63 @@ class Archive:
             logger.warning("[archive] ml_dataset 조회 실패: {}: {}", type(e).__name__, e)
             return []
 
+    async def export_training(self, limit: int = 500_000) -> list[dict]:
+        """학습층 내보내기 — 실외 측정 전체(인수인계 260909 명세 컬럼).
+
+        ⚠️ GSV 필터 없이 전량 반환(출처는 imagery_src 로 노출) — 법적 판단은 수요자 측.
+        (참고: imagery_src='gsv' 유래 svf/gvi/bvi는 약관 3.2.3(c)(vii)상 ML 학습 불가.
+        학습에 쓸 수 있는 부분만 원하면 ml_dataset() 사용.)
+        PII 미포함(age_band·id 제외). field_check(현장실측)는 별도 테이블.
+        """
+        if not self._ready:
+            return []
+        sql = """
+        SELECT observed_at, lat, lon, svf, gvi, bvi,
+               air_temp, humidity, wind_ms, pvpti, mrt, risk_level,
+               cloud, cloud_src, imagery_src, indoor, source
+        FROM measurement
+        WHERE indoor = FALSE
+        ORDER BY observed_at
+        LIMIT :limit
+        """
+        try:
+            async with self._session() as s:
+                return [dict(r) for r in
+                        (await s.execute(text(sql), {"limit": limit})).mappings()]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[archive] export_training 실패: {}: {}", type(e).__name__, e)
+            return []
+
+    async def training_counts(self) -> dict:
+        """학습층 요약 — 전체/격자/기간/출처별 건수(인수인계 보고용)."""
+        if not self._ready:
+            return {}
+        sql = """
+        SELECT COUNT(*) AS n,
+               COUNT(DISTINCT (lat, lon)) AS cells,
+               MIN(observed_at) AS t_min, MAX(observed_at) AS t_max,
+               COUNT(*) FILTER (WHERE imagery_src = 'gsv') AS gsv_n,
+               COUNT(*) FILTER (WHERE imagery_src = 'mapillary') AS mly_n,
+               COUNT(*) FILTER (WHERE imagery_src = 'own') AS own_n,
+               COUNT(*) FILTER (WHERE imagery_src IS NULL) AS null_n,
+               COUNT(*) FILTER (WHERE svf IS NULL OR svf < 0.02) AS svf0_n
+        FROM measurement WHERE indoor = FALSE
+        """
+        fc = "SELECT COUNT(*) AS n FROM field_check"
+        try:
+            async with self._session() as s:
+                m = (await s.execute(text(sql))).mappings().first()
+                f = (await s.execute(text(fc))).mappings().first()
+            d = dict(m) if m else {}
+            d["field_check_n"] = int(f["n"]) if f else 0
+            for k in ("t_min", "t_max"):
+                if d.get(k) is not None:
+                    d[k] = d[k].isoformat()
+            return d
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[archive] training_counts 실패: {}: {}", type(e).__name__, e)
+            return {}
+
     # ── 관리자 대시보드 집계 (2026-09-04, 대표 전용) ────────
     async def dashboard(self, hours: int = 24 * 7, min_samples: int = 1) -> dict:
         """대시보드 한 화면에 필요한 집계를 한 번에.
