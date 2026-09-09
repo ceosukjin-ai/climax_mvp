@@ -144,14 +144,35 @@ class CacheService:
         self, lat: float, lon: float
     ) -> str | None:
         raw = await self._client.get(self._location_key(lat, lon))
-        return raw.decode() if raw else None
+        # 저장 포맷: "pano_id" 또는 "pano_id|plat|plon"(파노 위치 동봉). pano_id만 반환.
+        return raw.decode().split("|", 1)[0] if raw else None
+
+    async def get_pano_entry_for_location(
+        self, lat: float, lon: float
+    ) -> tuple[str | None, float | None, float | None]:
+        """(pano_id, 파노_lat, 파노_lon). 구포맷(위치 없음)이면 위치는 None."""
+        raw = await self._client.get(self._location_key(lat, lon))
+        if not raw:
+            return None, None, None
+        parts = raw.decode().split("|")
+        if len(parts) >= 3:
+            try:
+                return parts[0], float(parts[1]), float(parts[2])
+            except ValueError:
+                return parts[0], None, None
+        return parts[0], None, None
 
     async def set_pano_id_for_location(
-        self, lat: float, lon: float, pano_id: str
+        self, lat: float, lon: float, pano_id: str,
+        pano_lat: float | None = None, pano_lon: float | None = None,
     ) -> None:
-        # 30일 TTL — Google이 panoId를 교체할 수 있으므로 영구는 과함
+        # 30일 TTL — Google이 panoId를 교체할 수 있으므로 영구는 과함.
+        # 파노 위치를 함께 저장(거리 산출용) — 원본 아닌 파생 거리 계산에만 쓰고 노출/영구저장 안 함.
+        val = pano_id
+        if pano_lat is not None and pano_lon is not None:
+            val = f"{pano_id}|{pano_lat:.6f}|{pano_lon:.6f}"
         await self._client.setex(
-            self._location_key(lat, lon), 60 * 60 * 24 * 30, pano_id
+            self._location_key(lat, lon), 60 * 60 * 24 * 30, val
         )
 
     # ===== 기상 캐시 =====

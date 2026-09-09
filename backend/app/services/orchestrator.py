@@ -209,15 +209,21 @@ class VPTIOrchestrator:
     # 같은 블록(≤400m)의 가로 형태는 공간 지표(SVF/GVI/BVI)의 근사로 유효.
     PANO_SEARCH_RADII_M = (50, 150, 400)
 
-    async def _resolve_pano_id(self, lat: float, lon: float) -> tuple[str, float, float]:
-        """좌표 → panoId.
+    async def _resolve_pano_id(
+        self, lat: float, lon: float
+    ) -> tuple[str, float, float, int | None]:
+        """좌표 → (panoId, 파노_lat, 파노_lon, 거리m).
 
-        1차: Redis 좌표 매핑
+        1차: Redis 좌표 매핑(파노 위치 동봉 시 거리 산출)
         2차: Google Metadata API(반경 50→150→400m 단계 확장) → 캐시 저장
+        거리m = 사용자 GPS→실제 사용 파노라마(파생 스칼라만, 원본 미저장).
         """
-        cached = await self.cache.get_pano_id_for_location(lat, lon)
-        if cached:
-            return cached, lat, lon
+        from app.services.mapillary import _haversine_m
+        cached_id, _plat, _plon = await self.cache.get_pano_entry_for_location(lat, lon)
+        if cached_id:
+            _d = (int(round(_haversine_m(lat, lon, _plat, _plon)))
+                  if _plat is not None and _plon is not None else None)
+            return cached_id, lat, lon, _d
 
         meta = None
         # ① Mapillary 우선(있으면) — CC BY-SA, 저장·학습 합법 + 무료
@@ -253,8 +259,11 @@ class VPTIOrchestrator:
                 f"({lat:.5f}, {lon:.5f}: {status})"
             )
 
-        await self.cache.set_pano_id_for_location(lat, lon, meta.pano_id)
-        return meta.pano_id, meta.lat, meta.lon
+        from app.services.mapillary import _haversine_m
+        await self.cache.set_pano_id_for_location(
+            lat, lon, meta.pano_id, meta.lat, meta.lon)
+        _d = int(round(_haversine_m(lat, lon, meta.lat, meta.lon)))
+        return meta.pano_id, meta.lat, meta.lon, _d
 
     # ===== 공간 분석 =====
 
@@ -788,7 +797,7 @@ class VPTIOrchestrator:
 
         # 1. panoId 해석 (좌표→panoId, 캐시 miss 시 Google Metadata API)
         t_resolve = time.perf_counter()
-        pano_id, canonical_lat, canonical_lon = await self._resolve_pano_id(lat, lon)
+        pano_id, canonical_lat, canonical_lon, _pdist = await self._resolve_pano_id(lat, lon)
         resolve_ms = (time.perf_counter() - t_resolve) * 1000
 
         # 2 & 3 병렬 실행: 공간 분석 + 기상 조회
@@ -867,7 +876,7 @@ class VPTIOrchestrator:
         )
         from vpti_core.solar import estimate_solar as _es
 
-        pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+        pano_id, clat, clon, _pdist = await self._resolve_pano_id(lat, lon)
         pano, _hit, _svms, _segms = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
         eng_svf, eng_gvi, eng_bvi = pano.svf, pano.gvi, getattr(pano, "bvi", 0.0)
         if svf_obs is not None:
@@ -912,7 +921,7 @@ class VPTIOrchestrator:
     async def spatial_at(self, lat: float, lon: float) -> dict | None:
         """좌표의 거리뷰 공간지표(SVF·GVI·BVI) — 측정 없는 격자 what-if 폴백용 (2026-09-05)."""
         try:
-            pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+            pano_id, clat, clon, _pdist = await self._resolve_pano_id(lat, lon)
             pano, *_rest = await self._get_or_compute_pano_analysis(pano_id, clat, clon)
             return {"svf": float(pano.svf), "gvi": float(pano.gvi or 0.0),
                     "bvi": float(getattr(pano, "bvi", 0.0) or 0.0),
@@ -945,7 +954,7 @@ class VPTIOrchestrator:
         loop_start = time.perf_counter()
 
         t_resolve = time.perf_counter()
-        pano_id, clat, clon = await self._resolve_pano_id(lat, lon)
+        pano_id, clat, clon, _pdist = await self._resolve_pano_id(lat, lon)
         resolve_ms = (time.perf_counter() - t_resolve) * 1000
 
         pano_task = self._get_or_compute_pano_analysis(pano_id, clat, clon)
@@ -1038,6 +1047,19 @@ class VPTIOrchestrator:
             # 개인화 전 값(base_*)을 남긴다 — 장소의 특성이지 사람의 특성이 아니어야
             # 여러 사용자의 측정을 한 격자에서 비교·집계할 수 있다.
             inputs = getattr(getattr(result, "comfort", None), "inputs", None)
+            # 라벨 품질 플래그(파생 스칼라만) — pano_dist_m + sv_status.
+            _isrc = pano_analysis.imagery_source
+            _svf = pano_analysis.svf
+            if _isrc not in ("gsv", "mapillary"):
+                _svstat = "none"                       # 스트리트뷰/파노 미사용
+            elif _svf is None or _svf < 0.02:
+                _svstat = "failed"                     # 파노 없음/분석 실패(SVF≈0)
+            elif _pdist is None:
+                _svstat = None                         # 거리 불명(구포맷 캐시) — 추후 채워짐
+            elif _pdist <= 50:
+                _svstat = "ok"                         # 50m 이내
+            else:
+                _svstat = "substituted"                # 인근 파노라마 대체
             self.archive.record_measurement(
                 observed_at=when,
                 lat=clat, lon=clon,
@@ -1057,6 +1079,9 @@ class VPTIOrchestrator:
                 imagery_src=pano_analysis.imagery_source,
                 # 연령대 10년 구간만 (나이 원값은 남기지 않는다) — 취약군 분석용 (2026-09-05)
                 age_band=_age_band(getattr(profile, "age", None)),
+                # 라벨 품질(파생 스칼라만) — 파노 원본 ID·좌표·날짜는 저장 안 함 (2026-09-09)
+                pano_dist_m=(_pdist if _svstat in ("ok", "substituted") else None),
+                sv_status=_svstat,
             )
 
         logger.info(

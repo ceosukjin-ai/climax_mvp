@@ -93,7 +93,13 @@ ALTER TABLE measurement ADD COLUMN IF NOT EXISTS imagery_src TEXT;
 -- 연령대(10년 구간, '60s' 등) — 개인 나이가 아니라 구간. 취약군 분석용 (2026-09-05).
 -- 개인 식별 불가(구간+11m 격자+시각으로는 특정 불가). 방침 제2조 "익명 측정 기록" 항목에 반영할 것.
 ALTER TABLE measurement ADD COLUMN IF NOT EXISTS age_band TEXT;
+-- 라벨 품질 플래그(2026-09-09, 연구 3계단 학습층). 파노라마 원본(ID·좌표·날짜)은
+-- 약관상 저장 금지 → 앱/서버가 분석 직후 계산한 파생 스칼라만 남긴다.
+-- pano_dist_m: 사용자 GPS→실제 사용 파노라마까지 거리[m](정수). sv_status: ok/substituted/failed/none.
+ALTER TABLE measurement ADD COLUMN IF NOT EXISTS pano_dist_m INTEGER;
+ALTER TABLE measurement ADD COLUMN IF NOT EXISTS sv_status TEXT;
 CREATE INDEX IF NOT EXISTS ix_measurement_imagery ON measurement (imagery_src);
+CREATE INDEX IF NOT EXISTS ix_measurement_svstatus ON measurement (sv_status);
 """
 
 
@@ -158,7 +164,8 @@ class Archive:
         kw["lon"] = round(float(kw["lon"]), COORD_PRECISION)
         cols = ("observed_at", "lat", "lon", "pvpti", "risk_level", "air_temp",
                 "humidity", "wind_ms", "mrt", "svf", "gvi", "bvi",
-                "cloud", "cloud_src", "indoor", "source", "imagery_src", "age_band")
+                "cloud", "cloud_src", "indoor", "source", "imagery_src", "age_band",
+                "pano_dist_m", "sv_status")
         kw.setdefault("imagery_src", "gsv")   # 미지정이면 보수적으로 GSV 취급
         vals = {c: kw.get(c) for c in cols}
         sql = (f"INSERT INTO measurement ({', '.join(cols)}) "
@@ -342,7 +349,8 @@ class Archive:
         sql = """
         SELECT observed_at, lat, lon, svf, gvi, bvi,
                air_temp, humidity, wind_ms, pvpti, mrt, risk_level,
-               cloud, cloud_src, imagery_src, indoor, source
+               cloud, cloud_src, imagery_src, indoor, source,
+               pano_dist_m, sv_status
         FROM measurement
         WHERE indoor = FALSE
         ORDER BY observed_at
