@@ -623,17 +623,25 @@ async def _rings_from_vworld(
     s = get_settings()
     if not getattr(s, "vworld_api_key", None):
         return []
-    async with httpx.AsyncClient(timeout=9.0) as client:
-        r = await client.get(VWORLD_DATA_URL, params={
-            "service": "data", "request": "GetFeature", "version": "2.0",
-            "data": VWORLD_BUILDING_LAYER, "key": s.vworld_api_key,
-            "geomFilter": f"POINT({lon} {lat})", "buffer": str(SEARCH_RADIUS_M),
-            "format": "json", "size": "100", "geometry": "true",
-            "attribute": "true", "crs": "EPSG:4326",
-        })
-        r.raise_for_status()
-        feats = (r.json().get("response", {}).get("result", {})
-                 .get("featureCollection", {}).get("features") or [])
+    # ⚠️ size=100 이면 밀집 골목(반경 100m 안 건물 200~400동)에서 100동만 임의 수신 →
+    #    바로 옆 건물이 빠져 SVF·폭이 크게 열림(실측80점 골목이 1곳으로 집계된 원인, 2026-09-09).
+    #    → size=1000 + 페이지 순회로 전량 수신.
+    feats: list = []
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        for page in range(1, 6):
+            r = await client.get(VWORLD_DATA_URL, params={
+                "service": "data", "request": "GetFeature", "version": "2.0",
+                "data": VWORLD_BUILDING_LAYER, "key": s.vworld_api_key,
+                "geomFilter": f"POINT({lon} {lat})", "buffer": str(SEARCH_RADIUS_M),
+                "format": "json", "size": "1000", "page": str(page), "geometry": "true",
+                "attribute": "true", "crs": "EPSG:4326",
+            })
+            r.raise_for_status()
+            chunk = (r.json().get("response", {}).get("result", {})
+                     .get("featureCollection", {}).get("features") or [])
+            feats.extend(chunk)
+            if len(chunk) < 1000:
+                break
         out = []
         for f in feats:
             g = f.get("geometry") or {}
