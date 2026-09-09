@@ -1602,7 +1602,8 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     /archive/geo_vpti(진단)와 /vpti/geo/at(앱)가 공유한다.
     """
     from datetime import datetime, timezone
-    from app.services.geo import svf_geometric, sun_blocked_outdoor
+    from app.services.geo import (svf_geometric, sun_blocked_outdoor,
+                                  dominant_wall_material)
     from app.services.open_meteo import get_current_observation
     from app.services.sentinel_hub import (get_surface as _get_surface,
         ndvi_to_gvi as _ndvi_to_gvi, surface_to_materials as _surf_to_mats)
@@ -1660,11 +1661,13 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     # 측면 벽 온도 — sunlit 벽 복사 반영(2026-09-09 v1). 낮 + 어느정도 둘러싸임(svf<0.92)일 때만.
     # ⚠️ v1: 벽 재질 콘크리트 기본(alb0.30), sunlit_frac 0.45 근사. 방위 정밀화·PLATEAU 재질은 다음 단계.
     wall_temp = None
+    wall_mat = await dominant_wall_material(lat, lon)
     if sol.solar_elevation_deg > 0.0 and svf < 0.92:
         from vpti_core.mrt import estimate_wall_temp, sky_emissivity
         _epsk = sky_emissivity(obs.temperature_c, obs.humidity_pct,
                                sol.cloud_fraction, DEFAULT_CONFIG.mrt)
-        wall_temp = estimate_wall_temp(obs.temperature_c, sol, 0.30, 0.90, 0.45,
+        wall_temp = estimate_wall_temp(obs.temperature_c, sol,
+                                       wall_mat["albedo"], wall_mat["emissivity"], 0.45,
                                        obs.wind_speed_ms, _epsk, DEFAULT_CONFIG.mrt)
     r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
                              road_axis_deg=0.0, lat=lat, lon=lon, when=now,
@@ -1680,6 +1683,8 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "comfort_index": r.comfort_index,
         "mrt_c": round(float(r.mrt.tmrt), 1),
         "wall_c": round(wall_temp, 1) if wall_temp is not None else None,
+        "wall_material": wall_mat["material"],
+        "wall_albedo": wall_mat["albedo"], "wall_mix": wall_mat["mix"],
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
         "svf_source": svf_r.get("source"),
         "gvi": round(gvi, 3), "gvi_src": gvi_src,

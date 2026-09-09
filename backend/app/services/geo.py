@@ -344,6 +344,43 @@ async def svf_geometric(
             "n_buildings": len(blds)}
 
 
+async def dominant_wall_material(
+    lat: float, lon: float, eye_height_m: float = 1.5, default_floors: int = 2,
+) -> dict:
+    """관측점 주변 건물 용도/구조로 대표 외벽 재질 산출(2026-09-09, 벽재질 스테이지).
+
+    각 주변 건물의 벽 복사 기여를 (높이/외곽선최단거리)로 가중해 albedo/emissivity 를
+    가중평균한다(가깝고 높은 벽일수록 큰 기여). PLATEAU 構造種別(structure_code)이 있으면
+    정밀 오버라이드, 없으면 OSM building= 용도 휴리스틱, 그것도 없으면 콘크리트 기본.
+    반환: {material, albedo, emissivity, mix, n, source}.
+    """
+    from app.services import wall_material as _wm
+    rings, src = await _rings_cached(lat, lon)
+    weighted: list[tuple[str, float]] = []
+    for ring, props in rings:
+        if len(ring) < 4 or _point_in_ring(0.0, 0.0, ring):
+            continue
+        H = _height_m_from_props(props, default_floors=default_floors)
+        if H is None or (H - eye_height_m) <= 0:
+            continue
+        dist = _dist_to_ring(0.0, 0.0, ring)
+        if dist > SEARCH_RADIUS_M:
+            continue
+        w = (H - eye_height_m) / max(dist, 3.0)
+        mat = None
+        sc = props.get("structure_code") or props.get("plateau_struct")
+        if sc is not None:
+            mat = _wm.material_from_plateau(sc)
+        if mat is None:
+            mat = _wm.material_from_osm(props)
+        weighted.append((mat, w))
+    res = _wm.blend(weighted)
+    res["n"] = len(weighted)
+    res["source"] = src
+    return res
+
+
+
 def _dist_to_ring(px: float, py: float, ring: list[tuple[float, float]]) -> float:
     """점에서 다각형 **외곽선**까지의 최단거리(m). 중심점 거리가 아니다."""
     best = float("inf")

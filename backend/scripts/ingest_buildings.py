@@ -23,8 +23,8 @@ OUT_DIR = os.environ.get("LOCAL_BUILDING_DIR") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "buildings"
 )
 
-_KEEP_TAGS = ("building:levels", "height", "gro_flo_co",
-              "name", "buld_nm_dc", "buld_nm")
+_KEEP_TAGS = ("building", "building:material", "building:levels", "height",
+              "gro_flo_co", "name", "buld_nm_dc", "buld_nm")
 
 
 def tile_key(lat: float, lon: float) -> str:
