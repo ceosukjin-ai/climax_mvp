@@ -128,7 +128,7 @@ async def db_materials(conn):
     await conn.execute(DDL)
     # ② field_check
     fc = await conn.fetch("SELECT observed_at, lat, lon, meas, est, note FROM field_check ORDER BY observed_at")
-    fc_pairs, fc_by = [], defaultdict(list)
+    fc_pairs, fc_by = [], defaultdict(lambda: defaultdict(list))
     for r in fc:
         meas = r["meas"] if isinstance(r["meas"], dict) else json.loads(r["meas"] or "{}")
         est = r["est"] if isinstance(r["est"], dict) else json.loads(r["est"] or "{}")
@@ -182,7 +182,7 @@ async def db_materials(conn):
 # ── 리포트 ─────────────────────────────────────────────────
 def render(tier3, field, ground, cands, counts, notes):
     L = [f"# 뇌 일일 리포트 {TODAY} (v1 · Day1 dry-run)", "",
-         f"활성 잔차 모델: {TRAINED_ON}", f"DB 건수: {counts}" if counts else "DB: 미접속(--no-db)", ""]
+         f"활성 잔차 모델: {TRAINED_ON}", f"DB 건수: {counts}" if counts else "DB: 미접속 또는 조회 실패(메모 참조)", ""]
     if tier3:
         L += ["## ① 실측 80점 (시드) — 물리 vs 물리+AI  ※AI는 재대입값(낙관), 전이 성능은 LOSO 2.69",
               f"  물리      {fmt(tier3['전체']['물리'])}", f"  물리+AI   {fmt(tier3['전체']['물리+AI'])}", ""]
