@@ -260,6 +260,16 @@ async def sun_blocked_outdoor(
     """
     if sun_elevation_deg <= 0.0:
         return False, None
+    # 스카이라인 격자 히트면 즉시 (2026-09-10): horizon[태양방위] > 태양고도 → 그늘.
+    # 층수 결측 건물도 2층으로 포함되므로(폴리곤 경로는 결측 건물을 버림) 저층 주택가 그늘 재현율이 오른다.
+    try:
+        from app.services import skyline as _sky
+        _cell = await _sky.get_cell(lat, lon)
+    except Exception:  # noqa: BLE001
+        _cell = None
+    if _cell is not None:
+        _b = _cell.is_sun_blocked(sun_azimuth_deg, sun_elevation_deg)
+        return _b, ("스카이라인 그늘" if _b else None)
     rings, _src = await _rings_cached(lat, lon)
     if not rings:
         return False, None
@@ -383,6 +393,15 @@ async def svf_geometric(
     교차거리로 지평선 상승각 β(az) 산출 → SVF = 1 − mean(sin²β) (Oke/UMEP 표준).
     중심±각폭 근사(과차폐)를 버리고 모서리까지 정확 거리를 씀. 층수 결측은 보수적 기본높이.
     """
+    # 스카이라인 격자 히트면 즉시 (2026-09-10, 사전계산). 미스면 아래 실시간 계산.
+    try:
+        from app.services import skyline as _sky
+        _cell = await _sky.get_cell(lat, lon)
+    except Exception:  # noqa: BLE001
+        _cell = None
+    if _cell is not None:
+        return {"svf": _cell.svf, "source": f"skyline:{_cell.src}", "n_buildings": _cell.n_bld,
+                "snapped_m": 0.0, "centered_m": _cell.centered_m, "street_axis_deg": _cell.axis_deg}
     rings, src = await _rings_cached(lat, lon)
     if not rings:
         return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 폴리곤 없음"}
@@ -448,6 +467,14 @@ async def street_width_geometric(
     최소가 가로 폭 W(도로축에 수직 방향), 그 방위의 양쪽 건물 평균높이 H → H/W.
     max_m 안에 양쪽 다 건물이 없으면 개방(폭 None). 위성 폭 분류 AI 의 라벨로도 쓴다.
     """
+    try:
+        from app.services import skyline as _sky
+        _cell = await _sky.get_cell(lat, lon)
+    except Exception:  # noqa: BLE001
+        _cell = None
+    if _cell is not None:
+        return {"width_m": _cell.width_m, "hw_ratio": _cell.hw_ratio, "axis_deg": _cell.axis_deg,
+                "source": f"skyline:{_cell.src}", "snapped_m": 0.0}
     rings, src = await _rings_cached(lat, lon)
     if not rings:
         return {"width_m": None, "hw_ratio": None, "axis_deg": None, "source": src or ""}
