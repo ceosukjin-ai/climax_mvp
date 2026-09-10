@@ -66,8 +66,67 @@ def svf_variant(rings, default_floors, snap, max_dist, eye=1.5, step=2, detail=F
     return 1.0 - s / n, moved, len(blds), n_def, top
 
 
+def _shift(rings, ox, oy):
+    return [([(x - ox, y - oy) for x, y in r], p) for r, p in rings]
+
+
+def center_snap(rings, step=10, max_m=30.0):
+    """벽 1m 밖 → 가로 중심선으로: 마주보는 광선쌍 중 (d1+d2) 최소 = 가로 단면, 그 중점으로 이동."""
+    n = int(360 / step); d = [None] * n
+    for i in range(n):
+        az = math.radians(i * step); dx, dy = math.sin(az), math.cos(az)
+        for ring, props in rings:
+            if len(ring) < 4:
+                continue
+            t = G._ray_ring_hit(dx, dy, ring)
+            if t is not None and t <= max_m and (d[i] is None or t < d[i]):
+                d[i] = t
+    best = None
+    for i in range(n // 2):
+        j = i + n // 2
+        if d[i] is None or d[j] is None:
+            continue
+        if best is None or d[i] + d[j] < best[0]:
+            best = (d[i] + d[j], i, d[i], d[j])
+    if best is None:
+        return rings, 0.0, None
+    w, i, d1, d2 = best
+    az = math.radians(i * step); off = (d1 - d2) / 2.0      # d1>d2 면 i 방향으로 이동
+    ox, oy = math.sin(az) * off, math.cos(az) * off
+    return _shift(rings, ox, oy), abs(off), (i * step + 90) % 180   # 도로축
+
+
+def neighbor_default(rings):
+    fl = []
+    for ring, props in rings:
+        try:
+            f = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
+        except (TypeError, ValueError):
+            f = 0
+        if f > 0:
+            fl.append(f)
+    if len(fl) >= 5:
+        fl.sort(); return fl[len(fl) // 2]
+    return 1
+
+
 VARS = [("현재(기본2층·스냅)", 2, True, None), ("기본1층", 1, True, None), ("결측제외", None, True, None),
         ("스냅없음", 2, False, None), ("50m이내", 2, True, 50.0), ("기본1층+50m", 1, True, 50.0), ("결측제외+50m", None, True, 50.0)]
+
+
+def svf_new(rings, mode):
+    """mode: 'center' 중심선 스냅 / 'center_med' + 도로축 ±4m 3점 중앙값 / 'center_med_nd' + 이웃중앙값 기본층수"""
+    rings, _ = G._snap_outside(rings)
+    rings, moved, axis = center_snap(rings)
+    df = neighbor_default(rings) if mode.endswith("_nd") else 2
+    if mode == "center":
+        return svf_variant(rings, df, False, None)[0], moved
+    vals = []
+    offs = [0.0] if axis is None else [-4.0, 0.0, 4.0]
+    for o in offs:
+        ax = math.radians(axis or 0); rr = _shift(rings, math.sin(ax) * o, math.cos(ax) * o)
+        vals.append(svf_variant(rr, df, True, None)[0])
+    vals.sort(); return vals[len(vals) // 2], moved
 
 
 def stats(pairs):
@@ -93,13 +152,17 @@ async def main():
                     line += "\n      차폐 주범: " + " / ".join(top)
             else:
                 line += f" | {name} {svf:.2f}"
+        for mode in ("center", "center_med", "center_med_nd"):
+            v, mv = svf_new(rings, mode)
+            res.setdefault(mode, []).append((obs, v)); per_place[place].setdefault(mode, []).append((obs, v))
+            line += f" | {mode} {v:.2f}" + (f"(이동{mv:.1f}m)" if mode == "center" else "")
         print(line, flush=True)
     print("\n===== 변형별 80점 =====")
-    for name, *_ in VARS:
+    for name in res:
         mae, bias, r = stats(res[name]); print(f"  {name:14s} MAE {mae:.3f}  bias {bias:+.3f}  r {r:+.2f}")
     print("\n===== 변형별 지역 r =====")
     for pl, d in per_place.items():
-        print("  " + pl + "  " + "  ".join(f"{n[:6]} {stats(d[n])[2]:+.2f}" for n in res))
+        print("  " + pl + "  " + "  ".join(f"{n[:12]} {stats(d[n])[2]:+.2f}" for n in res))
 
 
 asyncio.run(main())
