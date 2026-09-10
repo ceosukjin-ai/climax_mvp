@@ -6,7 +6,7 @@
 재학습·승격은 하지 않고 brain_version 에 'scorecard' 행만 남긴다(엔진 영향 0).
 
 재료
-  ① data/tier3_engine_output_80_v4.csv (+ tier3_width_80.csv 폭등급)  실측 80점, 시드
+  ① data/tier3_engine_output_80_v7.csv (+ tier3_width_80.csv 폭등급)  실측 80점, 시드
   ② field_check 테이블                                                현장실측 vs 엔진
   ③ engine_check 테이블(최근 90일)                                    ASOS 지면온도 vs 엔진
   ④ measurement 테이블 + data/momssi_geo_form.csv                    능동학습 후보(어디를 잴까)
@@ -89,7 +89,7 @@ def hour_band(h):
 
 # ── ① 실측 80점 채점 ────────────────────────────────────────
 def score_tier3():
-    path = os.path.join(ROOT, "data", "tier3_engine_output_80_v4.csv")
+    path = os.path.join(ROOT, "data", "tier3_engine_output_80_v7.csv")
     if not os.path.exists(path):
         return None, ["tier3 CSV 없음"]
     with open(path, encoding="utf-8-sig") as f:

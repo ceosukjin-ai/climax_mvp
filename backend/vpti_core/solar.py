@@ -200,6 +200,28 @@ def solar_lag_average(
     sky_code: int | None = None, cloud_fraction: float | None = None,
     config: SolarConfig = DEFAULT_CONFIG.solar, hours: float = 8.0, step_min: int = 30,
 ) -> tuple[float, float]:
+    """캐시 래퍼: 좌표 0.01°·시각 10분·운량 0.05 단위로 묶어 pvlib 17회 호출을 재사용."""
+    key_when = when.replace(minute=(when.minute // 10) * 10, second=0, microsecond=0)
+    cf = None if cloud_fraction is None else round(cloud_fraction * 20) / 20
+    key = (round(lat, 2), round(lon, 2), key_when, float(tau_h), sky_code, cf, id(config), float(hours), int(step_min))
+    hit = _LAG_CACHE.get(key)
+    if hit is not None:
+        return hit
+    val = _solar_lag_average_uncached(lat, lon, when, tau_h, sky_code, cloud_fraction, config, hours, step_min)
+    if len(_LAG_CACHE) > 4096:
+        _LAG_CACHE.clear()
+    _LAG_CACHE[key] = val
+    return val
+
+
+_LAG_CACHE: dict = {}
+
+
+def _solar_lag_average_uncached(
+    lat: float, lon: float, when: datetime, tau_h: float,
+    sky_code: int | None, cloud_fraction: float | None,
+    config: SolarConfig, hours: float, step_min: int,
+) -> tuple[float, float]:
     """지면 열관성용 과거 일사 지수가중 평균 (2026-09-10).
 
     (DNI·sinβ, DHI) 를 지난 `hours` 시간 동안 `step_min` 간격으로 계산해 w(u)∝e^(−u/τ) 로 평균.

@@ -220,8 +220,10 @@ class MRTConfig:
     #   ground_lag_tau_h  : 지면 입사 단파를 지난 8h 지수가중 평균(시정수 τ[h])으로 대체. 0이면 순간값(기존).
     #   ground_release_wm2: 지중 저장열 방출 [W/m²], 일사가 약할수록 켜짐 q·max(0, 1−S↓/200). 0이면 없음(기존).
     #   승격값(사람 확인 후): tau 2.0, release 60, storage 0.5. 기본 0 = 배포 시 동작 불변.
-    ground_lag_tau_h: float = 0.0
-    ground_release_wm2: float = 0.0
+    #   ✅ 2026-09-10 승격(대표 확인): tau 2.0h, release 40 W/m², storage 0.25 유지 — 80점 Ts bias −5.7→−2.4, PET bias −1.2→−0.2,
+    #      ASOS 1,745짝 MAE 3.48→2.45(날짜무작위 2.36·관측소LOSO 2.45). 끄려면 둘 다 0.
+    ground_lag_tau_h: float = 2.0
+    ground_release_wm2: float = 40.0
     eps_p: float = 0.97     # 인체 방사율
     f_side: float = 0.22    # 측면 4방향 각 투영계수
     f_up: float = 0.06      # 상향 투영계수
