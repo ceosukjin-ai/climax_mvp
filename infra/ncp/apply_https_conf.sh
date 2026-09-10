@@ -83,6 +83,14 @@ location /api/ {
     proxy_set_header X-Forwarded-Proto \$scheme;
     proxy_buffering off;
 }
+# 일본 웹앱 PWA (2026-09-10) — WAS 가 app/web/jp 를 /jp/ 로 서빙. 같은 origin.
+location /jp/ {
+    proxy_pass http://climax_api;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
+location = /jp { return 301 /jp/; }
 location = /nginx-health { access_log off; return 200 "ok\n"; add_header Content-Type text/plain; }
 root /var/www/climax;
 index index.html;
