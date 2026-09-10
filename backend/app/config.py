@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     kma_apihub_key: str = ""
     # 건물 열취약 판정 (실내축 2단계) — V-World 리버스지오코딩 + 건축HUB 건축물대장
     vworld_api_key: str = ""
+    # 벽온도 스테이지(재질·열질량·방위) — 2026-09-10 기본 OFF. 부산 실측 80점에서 계산 벽온도(41°C)가
+    # 폴백 '벽=지면온도'(55°C)보다 낮아 MAE 3.5→4.6 악화. 벽면센서 실측으로 교정 후 켤 것(GEO_WALL_STAGE=1).
+    geo_wall_stage: bool = False
     building_api_key: str = ""
     # Mapillary(Meta) 거리영상 액세스 토큰 — CC BY-SA, 저장·학습 합법(GSV와 달리).
     # 비어 있으면 Mapillary 미사용 → 기존처럼 GSV만(하위호환, opt-in).

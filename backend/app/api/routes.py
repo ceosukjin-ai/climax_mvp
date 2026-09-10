@@ -1678,7 +1678,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     # ⚠️ v1: 벽 재질 콘크리트 기본(alb0.30), sunlit_frac 0.45 근사. 방위 정밀화·PLATEAU 재질은 다음 단계.
     wall_temp = None
     wall_mat = await dominant_wall_material(lat, lon)
-    if svf < 0.92:                             # 둘러싸인 곳: 벽 복사 유효
+    if get_settings().geo_wall_stage and svf < 0.92:   # 벽 스테이지(기본 OFF, 벽면센서 교정 후 ON)
         from vpti_core.mrt import (estimate_wall_temp, estimate_wall_temp_transient,
                                    sky_emissivity)
         from app.services.open_meteo import get_hourly_air_series
