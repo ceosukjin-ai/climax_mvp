@@ -221,6 +221,8 @@ def create_app() -> FastAPI:
     # 같은 origin 이라 CORS 불필요, API 는 상대경로 /api/v1/vpti/geo/at.
     _jp_dir = Path(__file__).resolve().parent / "web" / "jp"
     if _jp_dir.is_dir():
+        # /api/jp 는 앞단 nginx 가 /api/ 를 통째로 WAS 로 넘기므로 nginx 수정 없이 바로 외부 노출됨.
+        app.mount("/api/jp", StaticFiles(directory=_jp_dir, html=True), name="jp_api")
         app.mount("/jp", StaticFiles(directory=_jp_dir, html=True), name="jp")
 
     if WEB_DIR.is_dir():
