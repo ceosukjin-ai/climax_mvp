@@ -632,7 +632,19 @@ async def dog_course(
 
     cond = dc.Conditions(air_c=air_c, ghi=ghi, wind_ms=wind_ms, rh=rh,
                          rain=rain, withers_cm=withers_cm, vuln_offset_c=vuln_offset_c)
-    graph = dc.build_graph(roads.get("elements", []), cond)
+    # 스카이라인 격자 일괄 조회 → 건물 그늘 반영 (2026-09-11). 격자 없는 곳은 기존 OSM 태그 방식.
+    _sky_cells, _sun = {}, None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        from vpti_core import estimate_solar as _es
+        from app.services import skyline as _sky
+        _s = _es(lat, lon, _dt.now(_tz.utc))
+        if _s.solar_elevation_deg > 0:
+            _sun = (_s.solar_azimuth_deg, _s.solar_elevation_deg)
+            _sky_cells = await _sky.get_cells(dc.edge_midpoints(roads.get("elements", [])))
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("dog/course 스카이라인 조회 생략: {}", _e)
+    graph = dc.build_graph(roads.get("elements", []), cond, skyline=_sky_cells, sun=_sun)
     near = dc.nearest(graph, lat, lon)
     if near is None or graph.edge_count <= 10:
         return JSONResponse({
@@ -656,6 +668,8 @@ async def dog_course(
             "nodes": len(graph.coords),
             "snap_m": round(snap_m),
             "elapsed_ms": elapsed,
+            "skyline_cells": len(_sky_cells),
+            "skyline_shaded_edges": graph.skyline_shaded_edges,
         },
     })
 

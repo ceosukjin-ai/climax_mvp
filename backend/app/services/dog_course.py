@@ -204,10 +204,32 @@ class Graph:
     adj: list[list[tuple[int, float, float, float, bool, bool]]] = field(default_factory=list)
     # adj[i] = [(to, meters, cost, surface_temp, shaded, surface_known), ...]
     edge_count: int = 0
+    skyline_shaded_edges: int = 0   # 스카이라인 격자로 그늘 판정된 간선 수 (2026-09-11)
 
 
-def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions) -> Graph:
+def edge_midpoints(elements: Iterable[dict[str, Any]]) -> list[tuple[float, float]]:
+    """보행 가능한 간선들의 중점 좌표 — 스카이라인 격자 일괄 조회용 (2026-09-11)."""
+    out = []
+    for el in elements:
+        tags = el.get("tags") or {}
+        geom = el.get("geometry") or []
+        if tags.get("highway") not in WALKABLE or len(geom) < 2:
+            continue
+        for i in range(1, len(geom)):
+            p, q = geom[i - 1], geom[i]
+            if "lat" in p and "lat" in q:
+                out.append(((p["lat"] + q["lat"]) / 2, (p["lon"] + q["lon"]) / 2))
+    return out
+
+
+def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
+                skyline: dict | None = None, sun: tuple[float, float] | None = None) -> Graph:
     """Overpass 형식 elements → 그래프.
+
+    skyline/sun (2026-09-11): 스카이라인 격자(`app.services.skyline.get_cells`)와 태양(방위, 고도)을
+    주면 간선 중점 격자의 지평선으로 **건물 그늘**을 판정한다(OSM 태그 covered/tree_lined/녹지에 더해).
+    골목·건물 그늘이 OSM 에는 없어서 지금까지 코스가 큰길 그늘만 알았던 것을 바로잡는다.
+    격자가 없는 간선은 기존 방식 그대로(폴백).
 
     좌표를 1e-6 도(약 0.1m)로 반올림해 노드를 합친다 — `nodes` 배열이 없어도
     좌표만으로 길이 이어지게 하기 위해서다(앱과 같은 방식).
@@ -268,8 +290,13 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions) -> Graph:
             d = _haversine(p["lat"], p["lon"], q["lat"], q["lon"])
             if d < 0.5:
                 continue
-            shaded = covered or tree_lined or in_green((p["lat"] + q["lat"]) / 2,
-                                                       (p["lon"] + q["lon"]) / 2)
+            mla, mlo = (p["lat"] + q["lat"]) / 2, (p["lon"] + q["lon"]) / 2
+            shaded = covered or tree_lined or in_green(mla, mlo)
+            if not shaded and skyline and sun is not None:
+                cell = skyline.get(f"{round(mla, 4):.4f}:{round(mlo, 4):.4f}")
+                if cell is not None and cell.is_sun_blocked(sun[0], sun[1]):
+                    shaded = True
+                    g.skyline_shaded_edges += 1
             cost, ts = edge_cost(surface, shaded, cond)
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
             g.adj[a].append((b, d, cost, ts, shaded, tagged is not None))
