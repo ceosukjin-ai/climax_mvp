@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # Mapillary 우선을 쓴다(기본 False = 진단만 가능, 라이브는 GSV 그대로).
     # 진단 엔드포인트로 품질 확인 후 True 로 켤 것.
     mapillary_enabled: bool = False
+    # 공간지표(SVF/GVI/BVI/재질) 원천 (2026-09-10, A′ 이식 — 대표 결정):
+    #   "geometry" = V-World 건물 기하(중심선 스냅) + Sentinel-2 NDVI/재질. 거리영상 없음 →
+    #                기록이 학습 가능(imagery_src='vworld-geometry'), 골목·전국, 요금 0.
+    #                실측 80점 PET: 스트리트뷰 3.35 / 기하 3.23 / 골목 3.83→3.24.
+    #   "gsv"      = 기존 Google Street View 5-view + SegFormer (되돌리기용).
+    svf_source: str = "geometry"
 
     # 거리영상(Street View) 월 호출 상한 — **이미지 요청 수** 기준.
     # 파노라마 1지점 = 5-view = 5요청. 구글 무료 한도가 SKU당 월 1만이라 9,000에서 멈춘다.

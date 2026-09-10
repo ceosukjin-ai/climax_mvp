@@ -164,6 +164,14 @@ def _age_band(age) -> str | None:
     return f"{(a // 10) * 10}s"
 
 
+async def _safe(coro):
+    """예외를 None 으로 — 위성 조회 실패가 측정을 막지 않게."""
+    try:
+        return await coro
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class VPTIOrchestrator:
     """실시간 VPTI 파이프라인 오케스트레이션.
 
@@ -219,6 +227,9 @@ class VPTIOrchestrator:
         거리m = 사용자 GPS→실제 사용 파노라마(파생 스칼라만, 원본 미저장).
         """
         from app.services.mapillary import _haversine_m
+        if self._geometry_mode():
+            # A′ (2026-09-10): 거리영상을 쓰지 않는다. 파노 ID 대신 11m 격자 키.
+            return f"geo:{round(lat, 4):.4f}:{round(lon, 4):.4f}", lat, lon, 0
         cached_id, _plat, _plon = await self.cache.get_pano_entry_for_location(lat, lon)
         if cached_id:
             _d = (int(round(_haversine_m(lat, lon, _plat, _plon)))
@@ -333,6 +344,15 @@ class VPTIOrchestrator:
         if cached is not None:
             return cached, True, 0.0, 0.0
 
+        if pano_id.startswith("geo:"):
+            # A′ (2026-09-10): 건물 기하 + 위성 — 거리영상·SegFormer 없음.
+            t0 = time.perf_counter()
+            analysis = await self._analyze_geometry(pano_id, lat, lon)
+            ms = (time.perf_counter() - t0) * 1000
+            logger.info("[timing] 기하 공간분석(V-World+Sentinel): {:.0f}ms", ms)
+            await self.cache.set_pano_analysis(analysis)
+            return analysis, False, 0.0, ms
+
         # 캐시 miss: Street View fetch + SegFormer 추론
         # ⚠️ 신규 다운로드 전 월 상한 확인 — 과금 차단 + bulk download 방지.
         if not is_mapillary_pano(pano_id):   # Mapillary는 무료·합법 → GSV 예산 미적용
@@ -351,6 +371,53 @@ class VPTIOrchestrator:
 
         await self.cache.set_pano_analysis(analysis)
         return analysis, False, sv_ms, seg_ms
+
+    def _geometry_mode(self) -> bool:
+        try:
+            from app.config import get_settings
+            return str(get_settings().svf_source).lower() == "geometry"
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def _analyze_geometry(self, key: str, lat: float, lon: float) -> PanoAnalysisCache:
+        """A′ 공간분석 (2026-09-10): SVF/BVI = V-World 건물 기하(가로 중심선 스냅·±4m 중앙값),
+        GVI·재질 = Sentinel-2 NDVI/NDWI/알베도, 도로축 = 기하 가로축(없으면 OSM 도로축).
+        거리영상을 한 장도 쓰지 않으므로 imagery_source='vworld-geometry' — 학습·재배포 제약 없음.
+        건물 폴리곤이 없으면 개방(SVF 1.0)으로 둔다(GSV 폴백 없음 — 다시 오염되므로)."""
+        from app.services.geo import svf_geometric, street_width_geometric
+        from app.services.sentinel_hub import (get_surface as _get_surface,
+                                               ndvi_to_gvi as _ndvi_to_gvi,
+                                               surface_to_materials as _surf_to_mats)
+        svf_r, sw, surface = await asyncio.gather(
+            svf_geometric(lat, lon), street_width_geometric(lat, lon),
+            _safe(_get_surface(lat, lon)),
+        )
+        svf = float(svf_r["svf"]) if svf_r.get("svf") is not None else 1.0
+        gvi = _ndvi_to_gvi(surface["ndvi"]) if surface else 0.0
+        g = max(0.0, min(1.0, gvi))
+        bvi = max(0.0, min(1.0 - g, 1.0 - svf))
+        if surface:
+            pairs, _alb = _surf_to_mats(surface)
+            mats = {m: float(f) for m, f in pairs if f > 0}
+        else:
+            mats = {"asphalt": 0.7, "concrete": 0.3}
+        axis = sw.get("axis_deg") if isinstance(sw, dict) else None
+        if axis is None:
+            axis = svf_r.get("street_axis_deg")
+        if axis is not None:
+            road_axis, road_src = float(axis), "geometry"
+        else:
+            try:
+                road = await get_road_axis(lat, lon)
+                road_axis, road_src = float(road.road_axis_deg), road.source
+            except Exception:  # noqa: BLE001
+                road_axis, road_src = 0.0, "assumed"
+        return PanoAnalysisCache(
+            pano_id=key, lat=lat, lon=lon, svf=svf, gvi=g, bvi=bvi, material_ratios=mats,
+            capture_date=None, computed_at=datetime.now(timezone.utc).isoformat() + "Z",
+            road_axis_deg=road_axis, road_axis_source=road_src,
+            imagery_source="vworld-geometry",
+        )
 
     async def _check_imagery_budget(self) -> None:
         """이번 달 거리영상 이미지 요청 상한 확인. 초과면 신규 분석을 거부한다.

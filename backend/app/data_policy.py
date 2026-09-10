@@ -27,15 +27,16 @@ GSV = "gsv"              # Google Street View
 MAPILLARY = "mapillary"  # Mapillary (Meta) — CC BY-SA
 OWN = "own"              # 자체 촬영 / 크라우드소싱
 
-KNOWN_IMAGERY_SOURCES = (GSV, MAPILLARY, OWN)
+GEOMETRY = "vworld-geometry"   # 건물 GIS 기하 + 위성(2026-09-10) — 영상 없음, 공공데이터, 학습·재배포 제약 없음
+KNOWN_IMAGERY_SOURCES = (GSV, MAPILLARY, OWN, GEOMETRY)
 
 #: 파생 지표를 **머신러닝 학습·검증에 써도 되는** 출처.
 #: GSV 는 약관 3.2.3(c)(vii) 로 금지되므로 여기 없다.
-ML_TRAINABLE_SOURCES = frozenset({MAPILLARY, OWN})
+ML_TRAINABLE_SOURCES = frozenset({MAPILLARY, OWN, GEOMETRY})
 
 #: 파생 지표를 **외부에 재배포/공개**해도 되는 출처.
 #: (B2G 납품·공개 데이터셋·논문 부록 등. GSV 는 3.2.3(a)(i) 로 금지)
-REDISTRIBUTABLE_SOURCES = frozenset({OWN})
+REDISTRIBUTABLE_SOURCES = frozenset({OWN, GEOMETRY})
 
 # Mapillary 를 쓸 때의 추가 준수사항 — 코드에서 강제할 수 없어 여기 명문화한다.
 MAPILLARY_OBLIGATIONS = (
