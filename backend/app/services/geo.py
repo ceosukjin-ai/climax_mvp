@@ -338,6 +338,41 @@ def _snap_outside(rings: list, clearance_m: float = 1.0, max_iter: int = 3) -> t
     return shifted, moved
 
 
+def _shift_rings(rings: list, ox: float, oy: float) -> list:
+    return [([(x - ox, y - oy) for x, y in r], p) for r, p in rings]
+
+
+def _snap_to_street_center(rings: list, az_step_deg: int = 10, max_m: float = 30.0) -> tuple[list, float, float | None]:
+    """벽 1m 밖 → **가로 중심선**으로 (2026-09-10). 마주보는 광선쌍 중 d1+d2 최소 = 가로 단면,
+    그 중점으로 원점을 옮긴다. 사람은 골목 한가운데를 걷지 벽에 붙어 걷지 않는다 — 실측 80점
+    진단에서 벽 0~2m에 붙은 좌표가 SVF 과차폐(0.3↔0.8)의 주범이었고, 중심선 스냅+도로축 ±4m
+    중앙값으로 MAE 0.152→0.121, 편향 −0.057→0.00, r 0.31→0.40. 반환: (rings, 이동m, 도로축 방위|None)."""
+    n = max(1, int(360 / az_step_deg))
+    d: list[float | None] = [None] * n
+    for i in range(n):
+        az = math.radians(i * az_step_deg)
+        dx, dy = math.sin(az), math.cos(az)
+        for ring, _p in rings:
+            if len(ring) < 4:
+                continue
+            t = _ray_ring_hit(dx, dy, ring)
+            if t is not None and t <= max_m and (d[i] is None or t < d[i]):
+                d[i] = t
+    best = None
+    for i in range(n // 2):
+        j = i + n // 2
+        if d[i] is None or d[j] is None:
+            continue
+        if best is None or d[i] + d[j] < best[0]:
+            best = (d[i] + d[j], i, d[i], d[j])
+    if best is None:
+        return rings, 0.0, None
+    _w, i, d1, d2 = best
+    az = math.radians(i * az_step_deg)
+    off = (d1 - d2) / 2.0
+    return _shift_rings(rings, math.sin(az) * off, math.cos(az) * off), abs(off), (i * az_step_deg + 90) % 180
+
+
 async def svf_geometric(
     lat: float, lon: float, eye_height_m: float = 1.5, az_step_deg: int = 2,
     default_floors: int = 2,
@@ -352,7 +387,24 @@ async def svf_geometric(
     if not rings:
         return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 폴리곤 없음"}
     rings, snapped = _snap_outside(rings)   # GPS 오차로 건물 안이면 골목으로 끌어냄
+    rings, centered, axis = _snap_to_street_center(rings)   # 벽 → 가로 중심선
+    if axis is not None:
+        # 도로축 따라 ±4m 3점의 중앙값 — GPS 5~10m 오차에 강건 (2026-09-10)
+        vals = []
+        ax = math.radians(axis)
+        for off in (-4.0, 0.0, 4.0):
+            rr, _ = _snap_outside(_shift_rings(rings, math.sin(ax) * off, math.cos(ax) * off))
+            vals.append(_svf_from_rings(rr, eye_height_m, az_step_deg, default_floors))
+        vals.sort()
+        svf, nb = vals[1]
+        return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
+                "centered_m": round(centered, 1), "street_axis_deg": axis}
+    svf, nb = _svf_from_rings(rings, eye_height_m, az_step_deg, default_floors)
+    return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1), "centered_m": 0.0}
 
+
+def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_floors: int) -> tuple[float, int]:
+    """원점(0,0)에서 ray-cast SVF. 반환 (svf, 차폐 건물 수)."""
     # (외곽선 좌표, 높이) — 점을 품은 건물은 제외(그 안이면 판정불가), 층수결측은 기본높이
     blds: list[tuple[list[tuple[float, float]], float]] = []
     for ring, props in rings:
@@ -366,7 +418,7 @@ async def svf_geometric(
             continue
         blds.append((ring, h))
     if not blds:
-        return {"svf": 1.0, "source": src, "n_buildings": 0, "reason": "차폐 건물 없음(개방)"}
+        return 1.0, 0
 
     n_sectors = max(1, int(360 / az_step_deg))
     sin2_sum = 0.0
@@ -383,8 +435,7 @@ async def svf_geometric(
                 beta_max = beta
         sin2_sum += math.sin(beta_max) ** 2
     svf = 1.0 - sin2_sum / n_sectors
-    return {"svf": round(max(0.0, min(1.0, svf)), 3), "source": src,
-            "n_buildings": len(blds), "snapped_m": round(snapped, 1)}
+    return round(max(0.0, min(1.0, svf)), 3), len(blds)
 
 
 async def street_width_geometric(
