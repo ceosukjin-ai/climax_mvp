@@ -66,26 +66,38 @@ async def main():
         "FROM engine_check WHERE observed_at > NOW() - INTERVAL '90 days' "
         "AND obs_ground_c IS NOT NULL AND air_temp IS NOT NULL AND station_id IS NOT NULL ORDER BY observed_at")
     rows = [r for r in rows if r["station_id"] in ASOS_STATIONS]
-    n = len(rows); print(f"engine_check 짝 {n}건, 과거 {HOURS}h 일사 샘플 {len(LAGS)}개/행 계산 중…", flush=True)
+    n = len(rows)
+    stn = np.array([int(r["station_id"]) for r in rows]); days = np.array([r["observed_at"].astimezone(KST).strftime("%Y-%m-%d") for r in rows])
+    CACHE = "/repo/data/brain_ground_lag_cache.npz"
+    import os
+    cached = os.path.exists(CACHE) and int(np.load(CACHE)["n"]) == n
+    if cached:
+        z = np.load(CACHE); S, ta, u, obs, ldn, hrs = z["S"], z["ta"], z["u"], z["obs"], z["ldn"], z["hrs"]
+        print(f"engine_check 짝 {n}건 (일사 샘플 캐시 사용)")
+    else:
+        print(f"engine_check 짝 {n}건, 과거 {HOURS}h 일사 샘플 {len(LAGS)}개/행 계산 중…", flush=True)
     t0 = time.time()
-    ta, u, obs, ldn, hrs = [], [], [], [], []
-    S = np.zeros((n, len(LAGS)))
-    for k, r in enumerate(rows):
-        lat, lon = ASOS_STATIONS[r["station_id"]]
-        cf = r["est_cloud"] if r["est_cloud"] is not None else (r["obs_cloud"] if r["obs_cloud"] is not None else 0.3)
-        t = r["observed_at"]
-        for j, lag in enumerate(LAGS):
-            sun = estimate_solar(lat, lon, t - timedelta(hours=float(lag)), cloud_fraction=float(cf))
-            beta = math.radians(max(sun.solar_elevation_deg, 0.0))
-            S[k, j] = max(sun.dni * math.sin(beta) + sun.dhi, 0.0)
-            if j == 0:
-                eps_sky = sky_emissivity(float(r["air_temp"]), 60.0, sun.cloud_fraction)
-        ta.append(float(r["air_temp"])); u.append(float(r["wind_ms"] or 0.5)); obs.append(float(r["obs_ground_c"]))
-        ldn.append(STEFAN_BOLTZMANN * (float(r["air_temp"]) + KELVIN) ** 4 * eps_sky)
-        hrs.append(t.astimezone(KST).hour)
-        if (k + 1) % 300 == 0:
-            print(f"  {k+1}/{n} ({time.time()-t0:.0f}s)", flush=True)
-    ta, u, obs, ldn = map(np.array, (ta, u, obs, ldn)); bands = np.array([band(h) for h in hrs])
+    if not cached:
+      ta, u, obs, ldn, hrs = [], [], [], [], []
+      S = np.zeros((n, len(LAGS)))
+      for k, r in enumerate(rows):
+          lat, lon = ASOS_STATIONS[r["station_id"]]  # noqa: E111
+          cf = r["est_cloud"] if r["est_cloud"] is not None else (r["obs_cloud"] if r["obs_cloud"] is not None else 0.3)
+          t = r["observed_at"]
+          for j, lag in enumerate(LAGS):
+              sun = estimate_solar(lat, lon, t - timedelta(hours=float(lag)), cloud_fraction=float(cf))
+              beta = math.radians(max(sun.solar_elevation_deg, 0.0))
+              S[k, j] = max(sun.dni * math.sin(beta) + sun.dhi, 0.0)
+              if j == 0:
+                  eps_sky = sky_emissivity(float(r["air_temp"]), 60.0, sun.cloud_fraction)
+          ta.append(float(r["air_temp"])); u.append(float(r["wind_ms"] or 0.5)); obs.append(float(r["obs_ground_c"]))
+          ldn.append(STEFAN_BOLTZMANN * (float(r["air_temp"]) + KELVIN) ** 4 * eps_sky)
+          hrs.append(t.astimezone(KST).hour)
+          if (k + 1) % 300 == 0:
+              print(f"  {k+1}/{n} ({time.time()-t0:.0f}s)", flush=True)
+      ta, u, obs, ldn, hrs = map(np.array, (ta, u, obs, ldn, hrs))
+      np.savez(CACHE, S=S, ta=ta, u=u, obs=obs, ldn=ldn, hrs=hrs, n=n)
+    bands = np.array([band(int(h)) for h in hrs])
     SE = {tau: s_eff(S, tau) for tau in GRID["tau"]}
 
     def report(name, ts):
@@ -115,19 +127,48 @@ async def main():
     bT = min(((np.mean(np.abs(solve(ta, SE[tau], ldn, u, *base[:4]) - obs)), tau) for tau in GRID["tau"]))
     report(f"현재 계수 + tau={bT[1]}h 만", solve(ta, SE[bT[1]], ldn, u, *base[:4]))
 
-    cut = int(n * 2 / 3); tr, te = allidx[:cut], allidx[cut:]
-    bt = search(tr)
-    pT = dict(zip(("hc_a", "hc_b", "f_stor", "q_rel", "tau"), bt[1:]))
-    e_te = solve(ta[te], SE[pT["tau"]][te], ldn[te], u[te], pT["hc_a"], pT["hc_b"], pT["f_stor"], pT["q_rel"]) - obs[te]
-    e_te0 = solve(ta[te], SE[0][te], ldn[te], u[te], *base[:4]) - obs[te]
-    hold0, hold1 = float(np.mean(np.abs(e_te0))), float(np.mean(np.abs(e_te)))
-    print(f"\n[시간분할 검증] 앞 {cut}건 학습 → 뒤 {n-cut}건: 현재 MAE {hold0:.2f} → 학습계수 {hold1:.2f}  "
-          f"(학습계수 {pT})  " + "  ".join(f"{b} {np.mean(e_te[bands[te] == b]):+.1f}" for b in ("오전", "정오", "오후", "야간") if (bands[te] == b).any()))
-    verdict = "통과(승격 후보)" if hold1 < hold0 - 0.2 and abs(np.mean(e_te)) < 1.0 else "탈락"
-    print(f"판정: {verdict}  (기준: 검증 MAE 0.2 이상 개선 & |bias|<1)")
+    def fit_eval(tr, te, label):
+        b = search(tr); p = dict(zip(("hc_a", "hc_b", "f_stor", "q_rel", "tau"), b[1:]))
+        e1 = solve(ta[te], SE[p["tau"]][te], ldn[te], u[te], p["hc_a"], p["hc_b"], p["f_stor"], p["q_rel"]) - obs[te]
+        e0 = solve(ta[te], SE[0][te], ldn[te], u[te], *base[:4]) - obs[te]
+        bb = "  ".join(f"{x} {np.mean(e1[bands[te] == x]):+.1f}" for x in ("오전", "정오", "오후", "야간") if (bands[te] == x).any())
+        print(f"  {label:26s} n={len(te):4d}  현재 {np.mean(np.abs(e0)):.2f} → 학습 {np.mean(np.abs(e1)):.2f} (bias {np.mean(e1):+.2f})  {bb}  {p}")
+        return float(np.mean(np.abs(e0))), float(np.mean(np.abs(e1))), float(np.mean(e1)), p
 
-    metrics = {"n": n, "mae_current": round(mae0, 3), "mae_fit": round(maeA, 3), "holdout_current": round(hold0, 3),
-               "holdout_fit": round(hold1, 3), "holdout_bias": round(float(np.mean(e_te)), 3), "train_params": pT, "verdict": verdict}
+    # 관측소별 편향 (현재 vs 전체최적) — 센서 밑 표면 차이 진단
+    eC = solve(ta, SE[0], ldn, u, *base[:4]) - obs
+    eF = solve(ta, SE[pA['tau']], ldn, u, pA["hc_a"], pA["hc_b"], pA["f_stor"], pA["q_rel"]) - obs
+    print("\n[관측소별] n / 현재 bias / 최적 bias / 기간")
+    for sid in sorted(set(stn.tolist())):
+        m = stn == sid
+        print(f"  stn {sid:3d}  n={m.sum():4d}  현재 {np.mean(eC[m]):+5.1f}  최적 {np.mean(eF[m]):+5.1f}   {days[m].min()}~{days[m].max()}")
+
+    print("\n[검증 ① 시간분할 앞2/3→뒤1/3]")
+    cut = int(n * 2 / 3)
+    print(f"  학습 {days[0]}~{days[cut-1]} / 검증 {days[cut]}~{days[-1]}  (검증 관측소 {sorted(set(stn[cut:].tolist()))})")
+    h0t, h1t, bt_, pT = fit_eval(allidx[:cut], allidx[cut:], "시간분할")
+    print("[검증 ② 날짜 무작위 분할(짝수/홀수 일)]")
+    ud = sorted(set(days.tolist())); odd = np.isin(days, ud[1::2])
+    h0r, h1r, br_, pR = fit_eval(allidx[~odd], allidx[odd], "무작위 날짜")
+    print("[검증 ③ 관측소 LOSO (n≥60인 관측소만)]")
+    loso = []
+    for sid in sorted(set(stn.tolist())):
+        te = allidx[stn == sid]
+        if len(te) < 60:
+            continue
+        loso.append(fit_eval(allidx[stn != sid], te, f"stn {sid} 제외→검증")[:2])
+    if loso:
+        l0 = float(np.mean([x[0] for x in loso])); l1 = float(np.mean([x[1] for x in loso]))
+        print(f"  LOSO 평균: 현재 {l0:.2f} → 학습 {l1:.2f}")
+    else:
+        l0 = l1 = float("nan")
+    hold0, hold1 = h0r, h1r; e_te = None
+    verdict = "통과(승격 후보)" if (h1r < h0r - 0.2 and abs(br_) < 1.0 and (not loso or l1 < l0)) else "탈락"
+    print(f"\n판정: {verdict}  (기준: 무작위날짜 검증 MAE 0.2↑ 개선 & |bias|<1 & LOSO 개선)")
+
+    metrics = {"n": n, "mae_current": round(mae0, 3), "mae_fit": round(maeA, 3),
+               "time_split": [round(h0t, 3), round(h1t, 3)], "random_day": [round(h0r, 3), round(h1r, 3), round(br_, 3)],
+               "loso_station": [round(l0, 3), round(l1, 3)], "params_random": pR, "verdict": verdict}
     await conn.execute("INSERT INTO brain_version (kind, params, metrics, n_train, promoted, reason) VALUES ($1,$2,$3,$4,FALSE,$5)",
                        "ground_lag", json.dumps(pA), json.dumps(metrics, ensure_ascii=False), n, f"day2-1b {verdict}, 승격은 사람 확인")
     await conn.close()
