@@ -88,3 +88,4 @@ api.txt
 *.code-workspace
 backend/aws_stations.json
 backend/.cache/
+*.ppk

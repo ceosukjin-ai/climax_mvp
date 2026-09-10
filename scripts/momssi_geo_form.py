@@ -37,27 +37,33 @@ def main():
         print(f"이미 계산됨 {len(done)}개 (이어서)")
 
     fields = ["lat", "lon", "n_records", "svf", "n_buildings", "street_width_m", "hw_ratio", "snapped_m", "폭등급"]
+    todo = [(k, rs) for k, rs in grids.items() if k not in done]
+
+    def fetch(item):
+        (la, lo), rs = item
+        d = {}
+        for attempt in range(2):
+            try:
+                d = json.load(urllib.request.urlopen(f"{API}?lat={la}&lon={lo}", timeout=90)); break
+            except Exception as e:
+                if attempt == 1: print(f"  실패 {la},{lo}: {e}")
+        rec = {"lat": la, "lon": lo, "n_records": len(rs), "svf": d.get("svf", ""),
+               "n_buildings": d.get("n_buildings", ""), "street_width_m": d.get("street_width_m", ""),
+               "hw_ratio": d.get("hw_ratio", ""), "snapped_m": d.get("snapped_m", ""),
+               "폭등급": cls(d.get("street_width_m"))}
+        return (la, lo), {k: ("" if v is None else v) for k, v in rec.items()}
+
+    from concurrent.futures import ThreadPoolExecutor
     new = 0
     with open(OUT, "a" if done else "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         if not done:
             w.writeheader()
-        for i, ((la, lo), rs) in enumerate(grids.items(), 1):
-            if (la, lo) in done:
-                continue
-            try:
-                d = json.load(urllib.request.urlopen(f"{API}?lat={la}&lon={lo}", timeout=60))
-            except Exception as e:
-                print(f"  실패 {la},{lo}: {e}"); d = {}
-            rec = {"lat": la, "lon": lo, "n_records": len(rs), "svf": d.get("svf", ""),
-                   "n_buildings": d.get("n_buildings", ""), "street_width_m": d.get("street_width_m", ""),
-                   "hw_ratio": d.get("hw_ratio", ""), "snapped_m": d.get("snapped_m", ""),
-                   "폭등급": cls(d.get("street_width_m"))}
-            rec = {k: ("" if v is None else v) for k, v in rec.items()}
-            w.writerow(rec); f.flush(); done[(la, lo)] = rec; new += 1
-            if new % 50 == 0:
-                print(f"  {len(done)}/{len(grids)}", flush=True)
-            time.sleep(0.15)
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            for key, rec in ex.map(fetch, todo):
+                w.writerow(rec); f.flush(); done[key] = rec; new += 1
+                if new % 100 == 0:
+                    print(f"  {len(done)}/{len(grids)}", flush=True)
 
     # ── 요약 ──
     print("\n=== 몸씨 기록의 공간 형태 분포 ===")

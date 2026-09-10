@@ -141,7 +141,7 @@ async def main():
     print("\n[관측소별] n / 현재 bias / 최적 bias / 기간")
     for sid in sorted(set(stn.tolist())):
         m = stn == sid
-        print(f"  stn {sid:3d}  n={m.sum():4d}  현재 {np.mean(eC[m]):+5.1f}  최적 {np.mean(eF[m]):+5.1f}   {days[m].min()}~{days[m].max()}")
+        print(f"  stn {sid:3d}  n={m.sum():4d}  현재 {np.mean(eC[m]):+5.1f}  최적 {np.mean(eF[m]):+5.1f}   {min(days[m].tolist())}~{max(days[m].tolist())}")
 
     print("\n[검증 ① 시간분할 앞2/3→뒤1/3]")
     cut = int(n * 2 / 3)
