@@ -1,0 +1,11 @@
+{
+  "name": "ClimaX — いま、ここの体感",
+  "short_name": "ClimaX",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f1720",
+  "theme_color": "#0f1720",
+  "lang": "ja",
+  "icons": [{"src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"}]
+}

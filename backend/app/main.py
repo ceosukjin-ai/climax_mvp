@@ -217,6 +217,12 @@ def create_app() -> FastAPI:
     app.include_router(api_router)
     app.include_router(ws_router)
 
+    # 일본(전세계) 웹앱 PWA — /jp/ (2026-09-10). 이미지 안에 들어가는 app/web/jp 를 서빙.
+    # 같은 origin 이라 CORS 불필요, API 는 상대경로 /api/v1/vpti/geo/at.
+    _jp_dir = Path(__file__).resolve().parent / "web" / "jp"
+    if _jp_dir.is_dir():
+        app.mount("/jp", StaticFiles(directory=_jp_dir, html=True), name="jp")
+
     if WEB_DIR.is_dir():
         # 야외 검증용 단일 HTML 페이지를 같은 origin에서 서빙. /api/v1 라우터가
         # 먼저 매칭되므로 mount는 그 외 경로(/, /index.html 등)만 가져간다.

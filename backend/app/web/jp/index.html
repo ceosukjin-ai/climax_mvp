@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#0f1720"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="ClimaX"/>
+<link rel="manifest" href="./manifest.webmanifest"/>
+<link rel="apple-touch-icon" href="./icon.svg"/>
+<title>ClimaX — いま、ここの体感</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1720; --panel:#182430; --line:#2a3a49; --txt:#eaf1f7; --muted:#9fb3c4;
+    --safe:#2e9e6b; --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Apple SD Gothic Neo","Segoe UI",sans-serif}
+  #map{position:absolute;inset:0}
+  .leaflet-container{background:#0b1219}
+  .leaflet-control-zoom{display:none}
+  .hdr{position:absolute;top:0;left:0;right:0;z-index:1000;display:flex;align-items:center;justify-content:space-between;
+       padding:calc(10px + var(--sat)) 14px 10px;background:linear-gradient(180deg,rgba(15,23,32,.95),rgba(15,23,32,0));pointer-events:none}
+  .hdr b{font-size:15px;letter-spacing:.2px}
+  .hdr small{display:block;font-size:11.5px;color:var(--muted);font-weight:400}
+  .lang{pointer-events:auto;display:flex;gap:4px}
+  .lang button{font:inherit;font-size:11.5px;padding:4px 8px;border-radius:8px;border:1px solid var(--line);
+       background:rgba(24,36,48,.9);color:var(--muted);cursor:pointer}
+  .lang button.on{color:var(--txt);border-color:#4d7fa8;background:#1d3346}
+  .fab{position:absolute;z-index:1000;right:14px;bottom:calc(16px + var(--sab));width:46px;height:46px;border-radius:50%;
+       border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:20px;display:flex;align-items:center;justify-content:center;
+       box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer}
+  .fab.on{border-color:#4d7fa8;color:#7fb6e6}
+  .sheet{position:absolute;z-index:1000;left:10px;right:10px;bottom:calc(10px + var(--sab));max-width:420px;margin:0 auto;
+       background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 16px 12px;box-shadow:0 10px 40px rgba(0,0,0,.5);
+       transition:transform .25s ease}
+  .sheet.hidden{transform:translateY(130%)}
+  .feel{display:flex;align-items:baseline;gap:8px}
+  .feel .n{font-size:46px;font-weight:700;line-height:1}
+  .feel .u{font-size:14px;color:var(--muted)}
+  .badge{display:inline-block;margin-top:6px;padding:4px 11px;border-radius:999px;font-size:12.5px;font-weight:700}
+  .sub{margin:6px 0 10px;font-size:12.5px;color:var(--muted);line-height:1.5}
+  .act{border-radius:12px;padding:10px 12px;margin:2px 0 10px;font-size:14px;line-height:1.55;font-weight:600}
+  .act small{display:block;font-weight:400;font-size:12.5px;opacity:.85;margin-top:3px}
+  .rows{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px}
+  .row{display:flex;justify-content:space-between;font-size:12.5px;padding:4px 0;border-top:1px solid var(--line)}
+  .row .k{color:var(--muted)} .row .v{font-weight:600}
+  .foot{margin-top:9px;font-size:10.5px;color:var(--muted);line-height:1.5;display:flex;justify-content:space-between;gap:8px}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--muted);border-top-color:transparent;
+        border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .hint{position:absolute;z-index:900;left:50%;top:calc(64px + var(--sat));transform:translateX(-50%);background:rgba(24,36,48,.92);
+        border:1px solid var(--line);border-radius:999px;padding:7px 15px;font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .me{width:18px;height:18px;border-radius:50%;background:#4d9be6;border:3px solid #fff;box-shadow:0 0 0 6px rgba(77,155,230,.25)}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="hdr">
+  <div><b id="t_title">ClimaX</b><small id="t_sub">いま、ここの体感（東京23区）</small></div>
+  <div class="lang"><button data-l="ja" class="on">日本語</button><button data-l="en">EN</button><button data-l="ko">한국어</button></div>
+</div>
+<div class="hint" id="hint">地図をタップ、または ◎ で現在地</div>
+<button class="fab" id="fab" title="現在地">◎</button>
+<div id="sheet" class="sheet hidden"></div>
+
+<script>
+// ─── 다국어 ───────────────────────────────────────────
+const I18N = {
+ ja:{sub:"いま、ここの体感（東京23区）",hint:"地図をタップ、または ◎ で現在地",feel:"°C 体感",calc:"計算中…",
+     risk:{safe:"安全",caution:"注意",warning:"警戒",danger:"危険",severe:"厳重警戒"},
+     sun:"日なた",shade:"日陰",svf:"空の開け",gvi:"緑",ta:"気温",mrt:"放射温度",rh:"湿度",wind:"風",
+     nocov:"このエリアはまだ未対応",nocov2:"東京23区内をタップしてください。",err:"接続できません。しばらくしてからもう一度。",
+     foot:"ストリートビュー不要・衛星と建物地図と気象から算出",follow:"現在地を追跡中",
+     act:{
+      heat_safe:["このまま歩けます","水分はこまめに。"],
+      heat_caution:["日陰側を選んで歩く","水分を持ち、20〜30分に一度は休憩を。"],
+      heat_warning:["日陰を選び、20分ごとに休憩","正午〜15時の外出は短めに。日なたは体感が3〜5°C上がります。"],
+      heat_danger:["外出は朝か夕方に","今いるなら日陰か屋内へ。高齢の方・持病のある方は外出を控えてください。"],
+      heat_severe:["今すぐ屋内へ","冷房のある場所に移動を。無理に歩かないでください。"],
+      cold_caution:["風を避けて歩く","首元と手を温めて。"],
+      cold_warning:["風の当たらない道を","長時間の外出は避けて。"],
+      cold_danger:["屋内へ","体を温めてから外出を。"],
+      cold_severe:["今すぐ屋内へ","低体温に注意。"],
+      shade_tip:"近くの日陰に移ると体感が下がります",
+     }},
+ en:{sub:"How it feels right here (Tokyo 23 wards)",hint:"Tap the map, or ◎ for your location",feel:"°C feels like",calc:"Computing…",
+     risk:{safe:"Safe",caution:"Caution",warning:"Warning",danger:"Danger",severe:"Extreme"},
+     sun:"Sunlit",shade:"Shaded",svf:"Sky view",gvi:"Green",ta:"Air temp",mrt:"Radiant temp",rh:"Humidity",wind:"Wind",
+     nocov:"Not covered here yet",nocov2:"Tap inside Tokyo's 23 wards.",err:"Cannot connect. Try again shortly.",
+     foot:"No street view needed — satellite, building map and live weather",follow:"Following your location",
+     act:{
+      heat_safe:["Fine to keep walking","Sip water regularly."],
+      heat_caution:["Keep to the shaded side","Carry water; rest every 20–30 min."],
+      heat_warning:["Choose shade, rest every 20 min","Keep noon–3 pm outings short. Sun adds 3–5°C to how it feels."],
+      heat_danger:["Go out in the morning or evening","If you are out now, move to shade or indoors. Older adults: stay in."],
+      heat_severe:["Get indoors now","Find air conditioning. Do not keep walking."],
+      cold_caution:["Walk out of the wind","Cover neck and hands."],
+      cold_warning:["Pick streets sheltered from wind","Avoid long time outside."],
+      cold_danger:["Get indoors","Warm up before going out."],
+      cold_severe:["Get indoors now","Hypothermia risk."],
+      shade_tip:"Nearby shade will feel cooler",
+     }},
+ ko:{sub:"지금 여기 체감 (도쿄 23구)",hint:"지도를 누르거나 ◎ 로 현재 위치",feel:"°C 체감",calc:"계산 중…",
+     risk:{safe:"안전",caution:"주의",warning:"경고",danger:"위험",severe:"심각"},
+     sun:"볕",shade:"그늘",svf:"하늘열림",gvi:"녹지",ta:"기온",mrt:"복사온도",rh:"습도",wind:"바람",
+     nocov:"이 지역은 아직 준비 안 됨",nocov2:"도쿄 23구 안을 눌러보세요.",err:"연결 실패. 잠시 후 다시.",
+     foot:"스트리트뷰 없이 위성·건물지도·실시간 날씨로 산출",follow:"내 위치 따라가는 중",
+     act:{
+      heat_safe:["그대로 걸어도 됩니다","물은 조금씩 자주."],
+      heat_caution:["그늘 쪽으로 걷기","물 챙기고 20~30분에 한 번 쉬기."],
+      heat_warning:["그늘 고르고 20분마다 휴식","정오~15시 외출은 짧게. 볕은 체감 +3~5°C."],
+      heat_danger:["외출은 아침·저녁에","지금 밖이면 그늘이나 실내로. 고령자·지병 있으면 외출 자제."],
+      heat_severe:["지금 실내로","냉방 있는 곳으로. 무리해서 걷지 마세요."],
+      cold_caution:["바람 피해 걷기","목과 손 따뜻하게."],
+      cold_warning:["바람 안 닿는 길로","오래 밖에 있지 않기."],
+      cold_danger:["실내로","몸 데운 뒤 외출."],
+      cold_severe:["지금 실내로","저체온 주의."],
+      shade_tip:"가까운 그늘로 옮기면 체감이 내려갑니다",
+     }},
+};
+let L_ = "ja";
+try{ const s=localStorage.getItem("cx_lang"); if(s&&I18N[s]) L_=s; else { const n=(navigator.language||"ja").slice(0,2); L_= I18N[n]?n:"ja"; } }catch(e){}
+function T(){ return I18N[L_]; }
+
+// ─── 지도 ────────────────────────────────────────────
+const API = "/api/v1/vpti/geo/at";
+const HEAT = {caution:"#e8c14a",warning:"#e07b39",danger:"#d9483b",severe:"#a01f14"};
+const COLD = {caution:"#6db8e0",warning:"#4a86c9",danger:"#3b56c9",severe:"#5a3bc9"};
+function colorFor(d){
+  if(d.risk==="safe" || d.stress_direction==="neutral") return "#2e9e6b";
+  return (d.stress_direction==="cold"?COLD:HEAT)[d.risk] || "#8899a6";
+}
+const map = L.map('map',{zoomControl:false}).setView([35.6710,139.7020],14);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
+// 도쿄 23구 커버리지(적재 bbox)
+const COV=[[35.53,139.56],[35.82,139.92]];
+L.rectangle(COV,{color:"#4d7fa8",weight:1,fillColor:"#4d7fa8",fillOpacity:0.03,dashArray:"4 4"}).addTo(map);
+
+const sheet=document.getElementById('sheet'), hint=document.getElementById('hint'), fab=document.getElementById('fab');
+let marker=null, meMarker=null, follow=false, lastQ=null, inflight=null, lastData=null;
+
+function applyLang(){
+  document.documentElement.lang=L_;
+  document.getElementById('t_sub').textContent=T().sub;
+  hint.textContent=follow?T().follow:T().hint;
+  document.querySelectorAll('.lang button').forEach(b=>b.classList.toggle('on',b.dataset.l===L_));
+  if(lastData) show(lastData);
+}
+document.querySelectorAll('.lang button').forEach(b=>b.onclick=()=>{L_=b.dataset.l;try{localStorage.setItem("cx_lang",L_)}catch(e){};applyLang();});
+
+function actionFor(d){
+  const t=T().act;
+  const dir = (d.stress_direction==="cold")?"cold":"heat";
+  const key = d.risk==="safe" ? "heat_safe" : `${dir}_${d.risk}`;
+  const a = t[key] || t.heat_safe;
+  let extra="";
+  if(dir==="heat" && d.risk!=="safe" && d.exposure && /볕|sun/i.test(d.exposure)) extra=t.shade_tip;
+  return {h:a[0], s:a[1], extra};
+}
+function expLabel(d){ if(!d.exposure) return ""; return /그늘|shade/i.test(d.exposure)?T().shade:T().sun; }
+
+function loading(la,lo){
+  sheet.classList.remove('hidden');
+  sheet.innerHTML=`<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>${T().calc}<br>
+    <span style="font-size:11px">${la.toFixed(4)}, ${lo.toFixed(4)}</span></div>`;
+}
+function show(d){
+  lastData=d;
+  const c=colorFor(d), a=actionFor(d), t=T();
+  const feel = (d.pet_ai!=null && d.ai_applied) ? d.pet_ai : d.vpti;   // AI 보정이 켜졌으면 그 값(형태 기반), 아니면 물리
+  sheet.classList.remove('hidden');
+  sheet.innerHTML=`
+    <div class="feel"><span class="n" style="color:${c}">${Math.round(feel)}</span><span class="u">${t.feel}</span>
+      <span class="badge" style="margin-left:auto;background:${c}22;color:${c};border:1px solid ${c}55">${t.risk[d.risk]||d.risk}</span></div>
+    <div class="sub">${expLabel(d)} · ${t.svf} ${Math.round(d.svf*100)}% · ${t.gvi} ${Math.round((d.gvi||0)*100)}%${d.street_width_m?` · ${d.street_width_m}m`:""}</div>
+    <div class="act" style="background:${c}1a;border:1px solid ${c}44;color:${c}">${a.h}<small style="color:var(--txt)">${a.s}${a.extra?`<br>${a.extra}`:""}</small></div>
+    <div class="rows">
+      <div class="row"><span class="k">${t.ta}</span><span class="v">${d.weather.ta}°C</span></div>
+      <div class="row"><span class="k">${t.mrt}</span><span class="v">${d.mrt_c}°C</span></div>
+      <div class="row"><span class="k">${t.rh}</span><span class="v">${d.weather.rh}%</span></div>
+      <div class="row"><span class="k">${t.wind}</span><span class="v">${d.weather.wind_ms} m/s</span></div>
+    </div>
+    <div class="foot"><span>${t.foot}</span><span>${d.lat.toFixed(4)}, ${d.lon.toFixed(4)}</span></div>`;
+}
+function nocov(msg){
+  sheet.classList.remove('hidden');
+  sheet.innerHTML=`<div style="font-size:14px;font-weight:600;margin-bottom:5px">${T().nocov}</div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5">${msg||T().nocov2}</div>`;
+}
+
+async function query(la,lo){
+  if(marker) marker.remove();
+  marker=L.circleMarker([la,lo],{radius:8,color:"#fff",weight:2,fillColor:"#4d7fa8",fillOpacity:.9}).addTo(map);
+  loading(la,lo);
+  if(inflight) inflight.abort();
+  inflight=new AbortController();
+  try{
+    const res=await fetch(`${API}?lat=${la.toFixed(5)}&lon=${lo.toFixed(5)}`,{signal:inflight.signal});
+    if(res.status===404){ nocov(); return; }
+    if(!res.ok){ nocov(T().err); return; }
+    const d=await res.json();
+    if(!d.ok){ nocov(); return; }
+    marker.setStyle({fillColor:colorFor(d)});
+    show(d); lastQ={la,lo,t:Date.now()};
+  }catch(e){ if(e.name!=="AbortError") nocov(T().err); }
+}
+map.on('click',e=>{ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; query(e.latlng.lat,e.latlng.lng); });
+
+// ─── 현재 위치 따라가기: 30m 이상 이동 또는 10분 경과 시 재계산 ───
+function distM(a,b,c,d){const R=6371000,p=Math.PI/180;const x=(c-a)*p,y=(d-b)*p*Math.cos((a+c)/2*p);return Math.sqrt(x*x+y*y)*R;}
+let watchId=null;
+function startFollow(){
+  if(!navigator.geolocation){ nocov("GPS N/A"); return; }
+  follow=true; fab.classList.add('on'); hint.textContent=T().follow;
+  watchId=navigator.geolocation.watchPosition(p=>{
+    const la=p.coords.latitude, lo=p.coords.longitude;
+    if(!meMarker){ meMarker=L.marker([la,lo],{icon:L.divIcon({className:"",html:'<div class="me"></div>',iconSize:[18,18],iconAnchor:[9,9]})}).addTo(map); map.setView([la,lo],17); }
+    else meMarker.setLatLng([la,lo]);
+    if(follow) map.panTo([la,lo],{animate:true});
+    const stale = !lastQ || distM(lastQ.la,lastQ.lo,la,lo)>30 || (Date.now()-lastQ.t)>600000;
+    if(follow && stale && (p.coords.accuracy||99)<60) query(la,lo);
+  },err=>{ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; nocov(err.message); },
+  {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+}
+fab.onclick=()=>{ if(follow){ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;} } else startFollow(); };
+
+applyLang();
+if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
+</script>
+</body>
+</html>
