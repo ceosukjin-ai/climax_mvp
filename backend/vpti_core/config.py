@@ -216,6 +216,12 @@ class MRTConfig:
     #   실측 (Ts−T0)/(T1−T0) 중앙값 0.74 (scripts/shade_ground_retention.py). 0이면 기존 동작.
     #   효과: 그늘 PET bias −4.8→−2.3, 전체 MAE 3.83→3.50, 극심 55→57/63.
     shade_ground_retention: float = 0.74
+    # 지면 열관성 시간지연 (2026-09-10, 뇌 v1 ①b — ASOS 1,745짝 fit, 관측소 LOSO 3.67→2.24):
+    #   ground_lag_tau_h  : 지면 입사 단파를 지난 8h 지수가중 평균(시정수 τ[h])으로 대체. 0이면 순간값(기존).
+    #   ground_release_wm2: 지중 저장열 방출 [W/m²], 일사가 약할수록 켜짐 q·max(0, 1−S↓/200). 0이면 없음(기존).
+    #   승격값(사람 확인 후): tau 2.0, release 60, storage 0.5. 기본 0 = 배포 시 동작 불변.
+    ground_lag_tau_h: float = 0.0
+    ground_release_wm2: float = 0.0
     eps_p: float = 0.97     # 인체 방사율
     f_side: float = 0.22    # 측면 4방향 각 투영계수
     f_up: float = 0.06      # 상향 투영계수

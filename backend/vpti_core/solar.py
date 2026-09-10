@@ -193,3 +193,30 @@ def cloud_fraction_from_obs_ghi(
         return 0.0
     cf = ((1.0 - kc) / config.kc_a) ** (1.0 / config.kc_b)
     return min(max(cf, 0.0), 1.0)
+
+
+def solar_lag_average(
+    lat: float, lon: float, when: datetime, tau_h: float,
+    sky_code: int | None = None, cloud_fraction: float | None = None,
+    config: SolarConfig = DEFAULT_CONFIG.solar, hours: float = 8.0, step_min: int = 30,
+) -> tuple[float, float]:
+    """지면 열관성용 과거 일사 지수가중 평균 (2026-09-10).
+
+    (DNI·sinβ, DHI) 를 지난 `hours` 시간 동안 `step_min` 간격으로 계산해 w(u)∝e^(−u/τ) 로 평균.
+    운량은 현재값을 과거에도 적용(근사). τ≤0 이면 현재값 그대로.
+    """
+    import math as _m
+    from datetime import timedelta as _td
+    if tau_h <= 0.0:
+        s = estimate_solar(lat, lon, when, sky_code=sky_code, cloud_fraction=cloud_fraction, config=config)
+        return max(s.dni * _m.sin(_m.radians(max(s.solar_elevation_deg, 0.0))), 0.0), max(s.dhi, 0.0)
+    n = int(hours * 60 / step_min) + 1
+    wsum = d_acc = h_acc = 0.0
+    for i in range(n):
+        u = i * step_min / 60.0
+        w = _m.exp(-u / tau_h)
+        s = estimate_solar(lat, lon, when - _td(hours=u), sky_code=sky_code, cloud_fraction=cloud_fraction, config=config)
+        d_acc += w * max(s.dni * _m.sin(_m.radians(max(s.solar_elevation_deg, 0.0))), 0.0)
+        h_acc += w * max(s.dhi, 0.0)
+        wsum += w
+    return d_acc / wsum, h_acc / wsum

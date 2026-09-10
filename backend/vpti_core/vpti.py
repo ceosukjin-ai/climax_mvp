@@ -377,6 +377,13 @@ def compute_vpti_thermal(
         config=config.smti,
     )
 
+    # --- 지면 열관성 시간지연 (2026-09-10): config.mrt.ground_lag_tau_h > 0 일 때만 ---
+    solar_lag = None
+    if getattr(config.mrt, "ground_lag_tau_h", 0.0) > 0.0:
+        from .solar import solar_lag_average
+        solar_lag = solar_lag_average(lat, lon, when, config.mrt.ground_lag_tau_h,
+                                      sky_code=sky_code, cloud_fraction=cloud_fraction, config=config.solar)
+
     # --- ② MRT ---
     mrt = compute_mrt(
         solar=solar,
@@ -390,6 +397,7 @@ def compute_vpti_thermal(
         config=config.mrt,
         direct_shade=direct_shade,              # 태양방향 건물 차폐 (2026-08-16)
         wall_temp_c=wall_temp_c,                # 측면 벽 온도 (2026-09-09)
+        solar_lag=solar_lag,                    # 지면 열관성 시간지연 (2026-09-10)
     )
 
     # --- ③ 체감지수 (UTCI 우선 / PET) ---

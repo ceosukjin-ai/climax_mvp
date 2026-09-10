@@ -28,7 +28,11 @@ STEP_MIN, HOURS = 20, 8
 LAGS = np.arange(0, HOURS * 60 + 1, STEP_MIN) / 60.0          # h
 GRID = {"hc_a": [8, 12, 16, 20], "hc_b": [2, 4, 6], "f_stor": [0.2, 0.3, 0.4, 0.5],
         "q_rel": [0, 20, 40, 60], "tau": [0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]}
-if "--fix-hc" in sys.argv:
+if "--fix-fstor" in sys.argv:
+    # (a′) 아스팔트 80점이 저장비율 0.25 를 선호(0.5 는 Ts −8 악화) → hc 와 f_stor 둘 다 고정, q_rel·τ 만 학습.
+    GRID = {"hc_a": [12], "hc_b": [4], "f_stor": [0.25],
+            "q_rel": [0, 10, 20, 30, 40, 50, 60, 80, 100], "tau": [0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 4.0]}
+elif "--fix-hc" in sys.argv:
     # (a) 아스팔트 80점 열화상으로 맞춘 대류계수(hc_a 12·hc_b 4)는 고정 — 잔디 관측소가 증발산을 대류로 떠안는 것 방지.
     #     구조 항(저장비율·야간방출·시정수)만 ASOS 로 학습.
     GRID = {"hc_a": [12], "hc_b": [4], "f_stor": [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.5],
@@ -175,7 +179,7 @@ async def main():
                "time_split": [round(h0t, 3), round(h1t, 3)], "random_day": [round(h0r, 3), round(h1r, 3), round(br_, 3)],
                "loso_station": [round(l0, 3), round(l1, 3)], "params_random": pR, "verdict": verdict}
     await conn.execute("INSERT INTO brain_version (kind, params, metrics, n_train, promoted, reason) VALUES ($1,$2,$3,$4,FALSE,$5)",
-                       ("ground_lag_fixhc" if "--fix-hc" in sys.argv else "ground_lag"), json.dumps(pA), json.dumps(metrics, ensure_ascii=False), n, f"day2-1b {verdict}, 승격은 사람 확인")
+                       ("ground_lag_fixfstor" if "--fix-fstor" in sys.argv else "ground_lag_fixhc" if "--fix-hc" in sys.argv else "ground_lag"), json.dumps(pA), json.dumps(metrics, ensure_ascii=False), n, f"day2-1b {verdict}, 승격은 사람 확인")
     await conn.close()
     print("brain_version 에 kind='ground_lag' 기록 (promoted=false). 엔진 변경 없음.")
 

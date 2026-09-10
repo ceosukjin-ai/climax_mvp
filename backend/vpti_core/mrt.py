@@ -132,6 +132,7 @@ def estimate_ground_temp(
     eps_sky: float,
     config: MRTConfig = DEFAULT_CONFIG.mrt,
     direct_shade: float = 1.0,   # 태양방향 건물 차폐 시 0.0 — 직달만 차단 (2026-08-16)
+    solar_lag: tuple[float, float] | None = None,   # (DNI·sinβ, DHI) 지난 8h 지수가중 평균 (2026-09-10)
 ) -> float:
     """표면 에너지수지로 지표면 온도 Tsurf 산출 (✅ 표준 미기상 에너지평형).
 
@@ -150,9 +151,19 @@ def estimate_ground_temp(
     """
     beta = math.radians(max(solar.solar_elevation_deg, 0.0))
     svf_c = min(max(svf, 0.0), 1.0)
-    s_down = max(solar.dni * math.sin(beta) * direct_shade + solar.dhi * svf_c, 0.0)
+    if solar_lag is not None:
+        # 열관성 시간지연(2026-09-10): 땅은 지금 일사가 아니라 지난 몇 시간 일사에 반응한다.
+        # 직달·산란을 지수가중 과거평균으로 대체(사람 몸에 닿는 직달은 compute_mrt 에서 순간값 유지).
+        dir_eff, dhi_eff = solar_lag
+        s_down = max(dir_eff * direct_shade + dhi_eff * svf_c, 0.0)
+    else:
+        s_down = max(solar.dni * math.sin(beta) * direct_shade + solar.dhi * svf_c, 0.0)
     sw_abs = (1.0 - min(max(ground_albedo, 0.0), 1.0)) * s_down
     avail_sw = sw_abs * (1.0 - min(max(config.ground_storage_fraction, 0.0), 1.0))
+    # 지중 저장열 방출(야간·약일사): q·max(0, 1 − S↓/200). 기본 0.
+    q_rel = max(getattr(config, "ground_release_wm2", 0.0), 0.0)
+    if q_rel > 0.0:
+        avail_sw += q_rel * max(0.0, 1.0 - s_down / 200.0)
 
     l_down = STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4 * (
         svf_c * eps_sky + (1.0 - svf_c) * config.env_emissivity
@@ -175,7 +186,7 @@ def estimate_ground_temp(
     ret = min(max(getattr(config, "shade_ground_retention", 0.0), 0.0), 1.0)
     if direct_shade < 1.0 and ret > 0.0:
         ts_full = estimate_ground_temp(air_temp_c, solar, ground_albedo, ground_emissivity,
-                                       svf, 0.0, wind_ms, eps_sky, config, 1.0)
+                                       svf, 0.0, wind_ms, eps_sky, config, 1.0, solar_lag)
         ts = ts + ret * (ts_full - ts)
 
     g = min(max(gvi, 0.0), 1.0)
@@ -291,6 +302,7 @@ def compute_mrt(
     config: MRTConfig = DEFAULT_CONFIG.mrt,
     direct_shade: float = 1.0,   # 태양방향 건물 차폐 (2026-08-16): 1.0=직사 노출, 0.0=그늘
     wall_temp_c: float | None = None,   # 측면 벽 온도 [°C] — None이면 벽=지면온도(기존)
+    solar_lag: tuple[float, float] | None = None,   # 지면온도용 과거 일사 가중평균 (2026-09-10)
 ) -> MRTResult:
     """6방향 복사속 적분으로 평균복사온도 Tmrt 산출 (VDI 3787 Part 2).
 
@@ -356,7 +368,7 @@ def compute_mrt(
 
     tsurf = estimate_ground_temp(
         air_temp_c, solar, ground_albedo, ground_emissivity,
-        svf, gvi, wind_ms, eps_sky, config, direct_shade,
+        svf, gvi, wind_ms, eps_sky, config, direct_shade, solar_lag,
     )
     l_surf_flux = ground_emissivity * STEFAN_BOLTZMANN * (tsurf + KELVIN) ** 4
 
