@@ -71,10 +71,19 @@ async def cells_near_roads(s, w, n, e, step, margin_m):
     return sorted(cells)
 
 
-def tile_has_file(lat, lon) -> bool:
-    import os
-    from app.services.geo import _LOCAL_BUILDING_DIR
-    return os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, f"{int(lat * 100 // 1)}_{int(lon * 100 // 1)}.json"))
+async def tiles_available(cells: list) -> set:
+    """--tiles-only 판정: 건물 타일이 적재된 격자만 남긴다. BUILDING_SOURCE=db 면 bldg_tile, 아니면 파일 존재."""
+    import math, os
+    from app.services.geo import _LOCAL_BUILDING_DIR, BUILDING_SOURCE
+    keys = {f"{int(math.floor(la * 100))}_{int(math.floor(lo * 100))}" for la, lo in cells}
+    if BUILDING_SOURCE == "db":
+        pool = await SK._get_pool()
+        if pool is None:
+            return keys
+        async with pool.acquire() as c:
+            rows = await c.fetch("SELECT tkey FROM bldg_tile WHERE tkey = ANY($1::text[])", list(keys))
+        return {r["tkey"] for r in rows}
+    return {k for k in keys if os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, k + ".json"))}
 
 
 async def worker(q: asyncio.Queue, stats: dict, force: bool, src_hint: str):
@@ -123,10 +132,10 @@ async def main():
     for c in gen:
         k = SK.cell_id(*c)
         if k not in seen:
-            seen.add(k)
-            if a.tiles_only and not tile_has_file(*c):
-                continue
-            cells.append(c)
+            seen.add(k); cells.append(c)
+    if a.tiles_only:
+        have = await tiles_available(cells)
+        cells = [c for c in cells if f"{int(math.floor(c[0] * 100))}_{int(math.floor(c[1] * 100))}" in have]
     if a.limit:
         cells = cells[:a.limit]
     print(f"격자 {len(cells)}개, 스레드 {a.threads}, resume={a.resume} force={a.force}", flush=True)

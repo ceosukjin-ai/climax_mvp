@@ -20,11 +20,12 @@ DBURL="postgresql+asyncpg://climax:$(val DB_PASSWORD)@$(val DB_HOST):5432/climax
 DC="nice -n 19 docker run --rm --memory $MEM --memory-swap $MEM --cpus $CPUS \
  -e DATABASE_URL=$DBURL -e VWORLD_API_KEY=$(val VWORLD_API_KEY) \
  -e LOCAL_TILE_CACHE_MAX=${TILE_CACHE:-24} -e RINGS_CACHE_MAX=${RING_CACHE:-3000} \
+ -e BUILDING_SOURCE=${BUILDING_SOURCE:-db} \
  -v $HOME/climax_mvp:/repo -v $HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro $IMG"
 
 case "${1:-}" in
   tiles)
-    $DC python3 /repo/scripts/fetch_vworld_tiles.py --bbox $S $W $N $E --threads 4 --out /repo/backend/data/buildings ;;
+    $DC python3 /repo/scripts/fetch_vworld_tiles.py --bbox $S $W $N $E --threads 4 --to-db ;;
   grid)
     python3 -c "
 s,n,st=$S,$N,$STEP

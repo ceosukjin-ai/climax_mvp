@@ -16,6 +16,34 @@ import httpx  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.services.geo import VWORLD_DATA_URL, VWORLD_BUILDING_LAYER, _LOCAL_BUILDING_DIR  # noqa: E402
 
+# --to-db: 타일을 JSON 파일이 아니라 PostGIS `bldg_poly` 에 직접 넣는다 (2026-09-11).
+# 전국 타일은 파일로 약 40GB 라 WAS 디스크(50GB)에 안 들어간다. DB 는 같은 건물이 5~8GB.
+INSERT_SQL = ("INSERT INTO bldg_poly (id, tags, geom, tkey) VALUES ($1,$2::jsonb,ST_GeomFromText($3,4326),$4) "
+              "ON CONFLICT (id) DO UPDATE SET tags=EXCLUDED.tags, geom=EXCLUDED.geom, tkey=EXCLUDED.tkey")
+TILE_SQL = ("INSERT INTO bldg_tile (tkey, n, src, built_at) VALUES ($1,$2,$3,NOW()) "
+            "ON CONFLICT (tkey) DO UPDATE SET n=EXCLUDED.n, src=EXCLUDED.src, built_at=NOW()")
+
+
+def _wkt(geom: list) -> str | None:
+    if len(geom) < 4:
+        return None
+    pts = ",".join(f"{g['lon']:.6f} {g['lat']:.6f}" for g in geom)
+    if geom[0] != geom[-1]:
+        pts += f",{geom[0]['lon']:.6f} {geom[0]['lat']:.6f}"
+    return f"POLYGON(({pts}))"
+
+
+async def store_db(pool, tkey: str, els: list) -> None:
+    rows = []
+    for el in els:
+        w = _wkt(el.get("geometry") or [])
+        if w is not None:
+            rows.append((f"{tkey}/{el.get('id')}", json.dumps(el.get("tags") or {}, ensure_ascii=False), w, tkey))
+    async with pool.acquire() as c:
+        for k in range(0, len(rows), 2000):
+            await c.executemany(INSERT_SQL, rows[k:k + 2000])
+        await c.execute(TILE_SQL, tkey, len(rows), "vworld-tile")
+
 KEEP = ("bd_mgt_sn", "buld_nm", "buld_nm_dc", "gro_flo_co", "und_flo_co", "buld_no", "bul_eng_nm")
 STEP = 0.01
 
@@ -68,6 +96,7 @@ async def main():
     ap.add_argument("--threads", type=int, default=4); ap.add_argument("--force", action="store_true")
     ap.add_argument("--all-tiles", action="store_true", help="도로 유무 무시하고 전 타일")
     ap.add_argument("--out", default="/repo/backend/data/buildings", help="타일 저장 폴더 (컨테이너의 /app/data/buildings 는 읽기전용 마운트)")
+    ap.add_argument("--to-db", action="store_true", help="파일 대신 PostGIS bldg_poly 에 직접 적재 (전국 권장)")
     a = ap.parse_args()
     global _LOCAL_BUILDING_DIR
     _LOCAL_BUILDING_DIR = a.out
@@ -75,9 +104,11 @@ async def main():
     if not key:
         print("VWORLD_API_KEY 없음"); return
     pool = None
-    if not a.all_tiles:
+    if not a.all_tiles or a.to_db:
         from app.services.skyline import _get_pool
         pool = await _get_pool()
+        if a.to_db and pool is None:
+            print("DB 접속 실패 — --to-db 불가"); return
     os.makedirs(_LOCAL_BUILDING_DIR, exist_ok=True)
     S, W, N, E = a.bbox
     tiles = [(la, lo) for la in range(int(math.floor(S * 100)), int(math.floor(N * 100)) + 1)
@@ -96,7 +127,12 @@ async def main():
                 path = os.path.join(_LOCAL_BUILDING_DIR, tkey(la, lo) + ".json")
                 s, w = la / 100.0, lo / 100.0; n, e = s + STEP, w + STEP
                 try:
-                    if os.path.isfile(path) and not a.force:
+                    if a.to_db and not a.force:
+                        async with pool.acquire() as c:
+                            done = await c.fetchval("SELECT 1 FROM bldg_tile WHERE tkey=$1", tkey(la, lo))
+                        if done:
+                            st["skip"] += 1; continue
+                    if (not a.to_db) and os.path.isfile(path) and not a.force:
                         st["skip"] += 1
                     elif not await has_roads(pool, s, w, n, e):
                         st["noroad"] += 1
@@ -109,9 +145,12 @@ async def main():
                                 if attempt == 2:
                                     raise
                                 await asyncio.sleep(2 * (attempt + 1))
-                        with open(path, "w", encoding="utf-8") as f:
-                            json.dump({"elements": els, "src": "vworld-tile", "fetched": int(time.time())}, f,
-                                      ensure_ascii=False, separators=(",", ":"))
+                        if a.to_db:
+                            await store_db(pool, tkey(la, lo), els)
+                        else:
+                            with open(path, "w", encoding="utf-8") as f:
+                                json.dump({"elements": els, "src": "vworld-tile", "fetched": int(time.time())}, f,
+                                          ensure_ascii=False, separators=(",", ":"))
                         st["ok"] += 1; st["bld"] += len(els)
                 except Exception as ex:  # noqa: BLE001
                     st["fail"] += 1
