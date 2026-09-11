@@ -687,9 +687,19 @@ async def _rings_from_local(
     return out
 
 
+_LOCAL_TILE_EXISTS: dict[str, bool] = {}
+
+
 def _local_tile_exists(lat: float, lon: float) -> bool:
+    """타일 **파일**이 있는가 (없는 타일도 _LOCAL_TILE_CACHE 에 []로 들어가므로 캐시 키 존재로 판단하면 안 된다 — 2026-09-11 사고)."""
     tkey = f"{int(math.floor(lat * 100))}_{int(math.floor(lon * 100))}"
-    return tkey in _LOCAL_TILE_CACHE or os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, tkey + ".json"))
+    v = _LOCAL_TILE_EXISTS.get(tkey)
+    if v is None:
+        v = os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, tkey + ".json"))
+        if len(_LOCAL_TILE_EXISTS) > 50000:
+            _LOCAL_TILE_EXISTS.clear()
+        _LOCAL_TILE_EXISTS[tkey] = v
+    return v
 
 
 async def _rings_from_osm(

@@ -6,6 +6,7 @@ geo._rings_from_local 이 읽고(로컬 타일 = 권위 원천, V-World 호출 0
 층수는 저장 시 채우지 않는다 — 읽을 때 _fill_floors_from_register_many(표제부 DB)가 채운다.
 
   ... run --rm -v $HOME/climax_mvp:/repo api python3 /repo/scripts/fetch_vworld_tiles.py --bbox 35.05 128.95 35.30 129.25 [--threads 4] [--force] [--all-tiles]
+  (저장은 /repo/backend/data/buildings — API 의 /app/data/buildings 는 :ro 마운트라 직접 못 씀)
 기본은 osm_way(보행도로)가 있는 타일만(바다·산 제외). 실패 타일은 파일을 만들지 않는다(→ 실시간 폴백 유지).
 """
 from __future__ import annotations
@@ -66,7 +67,10 @@ async def main():
     ap.add_argument("--bbox", nargs=4, type=float, required=True, metavar=("S", "W", "N", "E"))
     ap.add_argument("--threads", type=int, default=4); ap.add_argument("--force", action="store_true")
     ap.add_argument("--all-tiles", action="store_true", help="도로 유무 무시하고 전 타일")
+    ap.add_argument("--out", default="/repo/backend/data/buildings", help="타일 저장 폴더 (컨테이너의 /app/data/buildings 는 읽기전용 마운트)")
     a = ap.parse_args()
+    global _LOCAL_BUILDING_DIR
+    _LOCAL_BUILDING_DIR = a.out
     key = get_settings().vworld_api_key
     if not key:
         print("VWORLD_API_KEY 없음"); return
