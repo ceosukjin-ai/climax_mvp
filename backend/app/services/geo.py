@@ -689,6 +689,58 @@ async def _rings_from_osm(
         return out
 
 
+# === 건축물대장 표제부 층수 보강 (2026-09-11) ===
+# V-World 폴리곤(도로명주소 건물층)은 실측 80점에서 검증된 원천(r .40)이지만 층수 결측이 많다(부암 241/245).
+# GIS건물통합 폴리곤으로 통째 교체해 보니 폴리곤 자체가 달라 r .34~.38로 오히려 나빠짐(2026-09-11 진단).
+# → 폴리곤은 V-World 그대로 두고, 층수·높이만 표제부(PNU=bd_mgt_sn 앞 19자리)로 채운다.
+# 파일: {LOCAL_BUILDING_DIR}/_pyojebu_floors_kr.json  {pnu19: [[동명, 지상층수, 높이m], ...]}  (scripts/build_pyojebu_floors.py)
+_REGISTER: dict | None = None
+
+
+def _load_register() -> dict:
+    global _REGISTER
+    if _REGISTER is None:
+        path = os.path.join(_LOCAL_BUILDING_DIR, "_pyojebu_floors_kr.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                _REGISTER = json.load(f) or {}
+            logger.info("[register] 표제부 층수표 {}필지", len(_REGISTER))
+        except FileNotFoundError:
+            _REGISTER = {}
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[register] 층수표 로드 실패: {}", e)
+            _REGISTER = {}
+    return _REGISTER
+
+
+def _fill_floors_from_register(props: dict) -> None:
+    """V-World 속성에 층수가 없으면 표제부에서 채운다. 동 표기(buld_nm_dc) 일치 > 최대층(보수적)."""
+    try:
+        if int(props.get("gro_flo_co") or 0) > 0:
+            return
+    except (TypeError, ValueError):
+        pass
+    sn = str(props.get("bd_mgt_sn") or "")
+    if len(sn) < 19:
+        return
+    rows = _load_register().get(sn[:19])
+    if not rows:
+        return
+    dong = str(props.get("buld_nm_dc") or "").strip()
+    pick = None
+    if dong:
+        m = [r for r in rows if r[0] and (r[0] == dong or dong in r[0] or r[0] in dong)]
+        if m:
+            pick = max(m, key=lambda r: r[1])
+    if pick is None:
+        pick = max(rows, key=lambda r: r[1])
+    if pick[1] > 0:
+        props["gro_flo_co"] = int(pick[1])
+        props["floors_src"] = "register"
+    if pick[2] and pick[2] > 0 and not props.get("height"):
+        props["height"] = float(pick[2])
+
+
 async def _rings_from_vworld(
     lat: float, lon: float
 ) -> list[tuple[list[tuple[float, float]], dict]]:
@@ -726,6 +778,7 @@ async def _rings_from_vworld(
         for f in feats:
             g = f.get("geometry") or {}
             props = f.get("properties") or {}
+            _fill_floors_from_register(props)
             coords = g.get("coordinates") or []
             # Polygon → [외곽 ring, 구멍...], MultiPolygon → [[외곽 ring, ...], ...]
             outer_rings = [coords[0]] if g.get("type") == "Polygon" else [
