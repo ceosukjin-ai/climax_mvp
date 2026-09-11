@@ -104,6 +104,80 @@ def _horizon_from_rings(rings: list, az_step: int, default_floors: int = 2) -> t
     return out, len(blds)
 
 
+# ───────────────────────── numpy 벡터화 (2026-09-11, 전국 배치용 — 칸당 0.2s → 0.02s) ─────────────────────────
+try:
+    import numpy as _np
+except Exception:  # noqa: BLE001
+    _np = None
+
+
+def _edge_arrays(rings: list, default_floors: int | None, skip_containing: bool):
+    """rings → 모든 외곽선 세그먼트 배열 (X1,Y1,X2,Y2,H). H 는 눈높이 위 높이(없으면 0). 건물 수도 반환."""
+    from app.services.geo import _height_m_from_props, _point_in_ring
+    X1 = []; Y1 = []; X2 = []; Y2 = []; H = []; n_bld = 0
+    for ring, props in rings:
+        if len(ring) < 4:
+            continue
+        if skip_containing and _point_in_ring(0.0, 0.0, ring):
+            continue
+        Hm = _height_m_from_props(props, default_floors=default_floors)
+        if skip_containing:
+            if Hm is None or Hm - EYE_M <= 0:
+                continue
+            h = Hm - EYE_M
+        else:
+            h = Hm or 0.0
+        n_bld += 1
+        a = _np.asarray(ring, dtype=float)
+        X1.append(a[:-1, 0]); Y1.append(a[:-1, 1]); X2.append(a[1:, 0]); Y2.append(a[1:, 1])
+        H.append(_np.full(len(a) - 1, h))
+    if not X1:
+        return None, 0
+    return (_np.concatenate(X1), _np.concatenate(Y1), _np.concatenate(X2), _np.concatenate(Y2), _np.concatenate(H)), n_bld
+
+
+def _ray_cast_np(E, az_step: int):
+    """모든 방위 × 모든 세그먼트 교차. 반환 (t_min[A], h_at_tmin[A], beta_max[A])."""
+    X1, Y1, X2, Y2, H = E
+    A = _np.radians(_np.arange(0, 360, az_step, dtype=float))
+    dx = _np.sin(A)[:, None]; dy = _np.cos(A)[:, None]
+    ex = (X2 - X1)[None, :]; ey = (Y2 - Y1)[None, :]
+    x1 = X1[None, :]; y1 = Y1[None, :]
+    det = ex * dy - dx * ey
+    with _np.errstate(divide="ignore", invalid="ignore"):
+        t = (-x1 * ey + ex * y1) / det
+        u = (dx * y1 - dy * x1) / det
+        valid = (_np.abs(det) > 1e-9) & (t > 0.0) & (u >= 0.0) & (u <= 1.0)
+        beta = _np.where(valid, _np.degrees(_np.arctan2(H[None, :], _np.where(valid, t, 1.0))), 0.0)
+    tt = _np.where(valid, t, _np.inf)
+    idx = tt.argmin(axis=1)
+    tmin = tt[_np.arange(tt.shape[0]), idx]
+    return tmin, H[idx], beta.max(axis=1)
+
+
+def _horizon_np(rings: list, az_step: int, default_floors: int = 2) -> tuple[list[float], int]:
+    E, n_bld = _edge_arrays(rings, default_floors, skip_containing=True)
+    if E is None:
+        return [0.0] * (360 // az_step), 0
+    _t, _h, beta = _ray_cast_np(E, az_step)
+    return beta.tolist(), n_bld
+
+
+def _width_np(rings: list, az_step: int = 5, max_m: float = 60.0) -> tuple[float | None, float | None]:
+    E, _n = _edge_arrays(rings, 2, skip_containing=False)
+    if E is None:
+        return None, None
+    tmin, h, _b = _ray_cast_np(E, az_step)
+    n = tmin.shape[0]; half = n // 2
+    d1 = tmin[:half]; d2 = tmin[half:]
+    ok = (d1 <= max_m) & (d2 <= max_m)
+    if not ok.any():
+        return None, None
+    w = _np.where(ok, d1 + d2, _np.inf); i = int(w.argmin())
+    W = float(w[i]); hm = float((h[i] + h[i + half]) / 2.0)
+    return round(W, 1), (round(hm / W, 2) if W > 0 else None)
+
+
 def _svf_from_horizon(h: list[float]) -> float:
     return max(0.0, min(1.0, 1.0 - sum(math.sin(math.radians(b)) ** 2 for b in h) / len(h)))
 
@@ -116,19 +190,20 @@ def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) ->
         return Skyline(cell_id(lat, lon), lat, lon, [0.0] * N_AZ, 1.0, 0.0, None, None, None, 0, 0.0, src)
     rings, _snapped = _snap_outside(rings)
     rings, centered, axis = _snap_to_street_center(rings)
-    horizon5, n_bld = _horizon_from_rings(rings, AZ_STEP)
+    hor = _horizon_np if _np is not None else _horizon_from_rings
+    horizon5, n_bld = hor(rings, AZ_STEP)
     if axis is not None:
         vals = []
         ax = math.radians(axis)
         for off in (-4.0, 0.0, 4.0):
             rr, _ = _snap_outside(_shift_rings(rings, math.sin(ax) * off, math.cos(ax) * off))
-            vals.append(_svf_from_horizon(_horizon_from_rings(rr, SVF_AZ_STEP)[0]))
+            vals.append(_svf_from_horizon(hor(rr, SVF_AZ_STEP)[0]))
         vals.sort()
         svf = vals[1]
     else:
-        svf = _svf_from_horizon(_horizon_from_rings(rings, SVF_AZ_STEP)[0])
+        svf = _svf_from_horizon(hor(rings, SVF_AZ_STEP)[0])
     # 가로폭·H/W — 중심점에서 마주보는 광선쌍 최소합 (street_width_geometric 과 같은 정의)
-    width, hw = _width_from_rings(rings)
+    width, hw = _width_np(rings) if _np is not None else _width_from_rings(rings)
     bvi = max(0.0, 1.0 - svf)      # 위성 GVI 가 나중에 빼 간다(orchestrator._analyze_geometry 와 동일)
     return Skyline(cell_id(lat, lon), lat, lon, horizon5, round(svf, 3), round(bvi, 3),
                    width, hw, axis, n_bld, round(centered, 1), src)
