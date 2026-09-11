@@ -81,7 +81,8 @@ async def main():
                 continue
             ft = json.loads(line)
             p = ft.get("properties") or {}
-            oid = str(p.get("@id") or p.get("id") or "")
+            # osmium export --add-unique-id=type_id 는 Feature 최상위 "id":"w123" (properties 아님)
+            oid = str(ft.get("id") or p.get("@id") or p.get("id") or "")
             if not oid.startswith("w"):                  # way 만 (relation 다중폴리곤은 r… — 녹지 대형 공원용으로 음수 id로 넣는다)
                 if oid.startswith("r") and oid[1:].isdigit():
                     wid = -int(oid[1:])
