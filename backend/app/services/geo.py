@@ -69,8 +69,11 @@ _LOCAL_BUILDING_DIR = os.environ.get("LOCAL_BUILDING_DIR") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "buildings"
 )
 _LOCAL_TILE_CACHE: dict[str, list] = {}
-_LOCAL_TILE_CACHE_MAX = 400          # 타일 ≈ 50~500KB → 최대 수십~200MB
-_RINGS_CACHE_MAX = 20000
+_BAD_TILES: set[str] = set()          # 파싱 실패한 타일(잘린 파일) — 없는 것으로 취급
+# ⚠️ 2026-09-11 사고: 타일 400개 캐시 × 배치 8프로세스로 16GB 전부 소진 → 서버 다운(디엔에이클라우드 재부팅).
+# 타일 하나(수백 KB JSON)는 파이썬 객체로 5~10배 부풀어 5~7MB. 상한은 "프로세스 하나가 최악에 얼마를 쓰나"로 잡는다.
+_LOCAL_TILE_CACHE_MAX = int(os.environ.get("LOCAL_TILE_CACHE_MAX", "32"))     # ≈ 200MB/프로세스
+_RINGS_CACHE_MAX = int(os.environ.get("RINGS_CACHE_MAX", "4000"))
 
 
 def _height_m_from_props(props: dict, default_floors: int | None = None) -> float | None:
@@ -652,7 +655,10 @@ def _load_local_tile(tkey: str) -> list:
             with open(path, encoding="utf-8") as f:
                 elements = (json.load(f) or {}).get("elements") or []
         except Exception as e:  # noqa: BLE001
+            # 배치가 중간에 죽으면 타일이 잘린 채 남는다. 이걸 "건물 없음"으로 쓰면 그 지역이 통째로
+            # 개활(SVF 1.0)이 된다 → 깨진 타일은 '없는 것'으로 표시해 실시간 조회로 폴백 (2026-09-11).
             logger.warning(f"local building tile {tkey} load failed: {e}")
+            _BAD_TILES.add(tkey)
             elements = []
     _LOCAL_TILE_CACHE[tkey] = elements
     return elements
@@ -693,6 +699,8 @@ _LOCAL_TILE_EXISTS: dict[str, bool] = {}
 def _local_tile_exists(lat: float, lon: float) -> bool:
     """타일 **파일**이 있는가 (없는 타일도 _LOCAL_TILE_CACHE 에 []로 들어가므로 캐시 키 존재로 판단하면 안 된다 — 2026-09-11 사고)."""
     tkey = f"{int(math.floor(lat * 100))}_{int(math.floor(lon * 100))}"
+    if tkey in _BAD_TILES:
+        return False
     v = _LOCAL_TILE_EXISTS.get(tkey)
     if v is None:
         v = os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, tkey + ".json"))
@@ -758,7 +766,7 @@ def _needs_floors(props: dict) -> str | None:
 
 
 async def _fill_floors_from_register_many(props_list: list[dict]) -> None:
-    """여러 건물을 한 번에 — JSON 표(있으면) 먼저, 나머지는 PostGIS `bldg_register` 한 쿼리 (2026-09-11 전국)."""
+    """여러 건물의 층수 결측을 한 번에 채운다 — PostGIS `bldg_register` 한 쿼리(전국 736만 동). DB 없으면 JSON 표 폴백."""
     pending: dict[str, list[dict]] = {}
     for p in props_list:
         pnu = _needs_floors(p)
@@ -766,19 +774,17 @@ async def _fill_floors_from_register_many(props_list: list[dict]) -> None:
             pending.setdefault(pnu, []).append(p)
     if not pending:
         return
-    reg = _load_register()
-    if reg:
-        for pnu in list(pending):
-            rows = reg.get(pnu)
-            if rows:
-                for p in pending.pop(pnu):
-                    _apply_register_rows(p, rows)
-    if not pending:
-        return
+    # DB(bldg_register, 전국 736만 동) 우선 — JSON 표는 프로세스당 수백 MB라 DB 가 없을 때만 쓴다 (2026-09-11).
     try:
         from app.services.skyline import _get_pool
         pool = await _get_pool()
         if pool is None:
+            reg = _load_register()
+            for pnu in list(pending):
+                rows = reg.get(pnu)
+                if rows:
+                    for p in pending.pop(pnu):
+                        _apply_register_rows(p, rows)
             return
         async with pool.acquire() as c:
             recs = await c.fetch("SELECT pnu, dong, floors, height FROM bldg_register WHERE pnu = ANY($1::text[])",

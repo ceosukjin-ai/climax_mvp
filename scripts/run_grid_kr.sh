@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
-# 전국 스카이라인 격자 배치 드라이버 (2026-09-11). 위도 0.1° 띠로 잘라 8개씩 병렬, 각 띠는 --resume 이라 중단 후 재실행 가능.
+# 전국 스카이라인 격자 배치 드라이버 (2026-09-11). 위도 0.1° 띠로 잘라 4개씩 병렬, 각 띠는 --resume 이라 중단 후 재실행 가능.
 #   1) 타일:  nohup bash scripts/run_grid_kr.sh tiles  > ~/tiles_kr.log 2>&1 &
 #   2) 격자:  nohup bash scripts/run_grid_kr.sh grid   > ~/grid_kr.log  2>&1 &
 # 진행:  grep -h "완료" ~/grid_kr_*.log | wc -l   (총 띠 수는 아래 S..N 범위/0.1)
 set -u
 cd "$(dirname "$0")/.."
-S=${S:-33.10}; N=${N:-38.65}; W=${W:-125.90}; E=${E:-129.60}; STEP=${STEP:-0.1}; PAR=${PAR:-8}
-DC="docker compose --env-file infra/ncp/.env.prod -f infra/ncp/docker-compose.prod.yml run --rm -v $HOME/climax_mvp:/repo api"
+S=${S:-33.10}; N=${N:-38.65}; W=${W:-125.90}; E=${E:-129.60}; STEP=${STEP:-0.1}; PAR=${PAR:-4}
+# ⚠️ 2026-09-11: 한도 없이 8개를 돌려 16GB 를 소진, 서버가 다운됐다(운영 앱 정지 → 재부팅).
+# 배치는 **반드시** 메모리 한도(--memory)와 낮은 우선순위(nice)로 돌린다. 앱 몫을 절대 건드리지 않게.
+MEM=${MEM:-1500m}; CPUS=${CPUS:-1.0}
+DC="nice -n 19 docker compose --env-file infra/ncp/.env.prod -f infra/ncp/docker-compose.prod.yml run --rm \
+  --memory $MEM --memory-swap $MEM --cpus $CPUS -e LOCAL_TILE_CACHE_MAX=24 -e RINGS_CACHE_MAX=3000 \
+  -v $HOME/climax_mvp:/repo api"
 case "${1:-}" in
   tiles)
-    $DC python3 /repo/scripts/fetch_vworld_tiles.py --bbox $S $W $N $E --threads 6 ;;
+    $DC python3 /repo/scripts/fetch_vworld_tiles.py --bbox $S $W $N $E --threads 4 ;;
   grid)
     python3 -c "
 s,n,st=$S,$N,$STEP
