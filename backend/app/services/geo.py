@@ -69,6 +69,8 @@ _LOCAL_BUILDING_DIR = os.environ.get("LOCAL_BUILDING_DIR") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "buildings"
 )
 _LOCAL_TILE_CACHE: dict[str, list] = {}
+_LOCAL_TILE_CACHE_MAX = 400          # 타일 ≈ 50~500KB → 최대 수십~200MB
+_RINGS_CACHE_MAX = 20000
 
 
 def _height_m_from_props(props: dict, default_floors: int | None = None) -> float | None:
@@ -220,6 +222,7 @@ async def _rings_cached(
 ) -> tuple[list[tuple[list[tuple[float, float]], dict]], str]:
     """건물 폴리곤 조회 + 캐시. V-World 우선, 실패 시 OSM. 실패는 짧게 캐시."""
     key = (round(lat, 4), round(lon, 4))
+    _trim_caches()
     hit = _RINGS_CACHE.get(key)
     if hit is not None:
         ttl = _CACHE_TTL_SEC if hit[1] else _NEG_CACHE_TTL_SEC
@@ -239,8 +242,22 @@ async def _rings_cached(
         if rings:
             _RINGS_CACHE[key] = (time.time(), rings, name)
             return rings, name
+        if name == "Local" and _local_tile_exists(lat, lon):
+            # 타일 파일이 있는데 건물이 없다 = 정말 개활(공원·바다·산). 실시간 호출로 넘어가지 않는다 (2026-09-11).
+            _RINGS_CACHE[key] = (time.time(), None, "Local")
+            return [], "Local"
     _RINGS_CACHE[key] = (time.time(), None, "")
     return [], ""
+
+
+def _trim_caches() -> None:
+    """메모리 상한 — 전국 격자 배치(60만+칸)·전국 타일에서 무한 성장 방지 (2026-09-11). 오래된 절반을 버린다."""
+    if len(_RINGS_CACHE) > _RINGS_CACHE_MAX:
+        for k in list(_RINGS_CACHE)[: len(_RINGS_CACHE) // 2]:
+            _RINGS_CACHE.pop(k, None)
+    if len(_LOCAL_TILE_CACHE) > _LOCAL_TILE_CACHE_MAX:
+        for k in list(_LOCAL_TILE_CACHE)[: len(_LOCAL_TILE_CACHE) // 2]:
+            _LOCAL_TILE_CACHE.pop(k, None)
 
 
 async def sun_blocked_outdoor(
@@ -665,8 +682,14 @@ async def _rings_from_local(
                 if x0 * x0 + y0 * y0 > lim2:       # 반경 밖 넉넉히 컷
                     continue
                 ring = [_to_local_m(g["lat"], g["lon"], lat, lon) for g in geom]
-                out.append((ring, el.get("tags") or {}))
+                out.append((ring, dict(el.get("tags") or {})))
+    await _fill_floors_from_register_many([p for _, p in out])
     return out
+
+
+def _local_tile_exists(lat: float, lon: float) -> bool:
+    tkey = f"{int(math.floor(lat * 100))}_{int(math.floor(lon * 100))}"
+    return tkey in _LOCAL_TILE_CACHE or os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, tkey + ".json"))
 
 
 async def _rings_from_osm(
@@ -713,19 +736,68 @@ def _load_register() -> dict:
     return _REGISTER
 
 
-def _fill_floors_from_register(props: dict) -> None:
-    """V-World 속성에 층수가 없으면 표제부에서 채운다. 동 표기(buld_nm_dc) 일치 > 최대층(보수적)."""
+def _needs_floors(props: dict) -> str | None:
+    """층수 결측이고 bd_mgt_sn 이 있으면 PNU19, 아니면 None."""
     try:
         if int(props.get("gro_flo_co") or 0) > 0:
-            return
+            return None
     except (TypeError, ValueError):
         pass
     sn = str(props.get("bd_mgt_sn") or "")
-    if len(sn) < 19:
+    return sn[:19] if len(sn) >= 19 else None
+
+
+async def _fill_floors_from_register_many(props_list: list[dict]) -> None:
+    """여러 건물을 한 번에 — JSON 표(있으면) 먼저, 나머지는 PostGIS `bldg_register` 한 쿼리 (2026-09-11 전국)."""
+    pending: dict[str, list[dict]] = {}
+    for p in props_list:
+        pnu = _needs_floors(p)
+        if pnu:
+            pending.setdefault(pnu, []).append(p)
+    if not pending:
         return
-    rows = _load_register().get(sn[:19])
+    reg = _load_register()
+    if reg:
+        for pnu in list(pending):
+            rows = reg.get(pnu)
+            if rows:
+                for p in pending.pop(pnu):
+                    _apply_register_rows(p, rows)
+    if not pending:
+        return
+    try:
+        from app.services.skyline import _get_pool
+        pool = await _get_pool()
+        if pool is None:
+            return
+        async with pool.acquire() as c:
+            recs = await c.fetch("SELECT pnu, dong, floors, height FROM bldg_register WHERE pnu = ANY($1::text[])",
+                                 list(pending))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("[register] DB 조회 생략: {}", e)
+        return
+    by: dict[str, list] = {}
+    for r in recs:
+        by.setdefault(r["pnu"], []).append([r["dong"] or "", int(r["floors"] or 0), float(r["height"] or 0.0)])
+    for pnu, plist in pending.items():
+        rows = by.get(pnu)
+        if rows:
+            for p in plist:
+                _apply_register_rows(p, rows)
+
+
+def _fill_floors_from_register(props: dict) -> None:
+    """(동기·JSON 표 전용) V-World 속성에 층수가 없으면 표제부에서 채운다. 동 표기 일치 > 최대층."""
+    pnu = _needs_floors(props)
+    if not pnu:
+        return
+    rows = _load_register().get(pnu)
     if not rows:
         return
+    _apply_register_rows(props, rows)
+
+
+def _apply_register_rows(props: dict, rows: list) -> None:
     dong = str(props.get("buld_nm_dc") or "").strip()
     pick = None
     if dong:
@@ -778,7 +850,6 @@ async def _rings_from_vworld(
         for f in feats:
             g = f.get("geometry") or {}
             props = f.get("properties") or {}
-            _fill_floors_from_register(props)
             coords = g.get("coordinates") or []
             # Polygon → [외곽 ring, 구멍...], MultiPolygon → [[외곽 ring, ...], ...]
             outer_rings = [coords[0]] if g.get("type") == "Polygon" else [
@@ -789,6 +860,7 @@ async def _rings_from_vworld(
                     out.append((
                         [_to_local_m(p[1], p[0], lat, lon) for p in ring], props,
                     ))
+        await _fill_floors_from_register_many([p for _, p in out])
         return out
 
 
