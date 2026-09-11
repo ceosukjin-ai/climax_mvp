@@ -226,8 +226,10 @@ async def _rings_cached(
         if time.time() - hit[0] < ttl:
             return hit[1] or [], hit[2]
 
-    for name, fn in (("V-World", _rings_from_vworld),
-                     ("Local", _rings_from_local),
+    # 순서(2026-09-11): 로컬 타일 먼저 — 국내는 GIS건물통합+건축물대장 조인 타일(층수 완전), 해외는 OSM/PLATEAU 타일.
+    # 타일이 없는 지역은 []를 돌려 V-World(국내 실시간) → OSM 순으로 폴백.
+    for name, fn in (("Local", _rings_from_local),
+                     ("V-World", _rings_from_vworld),
                      ("OSM", _rings_from_osm)):
         try:
             rings = await fn(lat, lon)
