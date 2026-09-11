@@ -25,6 +25,7 @@ from collections import defaultdict
 
 COL = dict(sgg=8, bjd=9, gb=10, bun=11, ji=12, dong=22, main=23, height=42, floors=43, under=44)   # 건축HUB 2026-08 형식(서버 head 로 확인)
 SRC = "gis-bldg-2026-09"
+_GB_MAP = {"0": "1", "1": "2"}
 
 
 def tile_key(lat: float, lon: float) -> str:
@@ -67,7 +68,9 @@ def load_pyojebu(path: str, sido: str | None):
             if sido and not sgg.startswith(sido):
                 continue
             n += 1
-            pnu = f"{sgg}{c[COL['bjd']].strip()}{c[COL['gb']].strip()}{c[COL['bun']].strip().zfill(4)}{c[COL['ji']].strip().zfill(4)}"
+            # 대지구분 체계 차이: 표제부 0=대지·1=산·2=블록 ↔ 지적 PNU(GIS건물 A2) 1=대지·2=산. 지적 체계로 맞춰 키를 만든다.
+            gb = _GB_MAP.get(c[COL["gb"]].strip(), c[COL["gb"]].strip())
+            pnu = f"{sgg}{c[COL['bjd']].strip()}{gb}{c[COL['bun']].strip().zfill(4)}{c[COL['ji']].strip().zfill(4)}"
             if len(pnu) != 19:
                 bad += 1
                 continue
