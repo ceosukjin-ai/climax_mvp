@@ -14,8 +14,13 @@ services:
       APP_PORT: 8000
       LOG_LEVEL: INFO
 
-      DATABASE_URL: postgresql+asyncpg://climax:${POSTGRES_PASSWORD}@postgres:5432/climax
+      # DB 는 2026-09-11 부터 별도 서버(lbs-climax-db, 10.30.10.205). .env.prod 의 DB_HOST/DB_PASSWORD 로 지정.
+      # 되돌리려면 .env.prod 에서 DB_HOST=postgres, DB_PASSWORD=$POSTGRES_PASSWORD 로 두면 된다.
+      DATABASE_URL: postgresql+asyncpg://climax:${DB_PASSWORD:-${POSTGRES_PASSWORD}}@${DB_HOST:-postgres}:5432/climax
       REDIS_URL: redis://redis:6379/0
+      # 건물 원천: db = PostGIS bldg_poly(2026-09-11 채택, 80점 0.121/-0.001/r0.40 — 파일과 동일·미세 개선),
+      # file = 로컬 타일 JSON(폴백). 전국/일본은 디스크·메모리 때문에 db 만 가능.
+      BUILDING_SOURCE: ${BUILDING_SOURCE:-file}
 
       GOOGLE_STREETVIEW_API_KEY: ${GOOGLE_STREETVIEW_API_KEY}
       GOOGLE_STREETVIEW_SIGNING_SECRET: ${GOOGLE_STREETVIEW_SIGNING_SECRET:-}
