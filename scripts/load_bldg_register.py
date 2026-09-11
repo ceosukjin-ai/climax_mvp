@@ -17,7 +17,7 @@ from build_kr_bldg_tiles import COL, _i, _f  # noqa: E402
 
 DDL = """
 CREATE TABLE IF NOT EXISTS bldg_register (
-    pnu     CHAR(19) NOT NULL,
+    pnu     TEXT NOT NULL,          -- CHAR(19) 이면 text[] 비교가 인덱스를 못 탄다(2026-09-11 5~14s/쿼리 사고)
     dong    TEXT,
     floors  SMALLINT NOT NULL,
     height  REAL,
