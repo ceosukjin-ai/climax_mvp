@@ -47,8 +47,18 @@ CREATE INDEX IF NOT EXISTS ix_skyline_latlon ON skyline_grid (lat, lon);
 """
 
 
+# 격자 간격(도). 배치(`build_skyline_grid --step 0.0002`)와 **조회가 같은 격자에 스냅**해야 한다.
+# ⚠️ 2026-09-12 발견: 배치는 0.0002 배수(소수 4째 자리가 짝수)만 만드는데 조회는 좌표를 그냥 4자리로
+# 반올림해서, 위·경도가 모두 짝수일 때만 맞았다 = 적중률 1/4. 계산해 둔 503만 칸의 3/4이 낭비됐다.
+GRID_DEG = 0.0002
+
+
+def snap(v: float) -> float:
+    return round(round(v / GRID_DEG) * GRID_DEG, 4)
+
+
 def cell_id(lat: float, lon: float) -> str:
-    return f"{round(lat, 4):.4f}:{round(lon, 4):.4f}"
+    return f"{snap(lat):.4f}:{snap(lon):.4f}"
 
 
 @dataclass
