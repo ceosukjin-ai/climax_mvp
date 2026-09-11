@@ -581,6 +581,97 @@ async def roads(
 
 
 @router.get(
+    "/route/shade",
+    summary="A→B 그늘 우선 경로(日陰ルート) — 최단 경로와 나란히",
+)
+async def route_shade(
+    request: Request,
+    from_lat: float = Query(..., ge=-90.0, le=90.0),
+    from_lon: float = Query(..., ge=-180.0, le=180.0),
+    to_lat: float = Query(..., ge=-90.0, le=90.0),
+    to_lon: float = Query(..., ge=-180.0, le=180.0),
+    air_c: float | None = Query(None, description="기온 °C. 생략하면 현재 날씨를 서버가 조회"),
+    ghi: float | None = Query(None, ge=0.0, le=1400.0),
+    wind_ms: float | None = Query(None, ge=0.0, le=40.0),
+    rh: float | None = Query(None, ge=0.0, le=100.0),
+    height_cm: float = Query(160.0, ge=20.0, le=200.0,
+                             description="기준 높이(cm). 성인 160, 유모차·아이 60, 개는 체고"),
+    vuln_offset_c: float = Query(0.0, ge=-5.0, le=10.0),
+) -> JSONResponse:
+    """출발→목적지 편도. **산책 코스와 같은 비용 함수**(그늘·노면온도·WBGT)를 쓰고 모양만 편도다.
+
+    왜 필요한가 (2026-09-12): 일본의 실제 위험 구간은 레저 산책이 아니라 **역까지 걷는 통근·통학**이다.
+    그늘 경로만 주면 "얼마나 이득인지"를 모르니 **최단 경로를 같이** 돌려준다 —
+    "2분 더 걸으면 그늘 3배, 노면 8°C 낮음" 이 비교가 있어야 사람이 실제로 길을 바꾼다.
+    height_cm 은 유모차·아이·개처럼 지면에 가까울수록 복사열을 더 받는 것을 반영한다.
+    """
+    from app.services import dog_course as dc
+    from app.services.roadnet import RoadNetError, RoadNetService
+
+    from app.services.dog_course import _haversine
+    span = abs(from_lat - to_lat) / 2 + 0.006
+    lon_span = abs(from_lon - to_lon) / 2 + 0.008
+    c_lat, c_lon = (from_lat + to_lat) / 2, (from_lon + to_lon) / 2
+    if _haversine(from_lat, from_lon, to_lat, to_lon) > 8000:
+        raise HTTPException(status_code=400, detail="출발지와 목적지가 너무 멉니다(8km 이내).")
+
+    svc = getattr(request.app.state, "roadnet", None)
+    if svc is None:
+        svc = RoadNetService(request.app.state.cache)
+        request.app.state.roadnet = svc
+    t0 = _time.perf_counter()
+    try:
+        roads = await svc.bbox(c_lat - span, c_lon - lon_span, c_lat + span, c_lon + lon_span,
+                               detail="full")
+    except RoadNetError as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
+
+    # 날씨 미지정이면 서버가 조회(앱이 날씨를 따로 부르지 않게)
+    if air_c is None or rh is None or wind_ms is None or ghi is None:
+        from datetime import datetime as _dt2, timezone as _tz2
+        from app.services.open_meteo import get_current_observation
+        from vpti_core import estimate_solar as _es2, DEFAULT_CONFIG as _CFG
+        obs = await get_current_observation(c_lat, c_lon)
+        sol = _es2(c_lat, c_lon, _dt2.now(_tz2.utc), config=_CFG.solar)
+        air_c = obs.temperature_c if air_c is None else air_c
+        rh = obs.humidity_pct if rh is None else rh
+        wind_ms = obs.wind_speed_ms if wind_ms is None else wind_ms
+        ghi = float(getattr(sol, "ghi", 0.0) or 0.0) if ghi is None else ghi
+
+    cond = dc.Conditions(air_c=air_c, ghi=ghi or 0.0, wind_ms=wind_ms, rh=rh,
+                         withers_cm=height_cm, vuln_offset_c=vuln_offset_c)
+    _sky_cells, _sun = {}, None
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        from vpti_core import estimate_solar as _es
+        from app.services import skyline as _sky
+        _s = _es(c_lat, c_lon, _dt.now(_tz.utc))
+        if _s.solar_elevation_deg > 0:
+            _sun = (_s.solar_azimuth_deg, _s.solar_elevation_deg)
+            _sky_cells = await _sky.get_cells(dc.edge_midpoints(roads.get("elements", [])))
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("route/shade 스카이라인 조회 생략: {}", _e)
+
+    graph = dc.build_graph(roads.get("elements", []), cond, skyline=_sky_cells, sun=_sun)
+    a = dc.nearest(graph, from_lat, from_lon)
+    b = dc.nearest(graph, to_lat, to_lon)
+    if a is None or b is None or a[0] == b[0]:
+        return JSONResponse({"ok": False, "reason": "주변에서 걸을 수 있는 길을 찾지 못했어요."})
+    res = dc.find_route(graph, a[0], b[0])
+    if not res.get("comfort"):
+        return JSONResponse({"ok": False, "reason": "두 지점을 잇는 보행 경로를 찾지 못했어요."})
+    return JSONResponse({
+        "ok": True, **res,
+        "weather": {"ta": round(air_c, 1), "rh": round(rh, 0),
+                    "wind_ms": round(wind_ms, 1), "ghi": round(ghi or 0.0)},
+        "meta": {"edges": graph.edge_count, "snap_from_m": round(a[1]), "snap_to_m": round(b[1]),
+                 "skyline_cells": len(_sky_cells),
+                 "skyline_shaded_edges": graph.skyline_shaded_edges,
+                 "elapsed_ms": round((_time.perf_counter() - t0) * 1000)},
+    })
+
+
+@router.get(
     "/dog/course",
     summary="개 기준 산책 코스 추천 — 출발점으로 되돌아오는 순환 코스 3개",
 )

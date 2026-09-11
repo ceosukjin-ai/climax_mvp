@@ -324,8 +324,9 @@ def _edge_key(a: int, b: int) -> tuple[int, int]:
 
 
 def _dijkstra(g: Graph, src: int, dst: int,
-              banned: dict[tuple[int, int], float]) -> list[int] | None:
-    """비용 최소 경로. 가중치 = 거리 × 구간비용 × (되돌아가기 벌점)."""
+              banned: dict[tuple[int, int], float],
+              weight: str = "comfort") -> list[int] | None:
+    """최소 경로. weight="comfort" 면 거리×구간비용(더위), "distance" 면 거리만 — 최단경로 비교용."""
     n = len(g.coords)
     dist = [float("inf")] * n
     prev = [-1] * n
@@ -343,7 +344,8 @@ def _dijkstra(g: Graph, src: int, dst: int,
         for (v, meters, cost, _ts, _sh, _kn) in g.adj[u]:
             if seen[v]:
                 continue
-            w = meters * max(cost, 0.1) * banned.get(_edge_key(u, v), 1.0)
+            w = (meters if weight == "distance" else meters * max(cost, 0.1)) \
+                * banned.get(_edge_key(u, v), 1.0)
             nd = d + w
             if nd < dist[v]:
                 dist[v] = nd
@@ -412,6 +414,34 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
         "surface_known_ratio": round(known_m / total_m, 3),
         "bearing_deg": bearing,
     }
+
+
+def find_route(g: Graph, start: int, goal: int) -> dict[str, Any]:
+    """A→B 편도 — **그늘 우선 경로**와 **최단 경로**를 같이 돌려준다 (2026-09-12, 일본 통근용).
+
+    산책 코스(find_courses)와 비용 함수는 완전히 같다. 다른 건 모양뿐 — 순환이 아니라 편도다.
+    일본의 킬러 케이스가 "역까지 15분 걷기"라서 이 형태가 필요했다(日陰ルート).
+    두 경로를 같이 주는 이유: "2분 더 걸으면 그늘이 3배" 같은 **선택의 근거**가 있어야 사람이 움직인다.
+    """
+    out: dict[str, Any] = {}
+    for key, mode in (("comfort", "comfort"), ("shortest", "distance")):
+        path = _dijkstra(g, start, goal, {}, weight=mode)
+        if not path or len(path) < 2:
+            continue
+        r = _summarize(g, path, 0.0)
+        r.pop("bearing_deg", None)
+        out[key] = r
+    c, sh = out.get("comfort"), out.get("shortest")
+    if c and sh:
+        out["gain"] = {
+            "extra_meters": c["meters"] - sh["meters"],
+            "extra_seconds": c["seconds"] - sh["seconds"],
+            "shade_ratio_gain": round(c["shade_ratio"] - sh["shade_ratio"], 3),
+            "cost_drop": round(sh["mean_cost"] - c["mean_cost"], 2),
+            "surface_temp_drop": round(sh["max_surface_temp_c"] - c["max_surface_temp_c"], 1),
+            "same": c["coords"] == sh["coords"],
+        }
+    return out
 
 
 _BEARING_NAME = {0: "북", 45: "북동", 90: "동", 135: "남동",
