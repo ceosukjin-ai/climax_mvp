@@ -1625,6 +1625,25 @@ async def geo_form(lat: float = Query(...), lon: float = Query(...)) -> dict:
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
 
 
+def _wbgt_fields(ta: float, rh: float, v: float, mrt: float) -> dict:
+    from vpti_core.wbgt import wbgt_outdoor, wbgt_level
+    w = wbgt_outdoor(ta, rh, v, mrt)
+    return {"wbgt": w["wbgt"], "wbgt_level": wbgt_level(w["wbgt"]),
+            "globe_c": w["globe_c"], "wet_bulb_c": w["wet_bulb_c"]}
+
+
+def _paw_risk(ground_c: float) -> dict:
+    """노면온도 → 강아지 발바닥 위험. 일본에서 肉球やけど 인식이 높아 이 한 줄이 설치 이유가 된다.
+    기준: 수의 가이드 통용치(아스팔트 52°C 에서 1분 내 화상, 60°C 는 수 초)."""
+    if ground_c >= 60.0:
+        return {"code": "danger", "ja": "危険・散歩は避けて", "ko": "위험 · 산책 금지", "en": "Dangerous"}
+    if ground_c >= 52.0:
+        return {"code": "burn", "ja": "肉球やけどの恐れ", "ko": "발바닥 화상 주의", "en": "Burn risk"}
+    if ground_c >= 45.0:
+        return {"code": "hot", "ja": "熱い・短時間で", "ko": "뜨거움 · 짧게", "en": "Hot"}
+    return {"code": "ok", "ja": "問題なし", "ko": "괜찮음", "en": "OK"}
+
+
 async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     """GSV 없이 좌표 → 완전한 체감(VPTI). 기하 SVF(사전적재 건물)+기하 그늘+Open-Meteo
     날씨+Sentinel-2 위성 GVI+교정엔진(compute_vpti_thermal, UTCI/PET). 전세계 파일럿.
@@ -1754,6 +1773,12 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "pet_ai": round(_pet_ai, 1),                 # 잔차 AI 보정 PET(분포 밖이면 =물리)
         "ai_applied": _ai_on, "ai_confidence": round(_ai_conf, 2),
         "mrt_c": round(float(r.mrt.tmrt), 1),
+        # WBGT(暑さ指数) — 일본의 공용 지표. 환경성 값은 관측점(광역)이라 그늘/볕 구분이 없고,
+        # 우리는 이 좌표의 MRT(건물 그늘·노면 포함)에서 산출하므로 같은 거리에서도 보도별로 다르다.
+        **_wbgt_fields(obs.temperature_c, obs.humidity_pct, r.pedestrian_wind_ms, float(r.mrt.tmrt)),
+        # 노면온도 — 강아지 발바닥 화상(肉球やけど)·유모차 높이 판단의 근거
+        "ground_c": round(float(r.mrt.ground_temp_c), 1),
+        "paw_risk": _paw_risk(float(r.mrt.ground_temp_c)),
         "wall_c": (round(sum(wall_temp.values()) / len(wall_temp), 1)
                    if isinstance(wall_temp, dict)
                    else (round(wall_temp, 1) if wall_temp is not None else None)),
