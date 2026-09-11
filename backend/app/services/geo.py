@@ -234,9 +234,10 @@ async def _rings_cached(
 
     # 순서(2026-09-11): 로컬 타일 먼저 — 국내는 GIS건물통합+건축물대장 조인 타일(층수 완전), 해외는 OSM/PLATEAU 타일.
     # 타일이 없는 지역은 []를 돌려 V-World(국내 실시간) → OSM 순으로 폴백.
-    for name, fn in (("Local", _rings_from_local),
-                     ("V-World", _rings_from_vworld),
-                     ("OSM", _rings_from_osm)):
+    sources = [("Local", _rings_from_local), ("V-World", _rings_from_vworld), ("OSM", _rings_from_osm)]
+    if BUILDING_SOURCE == "db":
+        sources.insert(0, ("DB", _rings_from_db))
+    for name, fn in sources:
         try:
             rings = await fn(lat, lon)
         except Exception as e:  # noqa: BLE001
@@ -245,6 +246,10 @@ async def _rings_cached(
         if rings:
             _RINGS_CACHE[key] = (time.time(), rings, name)
             return rings, name
+        if name == "DB" and await _db_tile_loaded(f"{int(math.floor(lat * 100))}_{int(math.floor(lon * 100))}"):
+            # 적재된 타일인데 건물이 없다 = 정말 개활. 실시간 조회로 넘어가지 않는다.
+            _RINGS_CACHE[key] = (time.time(), None, "DB")
+            return [], "DB"
         if name == "Local" and _local_tile_exists(lat, lon):
             # 타일 파일이 있는데 건물이 없다 = 정말 개활(공원·바다·산). 실시간 호출로 넘어가지 않는다 (2026-09-11).
             _RINGS_CACHE[key] = (time.time(), None, "Local")
@@ -708,6 +713,101 @@ def _local_tile_exists(lat: float, lon: float) -> bool:
             _LOCAL_TILE_EXISTS.clear()
         _LOCAL_TILE_EXISTS[tkey] = v
     return v
+
+
+# === 건물 원천: PostGIS (2026-09-11) ===
+# 왜: 타일 JSON 파일은 (1) 전국 약 40GB 로 WAS 디스크(50GB)에 안 들어가고 (2) 프로세스마다 메모리에
+# 올라가 2026-09-11 서버 다운의 원인이 됐다. 같은 건물을 PostGIS 기하로 넣으면 5~8GB 에 인덱스 조회다.
+# **계산은 한 줄도 바뀌지 않는다** — 같은 폴리곤·같은 태그를 같은 형식(rings)으로 돌려준다.
+# 전환은 실측 80점(MAE 0.121 / bias -0.004 / r 0.40)이 그대로일 때만. 파일 경로는 폴백으로 남겨둔다.
+# `BUILDING_SOURCE=db` 일 때만 우선 사용(기본 file).
+BUILDING_SOURCE = os.environ.get("BUILDING_SOURCE", "file").lower()
+_DB_TILE_CACHE: dict[str, list] = {}
+_DB_TILE_LOADED: dict[str, bool] = {}
+
+
+async def _db_tile_loaded(tkey: str) -> bool:
+    """그 타일이 DB 에 적재됐는가 (파일 존재 확인과 같은 역할 — 적재된 곳은 DB 가 권위 원천)."""
+    v = _DB_TILE_LOADED.get(tkey)
+    if v is not None:
+        return v
+    try:
+        from app.services.skyline import _get_pool
+        pool = await _get_pool()
+        if pool is None:
+            return False
+        async with pool.acquire() as c:
+            v = bool(await c.fetchval("SELECT 1 FROM bldg_tile WHERE tkey=$1", tkey))
+    except Exception:  # noqa: BLE001
+        return False
+    if len(_DB_TILE_LOADED) > 50000:
+        _DB_TILE_LOADED.clear()
+    _DB_TILE_LOADED[tkey] = v
+    return v
+
+
+async def _load_db_tile(tkey: str) -> list:
+    """타일 하나의 건물(Overpass elements 형식). 타일 단위로 캐시 — 격자 배치가 칸마다 DB를 때리지 않게."""
+    cached = _DB_TILE_CACHE.get(tkey)
+    if cached is not None:
+        return cached
+    la_s, lo_s = tkey.split("_")
+    s, w = int(la_s) / 100.0, int(lo_s) / 100.0
+    elements: list = []
+    try:
+        from app.services.skyline import _get_pool
+        pool = await _get_pool()
+        if pool is None:
+            return []
+        async with pool.acquire() as c:
+            rows = await c.fetch(
+                "SELECT id, tags::text AS tags, ST_AsGeoJSON(geom) AS g FROM bldg_poly "
+                "WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326)", w, s, w + 0.01, s + 0.01)
+        for r in rows:
+            g = json.loads(r["g"]); t = g.get("type"); c_ = g.get("coordinates") or []
+            rings = [c_[0]] if t == "Polygon" else [pp[0] for pp in c_ if pp]
+            for k, ring in enumerate(rings):
+                if len(ring) < 4:
+                    continue
+                elements.append({"id": r["id"] if k == 0 else f"{r['id']}:{k}",
+                                 "geometry": [{"lat": y, "lon": x} for x, y in ring],
+                                 "tags": json.loads(r["tags"])})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[bldg_poly] 타일 {} 조회 실패: {}", tkey, e)
+        return []
+    if len(_DB_TILE_CACHE) > _LOCAL_TILE_CACHE_MAX:
+        for k in list(_DB_TILE_CACHE)[: len(_DB_TILE_CACHE) // 2]:
+            _DB_TILE_CACHE.pop(k, None)
+    _DB_TILE_CACHE[tkey] = elements
+    return elements
+
+
+async def _rings_from_db(
+    lat: float, lon: float
+) -> list[tuple[list[tuple[float, float]], dict]]:
+    """PostGIS `bldg_poly` 에서 3×3 타일. 반환 형식은 _rings_from_local 과 완전히 동일."""
+    base_la = int(math.floor(lat * 100))
+    base_lo = int(math.floor(lon * 100))
+    out: list[tuple[list[tuple[float, float]], dict]] = []
+    seen: set = set()
+    lim2 = (SEARCH_RADIUS_M + 60.0) ** 2
+    for dla in (-1, 0, 1):
+        for dlo in (-1, 0, 1):
+            for el in await _load_db_tile(f"{base_la + dla}_{base_lo + dlo}"):
+                eid = el.get("id")
+                if eid is not None:
+                    if eid in seen:
+                        continue
+                    seen.add(eid)
+                geom = el.get("geometry") or []
+                if len(geom) < 4:
+                    continue
+                x0, y0 = _to_local_m(geom[0]["lat"], geom[0]["lon"], lat, lon)
+                if x0 * x0 + y0 * y0 > lim2:
+                    continue
+                out.append(([_to_local_m(g["lat"], g["lon"], lat, lon) for g in geom], dict(el.get("tags") or {})))
+    await _fill_floors_from_register_many([p for _, p in out])
+    return out
 
 
 async def _rings_from_osm(
