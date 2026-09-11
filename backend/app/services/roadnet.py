@@ -198,10 +198,60 @@ class RoadNetService:
                 await self._put_cached(k, els)
             return els, False
 
+    async def bbox_db(
+        self, min_lat: float, min_lon: float, max_lat: float, max_lon: float,
+        detail: str = "lite",
+    ) -> dict | None:
+        """사전적재 PostGIS `osm_way` (scripts/load_osm_ways.py) — 있으면 Overpass 대신 이걸 쓴다 (2026-09-11).
+
+        dog/course 15~50초의 원인이 전부 공개 Overpass 대기였다. 도로는 안 움직이니 전국을 한 번 넣고
+        bbox 조회(GIST) 한 번으로 끝낸다(수십 ms). 응답은 Overpass 형식 그대로라 dog_course·앱 무변경.
+        테이블이 없거나 비었거나 DB 오류면 None → 기존 타일/Overpass 경로로 폴백.
+        """
+        try:
+            from app.services.skyline import _get_pool
+            pool = await _get_pool()
+            if pool is None:
+                return None
+            sql = ("SELECT id, tags::text AS tags, ST_AsGeoJSON(geom) AS g FROM osm_way "
+                   "WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)")
+            if detail == "lite":
+                sql += " AND NOT (tags->>'highway' IN ('service','track'))"
+            async with pool.acquire() as c:
+                rows = await c.fetch(sql, min_lon, min_lat, max_lon, max_lat)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[roadnet] DB 조회 실패 → Overpass 폴백: {}: {}", type(e).__name__, e)
+            return None
+        if not rows:
+            return None
+        elements: list[dict] = []
+        for r in rows:
+            g = json.loads(r["g"]); t = g.get("type"); c = g.get("coordinates") or []
+            if t == "LineString":
+                coords = c
+            elif t == "Polygon":
+                coords = c[0] if c else []
+            elif t == "MultiPolygon":
+                coords = max((p[0] for p in c if p), key=len, default=[])
+            else:
+                continue
+            if len(coords) < 2:
+                continue
+            elements.append({
+                "type": "way", "id": int(r["id"]), "tags": json.loads(r["tags"]),
+                "geometry": [{"lat": y, "lon": x} for x, y in coords],
+            })
+        return {"elements": elements,
+                "meta": {"source": "db", "tiles": 0, "cache_hits": 0, "failed": 0,
+                         "detail": detail, "count": len(elements)}}
+
     async def bbox(
         self, min_lat: float, min_lon: float, max_lat: float, max_lon: float,
         detail: str = "lite",
     ) -> dict:
+        db = await self.bbox_db(min_lat, min_lon, max_lat, max_lon, detail)
+        if db is not None:
+            return db
         tl = tiles_for_bbox(min_lat, min_lon, max_lat, max_lon)
         if len(tl) > MAX_TILES:
             raise RoadNetError(
