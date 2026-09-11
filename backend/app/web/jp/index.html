@@ -35,6 +35,14 @@
        border:1px solid var(--line);background:var(--panel);color:var(--txt);font-size:20px;display:flex;align-items:center;justify-content:center;
        box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer}
   .fab.on{border-color:#4d7fa8;color:#7fb6e6}
+  .fab2{bottom:calc(70px + var(--sab));font-size:20px}
+  .wb{display:flex;align-items:baseline;gap:6px;margin:-4px 0 8px;font-size:12.5px;color:var(--muted)}
+  .wb b{font-size:16px;color:var(--txt)}
+  .paw{border-radius:12px;padding:8px 11px;margin:0 0 10px;font-size:13px;font-weight:600;display:flex;gap:8px;align-items:center}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:2px 0 10px}
+  .cmp div{border:1px solid var(--line);border-radius:12px;padding:8px 10px}
+  .cmp .t{font-size:11.5px;color:var(--muted)} .cmp .m{font-size:15px;font-weight:700}
+  .cmp .s{font-size:11.5px;color:var(--muted);margin-top:2px}
   .sheet{position:absolute;z-index:1000;left:10px;right:10px;bottom:calc(10px + var(--sab));max-width:420px;margin:0 auto;
        background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 16px 12px;box-shadow:0 10px 40px rgba(0,0,0,.5);
        transition:transform .25s ease}
@@ -65,6 +73,7 @@
   <div class="lang"><button data-l="ja" class="on">日本語</button><button data-l="en">EN</button><button data-l="ko">한국어</button></div>
 </div>
 <div class="hint" id="hint">地図をタップ、または ◎ で現在地</div>
+<button class="fab fab2" id="routeBtn" title="日陰ルート">🚶</button>
 <button class="fab" id="fab" title="現在地">◎</button>
 <div id="sheet" class="sheet hidden"></div>
 
@@ -73,7 +82,8 @@
 const I18N = {
  ja:{sub:"いま、ここの体感（東京23区）",hint:"地図をタップ、または ◎ で現在地",feel:"°C 体感",calc:"計算中…",
      risk:{safe:"安全",caution:"注意",warning:"警戒",danger:"危険",severe:"厳重警戒"},
-     sun:"日なた",shade:"日陰",svf:"空の開け",gvi:"緑",ta:"気温",mrt:"放射温度",rh:"湿度",wind:"風",
+     wbgt:"暑さ指数",paw:"路面",pawT:"犬の散歩",routeOn:"目的地をタップ（日陰ルート）",routeOff:"日陰ルート",
+     rShade:"日陰ルート",rShort:"最短ルート",rGain:"多く歩くだけで日陰が",rCmpNote:"同じ道でした（迂回の利点なし）",rFail:"経路が見つかりません",rCalc:"ルート計算中…",shadeW:"日陰",sun:"日なた",shade:"日陰",svf:"空の開け",gvi:"緑",ta:"気温",mrt:"放射温度",rh:"湿度",wind:"風",
      nocov:"このエリアはまだ未対応",nocov2:"東京23区内をタップしてください。",err:"接続できません。しばらくしてからもう一度。",
      foot:"ストリートビュー不要・衛星と建物地図と気象から算出",follow:"現在地を追跡中",
      act:{
@@ -90,7 +100,8 @@ const I18N = {
      }},
  en:{sub:"How it feels right here (Tokyo 23 wards)",hint:"Tap the map, or ◎ for your location",feel:"°C feels like",calc:"Computing…",
      risk:{safe:"Safe",caution:"Caution",warning:"Warning",danger:"Danger",severe:"Extreme"},
-     sun:"Sunlit",shade:"Shaded",svf:"Sky view",gvi:"Green",ta:"Air temp",mrt:"Radiant temp",rh:"Humidity",wind:"Wind",
+     wbgt:"Heat index (WBGT)",paw:"Pavement",pawT:"Dog walk",routeOn:"Tap your destination (shade route)",routeOff:"Shade route",
+     rShade:"Shade route",rShort:"Shortest",rGain:"more walking buys shade",rCmpNote:"Same street (no detour helps)",rFail:"No walking route found",rCalc:"Finding route…",shadeW:"shade",sun:"Sunlit",shade:"Shaded",svf:"Sky view",gvi:"Green",ta:"Air temp",mrt:"Radiant temp",rh:"Humidity",wind:"Wind",
      nocov:"Not covered here yet",nocov2:"Tap inside Tokyo's 23 wards.",err:"Cannot connect. Try again shortly.",
      foot:"No street view needed — satellite, building map and live weather",follow:"Following your location",
      act:{
@@ -107,7 +118,8 @@ const I18N = {
      }},
  ko:{sub:"지금 여기 체감 (도쿄 23구)",hint:"지도를 누르거나 ◎ 로 현재 위치",feel:"°C 체감",calc:"계산 중…",
      risk:{safe:"안전",caution:"주의",warning:"경고",danger:"위험",severe:"심각"},
-     sun:"볕",shade:"그늘",svf:"하늘열림",gvi:"녹지",ta:"기온",mrt:"복사온도",rh:"습도",wind:"바람",
+     wbgt:"더위지수",paw:"노면",pawT:"강아지 산책",routeOn:"목적지를 누르세요 (그늘 경로)",routeOff:"그늘 경로",
+     rShade:"그늘 경로",rShort:"최단 경로",rGain:"더 걸으면 그늘이",rCmpNote:"같은 길이었어요 (돌아갈 이득 없음)",rFail:"보행 경로를 못 찾았어요",rCalc:"경로 계산 중…",shadeW:"그늘",sun:"볕",shade:"그늘",svf:"하늘열림",gvi:"녹지",ta:"기온",mrt:"복사온도",rh:"습도",wind:"바람",
      nocov:"이 지역은 아직 준비 안 됨",nocov2:"도쿄 23구 안을 눌러보세요.",err:"연결 실패. 잠시 후 다시.",
      foot:"스트리트뷰 없이 위성·건물지도·실시간 날씨로 산출",follow:"내 위치 따라가는 중",
      act:{
@@ -138,8 +150,11 @@ function colorFor(d){
 const map = L.map('map',{zoomControl:false}).setView([35.6710,139.7020],14);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
 // 도쿄 23구 커버리지(적재 bbox)
-const COV=[[35.53,139.56],[35.82,139.92]];
-L.rectangle(COV,{color:"#4d7fa8",weight:1,fillColor:"#4d7fa8",fillOpacity:0.03,dashArray:"4 4"}).addTo(map);
+// 적재된 도시권(run_japan_bldg.sh 와 같은 bbox). 이 밖은 건물 데이터가 없어 체감이 안 나온다.
+const COV=[[[35.35,139.20],[36.10,140.20]],[[34.55,135.00],[35.10,135.90]],[[35.00,136.75],[35.30,137.10]],
+           [[33.50,130.28],[33.72,130.55]],[[42.95,141.25],[43.15,141.50]],[[38.20,140.80],[38.35,141.05]],
+           [[34.33,132.35],[34.45,132.55]]];
+COV.forEach(b=>L.rectangle(b,{color:"#4d7fa8",weight:1,fillColor:"#4d7fa8",fillOpacity:0.03,dashArray:"4 4"}).addTo(map));
 
 const sheet=document.getElementById('sheet'), hint=document.getElementById('hint'), fab=document.getElementById('fab');
 let marker=null, meMarker=null, follow=false, lastQ=null, inflight=null, lastData=null;
@@ -178,6 +193,8 @@ function show(d){
     <div class="feel"><span class="n" style="color:${c}">${Math.round(feel)}</span><span class="u">${t.feel}</span>
       <span class="badge" style="margin-left:auto;background:${c}22;color:${c};border:1px solid ${c}55">${t.risk[d.risk]||d.risk}</span></div>
     <div class="sub">${expLabel(d)} · ${t.svf} ${Math.round(d.svf*100)}% · ${t.gvi} ${Math.round((d.gvi||0)*100)}%${d.street_width_m?` · ${d.street_width_m}m`:""}</div>
+    ${wbgtRow(d)}
+    ${pawCard(d)}
     <div class="act" style="background:${c}1a;border:1px solid ${c}44;color:${c}">${a.h}<small style="color:var(--txt)">${a.s}${a.extra?`<br>${a.extra}`:""}</small></div>
     <div class="rows">
       <div class="row"><span class="k">${t.ta}</span><span class="v">${d.weather.ta}°C</span></div>
@@ -209,7 +226,10 @@ async function query(la,lo){
     show(d); lastQ={la,lo,t:Date.now()};
   }catch(e){ if(e.name!=="AbortError") nocov(T().err); }
 }
-map.on('click',e=>{ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; query(e.latlng.lat,e.latlng.lng); });
+map.on('click',e=>{
+  if(routeMode){ routeTo(e.latlng.lat,e.latlng.lng); return; }
+  follow=false; fab.classList.remove('on'); hint.textContent=T().hint; query(e.latlng.lat,e.latlng.lng);
+});
 
 // ─── 현재 위치 따라가기: 30m 이상 이동 또는 10분 경과 시 재계산 ───
 function distM(a,b,c,d){const R=6371000,p=Math.PI/180;const x=(c-a)*p,y=(d-b)*p*Math.cos((a+c)/2*p);return Math.sqrt(x*x+y*y)*R;}
@@ -228,6 +248,86 @@ function startFollow(){
   {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 }
 fab.onclick=()=>{ if(follow){ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;} } else startFollow(); };
+
+
+// ─── WBGT(暑さ指数) · 노면(강아지) ──────────────────────
+// 일본은 체감더위를 WBGT 로 말한다(환경성 기준). 우리 값은 이 좌표의 MRT 에서 나오므로
+// 같은 거리라도 볕/그늘이 다르게 나온다 — 관측점 단위 공식값이 못 하는 구분이다.
+const WBC={safe:"#2e9e6b",attention:"#e8c14a",warning:"#e07b39",severe:"#d9483b",danger:"#a01f14"};
+function wbgtRow(d){
+  if(d.wbgt==null) return "";
+  const lv=d.wbgt_level||{}, c=WBC[lv.code]||"#8899a6", label=lv[L_]||lv.en||"";
+  const alert = lv.alert==="special" ? "🚨" : (lv.alert==="alert" ? "⚠️" : "");
+  return `<div class="wb"><span>${T().wbgt}</span><b style="color:${c}">${d.wbgt}</b>
+    <span style="color:${c};font-weight:600">${label} ${alert}</span></div>`;
+}
+const PAWC={ok:"#2e9e6b",hot:"#e8c14a",burn:"#e07b39",danger:"#d9483b"};
+function pawCard(d){
+  if(d.ground_c==null||!d.paw_risk||d.paw_risk.code==="ok") return "";
+  const c=PAWC[d.paw_risk.code]||"#8899a6", msg=d.paw_risk[L_]||d.paw_risk.en;
+  return `<div class="paw" style="background:${c}1a;border:1px solid ${c}44;color:${c}">🐾
+    <span>${T().pawT} · ${T().paw} ${Math.round(d.ground_c)}°C — ${msg}</span></div>`;
+}
+
+// ─── 日陰ルート: 출발(현재 조회지점) → 목적지(탭) ─────────
+// 산책 코스와 **같은 비용 함수**를 쓰고 모양만 편도다. 최단 경로를 나란히 보여주는 이유:
+// "14초 더 걸으면 그늘 1.5배" 라는 비교가 있어야 사람이 실제로 길을 바꾼다.
+const ROUTE_API="/api/v1/route/shade";
+let routeMode=false, rLayers=[];
+const routeBtn=document.getElementById('routeBtn');
+function clearRoutes(){ rLayers.forEach(l=>l.remove()); rLayers=[]; }
+function setRouteMode(on){
+  routeMode=on; routeBtn.classList.toggle('on',on);
+  hint.textContent = on ? T().routeOn : (follow?T().follow:T().hint);
+  if(!on) clearRoutes();
+}
+routeBtn.onclick=()=>setRouteMode(!routeMode);
+
+function drawRoute(r,color,dash,w){
+  if(!r||!r.coords) return null;
+  const ll=r.coords.map(p=>[p.lat,p.lon]);
+  const line=L.polyline(ll,{color,weight:w,opacity:.9,dashArray:dash}).addTo(map);
+  rLayers.push(line); return line;
+}
+function showRoute(d){
+  const t=T(), c=d.comfort, sh=d.shortest, g=d.gain||{};
+  const pct=v=>Math.round((v||0)*100), mn=v=>Math.max(1,Math.round((v||0)/60));
+  const same=g.same===true;
+  const head = same ? `<div class="act" style="background:#8899a61a;border:1px solid #8899a644">${t.rCmpNote}</div>`
+    : `<div class="act" style="background:#2e9e6b1a;border:1px solid #2e9e6b44;color:#2e9e6b">
+         +${Math.max(0,g.extra_seconds||0)}s · ${t.rGain} ${pct(sh.shade_ratio)}% → ${pct(c.shade_ratio)}%
+         <small style="color:var(--txt)">${t.shadeW} ${pct(g.shade_ratio_gain)}%p ↑</small></div>`;
+  sheet.classList.remove('hidden');
+  sheet.innerHTML = head + `
+    <div class="cmp">
+      <div style="border-color:#2e9e6b66"><div class="t">${t.rShade}</div>
+        <div class="m">${mn(c.seconds)}分 · ${c.meters}m</div>
+        <div class="s">${t.shadeW} ${pct(c.shade_ratio)}% · ${t.paw} ${Math.round(c.max_surface_temp_c)}°C</div></div>
+      <div><div class="t">${t.rShort}</div>
+        <div class="m">${mn(sh.seconds)}分 · ${sh.meters}m</div>
+        <div class="s">${t.shadeW} ${pct(sh.shade_ratio)}% · ${t.paw} ${Math.round(sh.max_surface_temp_c)}°C</div></div>
+    </div>
+    <div class="foot"><span>${t.foot}</span><span>${d.weather?`${d.weather.ta}°C`:""}</span></div>`;
+}
+async function routeTo(la,lo){
+  const from = lastQ || (meMarker ? {la:meMarker.getLatLng().lat, lo:meMarker.getLatLng().lng} : null);
+  if(!from){ nocov(T().routeOn); return; }
+  clearRoutes();
+  sheet.classList.remove('hidden');
+  sheet.innerHTML=`<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>${T().rCalc}</div>`;
+  try{
+    const q=`from_lat=${from.la.toFixed(5)}&from_lon=${from.lo.toFixed(5)}&to_lat=${la.toFixed(5)}&to_lon=${lo.toFixed(5)}`;
+    const res=await fetch(`${ROUTE_API}?${q}`);
+    const d=await res.json();
+    if(!d.ok||!d.comfort){ nocov(d.reason||T().rFail); return; }
+    drawRoute(d.shortest,"#8899a6","6 6",4);
+    drawRoute(d.comfort,"#2e9e6b",null,6);
+    const b=L.latLngBounds(d.comfort.coords.map(p=>[p.lat,p.lon]));
+    rLayers.push(L.circleMarker([la,lo],{radius:7,color:"#fff",weight:2,fillColor:"#2e9e6b",fillOpacity:.95}).addTo(map));
+    map.fitBounds(b,{padding:[40,120]});
+    showRoute(d);
+  }catch(e){ nocov(T().rFail); }
+}
 
 applyLang();
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }
