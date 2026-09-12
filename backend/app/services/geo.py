@@ -268,6 +268,82 @@ def _trim_caches() -> None:
             _LOCAL_TILE_CACHE.pop(k, None)
 
 
+# === 가로수 그늘 (2026-09-12) ===
+# 왜: 지금까지 직사광을 막는 건 **건물뿐**이었다. 위성 NDVI(GVI)는 "주변에 녹지가 있다"를 알려줄 뿐
+# 머리 위에 나무가 있는지는 모른다 → 요요기공원(GVI 90%)과 시부야역(GVI 0%)의 MRT 가 같게 나왔다.
+# 並木道·공원이 핵심인 일본에선 치명적. NDVI 로 뭉개 보정하면 공원 안 뙤약볕 길을 "그늘"이라 거짓말한다.
+# → OSM 개별 나무 좌표(natural=tree, tree_row)를 넣고 **태양 방향에 실제로 나무가 있을 때만** 가린다.
+TREE_H_M = 8.0            # 가로수 기본 수고(OSM height 있으면 그 값)
+TREE_CROWN_R_M = 3.0      # 기본 수관 반경(diameter_crown 있으면 그 값/2)
+TREE_SEARCH_M = 30.0
+_TREE_CACHE: dict[str, list] = {}
+
+
+async def _trees_near(lat: float, lon: float) -> list[tuple[float, float, float, float]]:
+    """반경 내 나무 (lat, lon, 높이m, 수관반경m). 0.01° 타일 단위 캐시 — 격자 배치가 칸마다 DB를 안 때리게."""
+    tkey = f"{int(math.floor(lat * 100))}_{int(math.floor(lon * 100))}"
+    hit = _TREE_CACHE.get(tkey)
+    if hit is None:
+        try:
+            from app.services.skyline import _get_pool
+            pool = await _get_pool()
+            if pool is None:
+                return []
+            s0, w0 = int(math.floor(lat * 100)) / 100.0, int(math.floor(lon * 100)) / 100.0
+            m = 0.0005
+            async with pool.acquire() as c:
+                rows = await c.fetch(
+                    "SELECT ST_Y(geom) la, ST_X(geom) lo, h, r FROM tree_point "
+                    "WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326)",
+                    w0 - m, s0 - m, w0 + 0.01 + m, s0 + 0.01 + m)
+            hit = [(float(r["la"]), float(r["lo"]), float(r["h"] or TREE_H_M), float(r["r"] or TREE_CROWN_R_M))
+                   for r in rows]
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[tree] 조회 생략: {}", e)
+            return []
+        if len(_TREE_CACHE) > _LOCAL_TILE_CACHE_MAX:
+            for k in list(_TREE_CACHE)[: len(_TREE_CACHE) // 2]:
+                _TREE_CACHE.pop(k, None)
+        _TREE_CACHE[tkey] = hit
+    return hit
+
+
+async def tree_shade_factor(lat: float, lon: float, sun_az_deg: float, sun_el_deg: float,
+                            eye_m: float = 1.5) -> float:
+    """태양 방향의 나무가 직사광을 가리는 비율 0~1 (1=완전히 가림).
+
+    사람→태양 시선이 수관을 통과하면 가려진다. 수관은 반경 r, 중심 높이 h−r 의 구로 본다.
+    · 방위 조건: |Δ방위| < 수관 반각(atan(r/d)) + 여유 2°
+    · 고도 조건: 태양고도 < 수관 상단 각도(atan((h−눈높이)/d))
+    잎의 투과(약 10~20%)를 감안해 최대 0.85 로 둔다 — 나무 그늘은 건물 그늘보다 약간 밝다.
+    """
+    if sun_el_deg <= 0.0:
+        return 0.0
+    trees = await _trees_near(lat, lon)
+    if not trees:
+        return 0.0
+    best = 0.0
+    for tla, tlo, h, r in trees:
+        x, y = _to_local_m(tla, tlo, lat, lon)
+        d = math.hypot(x, y)
+        if d < 0.5 or d > TREE_SEARCH_M:
+            continue
+        az = math.degrees(math.atan2(x, y)) % 360.0
+        d_az = abs(((sun_az_deg - az + 180) % 360) - 180)
+        half = math.degrees(math.atan2(r, d))
+        if d_az > half + 2.0:
+            continue
+        top = math.degrees(math.atan2(max(h - eye_m, 0.1), d))
+        if sun_el_deg >= top:
+            continue
+        # 중심에 가까울수록 두껍게 가린다
+        f = 0.85 * max(0.0, 1.0 - (d_az / max(half + 2.0, 1e-6)) ** 2)
+        best = max(best, f)
+        if best >= 0.84:
+            break
+    return round(best, 3)
+
+
 async def sun_blocked_outdoor(
     lat: float,
     lon: float,

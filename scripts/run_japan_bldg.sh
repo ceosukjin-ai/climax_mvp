@@ -15,7 +15,11 @@ one() {  # one 이름 S W N E
   osmium tags-filter $t.osm.pbf w/building a/building -o $t.b.osm.pbf --overwrite -q
   osmium export -f geojsonseq --add-unique-id=type_id $t.b.osm.pbf -o $t.geojsonl --overwrite -q
   $DC python3 /repo/scripts/load_osm_bldg_to_db.py /data/_jp.geojsonl --mark-bbox $S $W $N $E --src osm-jp
-  rm -f $t.osm.pbf $t.b.osm.pbf $t.geojsonl
+  # 가로수 — 직사광을 막는 건 건물만이 아니다(並木道). 개별 나무 좌표라야 "머리 위" 판정이 된다.
+  osmium tags-filter $t.osm.pbf n/natural=tree w/natural=tree_row -o $t.t.osm.pbf --overwrite -q
+  osmium export -f geojsonseq --add-unique-id=type_id $t.t.osm.pbf -o $t.t.geojsonl --overwrite -q
+  $DC python3 /repo/scripts/load_osm_trees.py /data/_jp.t.geojsonl --src osm-jp
+  rm -f $t.osm.pbf $t.b.osm.pbf $t.geojsonl $t.t.osm.pbf $t.t.geojsonl
   echo "=== $name 끝  $(date '+%F %T')  디스크 $(df -h / | awk 'NR==2{print $5}')"
 }
 one 도쿄권   35.35 139.20 36.10 140.20

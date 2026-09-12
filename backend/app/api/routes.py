@@ -1763,9 +1763,19 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     sol = estimate_solar(lat, lon, now, config=DEFAULT_CONFIG.solar)
     blocked, shade_note = await sun_blocked_outdoor(
         lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
-    direct_shade = 0.0 if blocked else 1.0
+    # 가로수 그늘 (2026-09-12): 건물이 안 막아도 태양 방향에 나무가 있으면 직사광이 줄어든다.
+    # NDVI 로 뭉개지 않고 OSM 개별 나무 좌표로만 판정한다 — 공원 안 뙤약볕 길을 그늘이라 하지 않기 위해.
+    tree_f = 0.0
+    if not blocked:
+        try:
+            from app.services.geo import tree_shade_factor
+            tree_f = await tree_shade_factor(lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
+        except Exception:  # noqa: BLE001
+            tree_f = 0.0
+    direct_shade = 0.0 if blocked else (1.0 - tree_f)
     night = sol.solar_elevation_deg <= 0.0
-    exposure = "야간" if night else ("그늘" if blocked else "양지")
+    exposure = ("야간" if night else
+                ("그늘" if blocked else ("나무그늘" if tree_f >= 0.4 else "양지")))
 
     gvi = 0.0
     gvi_src = "none"
@@ -1886,6 +1896,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "materials": [{"m": m, "f": round(f, 2)} for m, f in
                       ((mm.material, mm.fraction) for mm in mats)],
         "exposure": exposure, "shade_note": shade_note,
+        "tree_shade": tree_f,        # 0~1, 태양 방향 나무의 차광 비율
         "weather": {"ta": round(obs.temperature_c, 1),
                     "rh": round(obs.humidity_pct, 0),
                     "wind_ms": round(obs.wind_speed_ms, 1),
