@@ -36,6 +36,33 @@
        box-shadow:0 6px 20px rgba(0,0,0,.4);cursor:pointer}
   .fab.on{border-color:#4d7fa8;color:#7fb6e6}
   .fab2{bottom:calc(70px + var(--sab));font-size:20px}
+  .fab3{bottom:calc(124px + var(--sab));font-size:20px}
+  .fab4{bottom:calc(178px + var(--sab));font-size:20px}
+  .navstart{width:100%;margin:9px 0 2px;padding:10px;border-radius:10px;border:1px solid #2e9e6b66;
+       background:#2e9e6b1a;color:#2e9e6b;font-size:13.5px;font-weight:600;cursor:pointer}
+  .navbar{position:absolute;z-index:1200;left:10px;right:10px;top:calc(8px + var(--sat));
+       max-width:460px;margin:0 auto;background:var(--panel);border:1px solid var(--line);
+       border-radius:14px;padding:11px 13px;box-shadow:0 10px 40px rgba(0,0,0,.5);display:none}
+  .navbar.on{display:block}
+  .navbar .ar{font-size:30px;line-height:1;float:left;margin-right:11px}
+  .navbar .t1{font-size:15px;font-weight:600}
+  .navbar .t2{font-size:12px;color:var(--muted);margin-top:2px}
+  .navbar .x{position:absolute;top:6px;right:9px;border:none;background:transparent;
+       color:var(--muted);font-size:16px;cursor:pointer}
+  /* 주변 장소 (2026-09-13). 관광객은 가려는 가게가 지도 어디인지 모른다 →
+     목적지를 고를 방법이 필요하다. 정렬은 거리순 — 쾌적함은 '그 길을 어떻게 갈지'의 문제다. */
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;-webkit-overflow-scrolling:touch}
+  .chips button{flex:0 0 auto;padding:5px 10px;border-radius:14px;border:1px solid var(--line);
+       background:transparent;color:var(--muted);font-size:12.5px;cursor:pointer}
+  .chips button.on{border-color:#4d7fa8;color:#7fb6e6}
+  .plist{max-height:44vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  .prow{display:flex;align-items:center;gap:9px;padding:9px 2px;border-top:1px solid var(--line);cursor:pointer}
+  .prow:first-child{border-top:none}
+  .prow .ic{width:22px;text-align:center;font-size:15px}
+  .prow .nm{flex:1;font-size:13.5px;line-height:1.35}
+  .prow .nm small{color:var(--muted);font-size:11.5px}
+  .prow .di{font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .poiPin{font-size:13px;line-height:18px;text-align:center;text-shadow:0 0 3px #000,0 0 6px #000;opacity:.92}
   .wb{display:flex;align-items:baseline;gap:6px;margin:-4px 0 8px;font-size:12.5px;color:var(--muted)}
   .wb b{font-size:16px;color:var(--txt)}
   .paw{border-radius:12px;padding:8px 11px;margin:0 0 10px;font-size:13px;font-weight:600;display:flex;gap:8px;align-items:center}
@@ -47,6 +74,23 @@
        background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:14px 16px 12px;box-shadow:0 10px 40px rgba(0,0,0,.5);
        transition:transform .25s ease}
   .sheet.hidden{transform:translateY(130%)}
+  /* 넓은 화면(데스크톱)에서는 가운데가 아니라 **왼쪽 아래**에 둔다 (2026-09-13).
+     가운데에 있으면 경로 한복판을 덮어 지도를 못 본다. 폰에서는 기존대로 하단 전체. */
+  @media (min-width: 700px){
+    .sheet{left:14px;right:auto;margin:0;width:380px;max-width:380px}
+  }
+  /* 시트를 접을 수 있게 (2026-09-12). 한 번 뜨면 지도를 덮어 경로가 안 보였다.
+     손잡이를 누르거나 아래로 쓸면 접히고, 다시 누르면 펴진다. */
+  .sheet .grip{position:absolute;top:6px;left:50%;transform:translateX(-50%);
+       width:44px;height:5px;border-radius:3px;background:#6b7a88;cursor:pointer}
+  .sheet .xbtn{position:absolute;top:4px;right:8px;width:26px;height:26px;border:none;
+       background:transparent;color:var(--muted);font-size:17px;line-height:26px;cursor:pointer}
+  .sheet{padding-top:18px}
+  .sheet .body{transition:opacity .18s ease}
+  .sheet.mini{padding-bottom:10px}
+  .sheet.mini .body{display:none}
+  .sheet.mini .peek{display:block}
+  .sheet .peek{display:none;font-size:13px;color:var(--muted);text-align:center;padding:2px 0 0}
   .feel{display:flex;align-items:baseline;gap:8px}
   .feel .n{font-size:46px;font-weight:700;line-height:1}
   .feel .u{font-size:14px;color:var(--muted)}
@@ -73,18 +117,21 @@
   <div class="lang"><button data-l="ja" class="on">日本語</button><button data-l="en">EN</button><button data-l="ko">한국어</button></div>
 </div>
 <div class="hint" id="hint">地図をタップ、または ◎ で現在地</div>
+<button class="fab fab4" id="dogBtn" title="犬の散歩">🐕</button>
+<button class="fab fab3" id="poiBtn" title="周辺">🍜</button>
 <button class="fab fab2" id="routeBtn" title="日陰ルート">🚶</button>
 <button class="fab" id="fab" title="現在地">◎</button>
+<div id="navbar" class="navbar"></div>
 <div id="sheet" class="sheet hidden"></div>
 
 <script>
 // ─── 다국어 ───────────────────────────────────────────
 const I18N = {
- ja:{sub:"いま、ここの体感（東京23区）",hint:"地図をタップ、または ◎ で現在地",feel:"°C 体感",calc:"計算中…",
+ ja:{sub:"いま、ここの体感（日本の主要都市）",hint:"地図をタップ、または ◎ で現在地",feel:"°C 体感",calc:"計算中…",
      risk:{safe:"安全",caution:"注意",warning:"警戒",danger:"危険",severe:"厳重警戒"},
-     wbgt:"暑さ指数",paw:"路面",pawT:"犬の散歩",routeOn:"目的地をタップ（日陰ルート）",routeOff:"日陰ルート",
+     wbgt:"暑さ指数",paw:"路面",pawT:"犬の散歩",routeOn:"出発地をタップ",rFrom:"出発地をタップ",rTo:"目的地をタップ",rRedo:"もう一度タップで引き直し",rSeg:"この区間",peek:"タップで開く",night:"夜間",poiLoad:"周辺を探しています…",poiPick:"タップで日陰ルート",poiNone:"この付近の登録が見つかりません。範囲を移動するか別の分類をお試しください。",poiAt:"約",poiOff:"経路から",poiOnRoute:"このルート沿い · タップで経路を引き直し",dogCalc:"散歩コースを探しています…",dogMin:"分",dogS:"小型犬",dogM:"中型犬",dogL:"大型犬",dogPick:"タップでコースを表示",dogKnown:"路面が確認できた割合",dogNone:"この付近で周回コースが見つかりません。時間を変えるか別の場所でお試しください。",viaStop:" に寄る",viaWas:"元のルート",viaLeg1:"① 出発 → お店",viaLeg2:"② お店 → 目的地",navStart:"このルートで案内",navL:"左折",navR:"右折",navU:"Uターン",navThen:"先を",navLeft:"残り",navOff:"ルートから外れています",navArriveIn:"まもなく到着",navArrived:"到着しました",navBegin:"案内を始めます",gpsTitle:"現在地を取得できません",gpsDenied:"ブラウザで位置情報が拒否されています。アドレスバー左のアイコン →「位置情報」を「許可」にしてページを再読み込みしてください。地図をタップすればその場所の体感は今すぐ見られます。",gpsUnavail:"この端末では位置情報を利用できません。地図をタップしてください。",gpsTimeout:"位置情報の取得に時間がかかっています。屋外でもう一度お試しください。",dogStart:"ここから",dogTap:"地図をタップすると、その場所から組み直します",why:{sun:"日なた",bldg:"建物の影",tree:"並木道",green:"公園・緑地",covered:"屋根・トンネル"},surf:{asphalt:"アスファルト",concrete:"コンクリート",paving_stones:"石畳",ground:"土",grass:"芝",wood:"木道",sand:"砂"},surfGuess:"・推定",feelS:"体感",approx:"概算",routeOff:"日陰ルート",
      rShade:"日陰ルート",rShort:"最短ルート",rGain:"多く歩くだけで日陰が",rCmpNote:"同じ道でした（迂回の利点なし）",rFail:"経路が見つかりません",rCalc:"ルート計算中…",shadeW:"日陰",sun:"日なた",shade:"日陰",svf:"空の開け",gvi:"緑",ta:"気温",mrt:"放射温度",rh:"湿度",wind:"風",
-     nocov:"このエリアはまだ未対応",nocov2:"東京23区内をタップしてください。",err:"接続できません。しばらくしてからもう一度。",
+     nocov:"このエリアはまだ未対応",nocov2:"東京・横浜・名古屋・京都・大阪・福岡・仙台・札幌に対応しています。市街地をタップしてください。",err:"接続できません。しばらくしてからもう一度。",
      foot:"ストリートビュー不要・衛星と建物地図と気象から算出",follow:"現在地を追跡中",
      act:{
       heat_safe:["このまま歩けます","水分はこまめに。"],
@@ -98,11 +145,11 @@ const I18N = {
       cold_severe:["今すぐ屋内へ","低体温に注意。"],
       shade_tip:"近くの日陰に移ると体感が下がります",
      }},
- en:{sub:"How it feels right here (Tokyo 23 wards)",hint:"Tap the map, or ◎ for your location",feel:"°C feels like",calc:"Computing…",
+ en:{sub:"How it feels right here (major cities in Japan)",hint:"Tap the map, or ◎ for your location",feel:"°C feels like",calc:"Computing…",
      risk:{safe:"Safe",caution:"Caution",warning:"Warning",danger:"Danger",severe:"Extreme"},
-     wbgt:"Heat index (WBGT)",paw:"Pavement",pawT:"Dog walk",routeOn:"Tap your destination (shade route)",routeOff:"Shade route",
+     wbgt:"Heat index (WBGT)",paw:"Pavement",pawT:"Dog walk",routeOn:"Tap your start point",rFrom:"Tap your start point",rTo:"Tap your destination",rRedo:"Tap again to start over",rSeg:"This stretch",peek:"Tap to expand",night:"Night",poiLoad:"Looking around…",poiPick:"Tap one for a shade route",poiNone:"Nothing mapped near here. Move the map or try another category.",poiAt:"at",poiOff:"off route",poiOnRoute:"Along this route · tap to reroute",dogCalc:"Finding walking loops…",dogMin:"min",dogS:"Small",dogM:"Medium",dogL:"Large",dogPick:"Tap a course to highlight",dogKnown:"surface confirmed",dogNone:"No loop found here. Try another duration or place.",viaStop:" — stop on the way",viaWas:"Direct route",viaLeg1:"1. Start → place",viaLeg2:"2. Place → destination",navStart:"Start guidance",navL:"turn left",navR:"turn right",navU:"make a U-turn",navThen:"then",navLeft:"left",navOff:"You are off route",navArriveIn:"Arriving soon",navArrived:"You have arrived",navBegin:"Starting guidance",gpsTitle:"Can\u2019t get your location",gpsDenied:"Location is blocked for this site. Open the icon at the left of the address bar → Location → Allow, then reload. You can still tap anywhere on the map.",gpsUnavail:"Location is unavailable on this device. Tap the map instead.",gpsTimeout:"Location is taking too long. Try again outdoors.",dogStart:"Start",dogTap:"Tap the map to start from there",why:{sun:"in the sun",bldg:"building shadow",tree:"tree-lined street",green:"park / green area",covered:"roofed or tunnel"},surf:{asphalt:"asphalt",concrete:"concrete",paving_stones:"paving stones",ground:"ground",grass:"grass",wood:"boardwalk",sand:"sand"},surfGuess:", est.",feelS:"Feels",approx:"approx.",routeOff:"Shade route",
      rShade:"Shade route",rShort:"Shortest",rGain:"more walking buys shade",rCmpNote:"Same street (no detour helps)",rFail:"No walking route found",rCalc:"Finding route…",shadeW:"shade",sun:"Sunlit",shade:"Shaded",svf:"Sky view",gvi:"Green",ta:"Air temp",mrt:"Radiant temp",rh:"Humidity",wind:"Wind",
-     nocov:"Not covered here yet",nocov2:"Tap inside Tokyo's 23 wards.",err:"Cannot connect. Try again shortly.",
+     nocov:"Not covered here yet",nocov2:"Covered: Tokyo, Yokohama, Nagoya, Kyoto, Osaka, Fukuoka, Sendai, Sapporo. Tap inside a built-up area.",err:"Cannot connect. Try again shortly.",
      foot:"No street view needed — satellite, building map and live weather",follow:"Following your location",
      act:{
       heat_safe:["Fine to keep walking","Sip water regularly."],
@@ -116,11 +163,11 @@ const I18N = {
       cold_severe:["Get indoors now","Hypothermia risk."],
       shade_tip:"Nearby shade will feel cooler",
      }},
- ko:{sub:"지금 여기 체감 (도쿄 23구)",hint:"지도를 누르거나 ◎ 로 현재 위치",feel:"°C 체감",calc:"계산 중…",
+ ko:{sub:"지금 여기 체감 (일본 주요 도시)",hint:"지도를 누르거나 ◎ 로 현재 위치",feel:"°C 체감",calc:"계산 중…",
      risk:{safe:"안전",caution:"주의",warning:"경고",danger:"위험",severe:"심각"},
-     wbgt:"더위지수",paw:"노면",pawT:"강아지 산책",routeOn:"목적지를 누르세요 (그늘 경로)",routeOff:"그늘 경로",
+     wbgt:"더위지수",paw:"노면",pawT:"강아지 산책",routeOn:"출발지를 누르세요",rFrom:"출발지를 누르세요",rTo:"도착지를 누르세요",rRedo:"한 번 더 누르면 새로 그립니다",rSeg:"이 구간",peek:"눌러서 펼치기",night:"야간",poiLoad:"주변을 찾는 중…",poiPick:"누르면 그늘 경로로 안내",poiNone:"이 근처에 등록된 곳이 없습니다. 지도를 옮기거나 다른 분류를 눌러보세요.",poiAt:"출발에서",poiOff:"경로에서",poiOnRoute:"이 경로 위 · 누르면 그 곳까지 다시 안내",dogCalc:"산책 코스를 찾는 중…",dogMin:"분",dogS:"소형견",dogM:"중형견",dogL:"대형견",dogPick:"누르면 그 코스를 강조",dogKnown:"노면 확인율",dogNone:"이 근처에서 순환 코스를 찾지 못했습니다. 시간을 바꾸거나 다른 곳에서 해보세요.",viaStop:" 들렀다 가기",viaWas:"원래 경로",viaLeg1:"① 출발 → 가게",viaLeg2:"② 가게 → 도착지",navStart:"이 경로로 안내 시작",navL:"좌회전",navR:"우회전",navU:"유턴",navThen:"앞에서",navLeft:"남은",navOff:"경로에서 벗어났습니다",navArriveIn:"곧 도착합니다",navArrived:"도착했습니다",navBegin:"안내를 시작합니다",gpsTitle:"현재 위치를 가져올 수 없습니다",gpsDenied:"브라우저에서 위치 권한이 거부돼 있습니다. 주소창 왼쪽 아이콘 → 위치 → 허용 으로 바꾸고 새로고침하세요. 지도를 눌러 그 자리 체감은 지금도 볼 수 있습니다.",gpsUnavail:"이 기기에서는 위치를 쓸 수 없습니다. 지도를 눌러주세요.",gpsTimeout:"위치 확인이 오래 걸립니다. 실외에서 다시 시도해보세요.",dogStart:"여기서 출발",dogTap:"지도를 누르면 그 자리에서 다시 짭니다",why:{sun:"볕",bldg:"건물 그늘",tree:"가로수길",green:"공원·녹지",covered:"지붕·터널"},surf:{asphalt:"아스팔트",concrete:"콘크리트",paving_stones:"보도블록",ground:"흙",grass:"잔디",wood:"목재데크",sand:"모래"},surfGuess:"·추정",feelS:"체감",approx:"개략",routeOff:"그늘 경로",
      rShade:"그늘 경로",rShort:"최단 경로",rGain:"더 걸으면 그늘이",rCmpNote:"같은 길이었어요 (돌아갈 이득 없음)",rFail:"보행 경로를 못 찾았어요",rCalc:"경로 계산 중…",shadeW:"그늘",sun:"볕",shade:"그늘",svf:"하늘열림",gvi:"녹지",ta:"기온",mrt:"복사온도",rh:"습도",wind:"바람",
-     nocov:"이 지역은 아직 준비 안 됨",nocov2:"도쿄 23구 안을 눌러보세요.",err:"연결 실패. 잠시 후 다시.",
+     nocov:"이 지역은 아직 준비 안 됨",nocov2:"도쿄·요코하마·나고야·교토·오사카·후쿠오카·센다이·삿포로를 지원합니다. 시가지를 눌러보세요.",err:"연결 실패. 잠시 후 다시.",
      foot:"스트리트뷰 없이 위성·건물지도·실시간 날씨로 산출",follow:"내 위치 따라가는 중",
      act:{
       heat_safe:["그대로 걸어도 됩니다","물은 조금씩 자주."],
@@ -181,15 +228,15 @@ function expLabel(d){ if(!d.exposure) return ""; return /그늘|shade/i.test(d.e
 
 function loading(la,lo){
   sheet.classList.remove('hidden');
-  sheet.innerHTML=`<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>${T().calc}<br>
-    <span style="font-size:11px">${la.toFixed(4)}, ${lo.toFixed(4)}</span></div>`;
+  setSheet(`<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>${T().calc}<br>
+    <span style="font-size:11px">${la.toFixed(4)}, ${lo.toFixed(4)}</span></div>`);
 }
 function show(d){
   lastData=d;
   const c=colorFor(d), a=actionFor(d), t=T();
   const feel = (d.pet_ai!=null && d.ai_applied) ? d.pet_ai : d.vpti;   // AI 보정이 켜졌으면 그 값(형태 기반), 아니면 물리
   sheet.classList.remove('hidden');
-  sheet.innerHTML=`
+  setSheet(`
     <div class="feel"><span class="n" style="color:${c}">${Math.round(feel)}</span><span class="u">${t.feel}</span>
       <span class="badge" style="margin-left:auto;background:${c}22;color:${c};border:1px solid ${c}55">${t.risk[d.risk]||d.risk}</span></div>
     <div class="sub">${expLabel(d)} · ${t.svf} ${Math.round(d.svf*100)}% · ${t.gvi} ${Math.round((d.gvi||0)*100)}%${d.street_width_m?` · ${d.street_width_m}m`:""}</div>
@@ -202,12 +249,47 @@ function show(d){
       <div class="row"><span class="k">${t.rh}</span><span class="v">${d.weather.rh}%</span></div>
       <div class="row"><span class="k">${t.wind}</span><span class="v">${d.weather.wind_ms} m/s</span></div>
     </div>
-    <div class="foot"><span>${t.foot}</span><span>${d.lat.toFixed(4)}, ${d.lon.toFixed(4)}</span></div>`;
+    <div class="foot"><span>${t.foot}</span><span>${d.lat.toFixed(4)}, ${d.lon.toFixed(4)}</span></div>`);
+}
+// 시트 내용을 갈아끼우면서 손잡이와 접힘 상태를 유지한다 (2026-09-12).
+let sheetMini=false;
+function setSheet(html){
+  sheet.innerHTML = '<div class="grip"></div><button class="xbtn" title="close">✕</button>'
+                  + '<div class="peek">' + T().peek + '</div>'
+                  + '<div class="body">' + html + '</div>';
+  sheet.classList.toggle('mini', sheetMini);
+  sheet.querySelector('.grip').onclick = (ev)=>{ ev.stopPropagation(); toggleMini(); };
+  sheet.querySelector('.xbtn').onclick = (ev)=>{ ev.stopPropagation(); sheet.classList.add('hidden'); };
+}
+function toggleMini(v){
+  sheetMini = (v===undefined) ? !sheetMini : !!v;
+  sheet.classList.toggle('mini', sheetMini);
+}
+// 아래로 쓸면 접히고 위로 쓸면 펴진다
+(function(){
+  let y0=null;
+  sheet.addEventListener('touchstart',e=>{ y0=e.touches[0].clientY; },{passive:true});
+  sheet.addEventListener('touchend',e=>{
+    if(y0===null) return;
+    const dy=e.changedTouches[0].clientY-y0; y0=null;
+    if(dy>28) toggleMini(true); else if(dy<-28) toggleMini(false);
+  },{passive:true});
+})();
+
+// 위치 권한/GPS 오류는 커버리지 문제가 아니다 (2026-09-13).
+// 예전엔 둘을 같은 창에 띄워 "이 지역은 아직 준비 안 됨 / User denied Geolocation" 이
+// 나왔다 — 사용자가 커버리지 밖이라고 오해한다.
+function geoerr(code){
+  const t=T();
+  const m = code===1 ? t.gpsDenied : code===2 ? t.gpsUnavail : code===3 ? t.gpsTimeout : t.gpsDenied;
+  sheet.classList.remove('hidden');
+  setSheet('<div style="font-size:14px;font-weight:600;margin-bottom:5px">'+t.gpsTitle+'</div>'
+    +'<div style="font-size:12.5px;color:var(--muted);line-height:1.55">'+m+'</div>');
 }
 function nocov(msg){
   sheet.classList.remove('hidden');
-  sheet.innerHTML=`<div style="font-size:14px;font-weight:600;margin-bottom:5px">${T().nocov}</div>
-    <div style="font-size:12.5px;color:var(--muted);line-height:1.5">${msg||T().nocov2}</div>`;
+  setSheet(`<div style="font-size:14px;font-weight:600;margin-bottom:5px">${T().nocov}</div>
+    <div style="font-size:12.5px;color:var(--muted);line-height:1.5">${msg||T().nocov2}</div>`);
 }
 
 async function query(la,lo){
@@ -227,7 +309,16 @@ async function query(la,lo){
   }catch(e){ if(e.name!=="AbortError") nocov(T().err); }
 }
 map.on('click',e=>{
-  if(routeMode){ routeTo(e.latlng.lat,e.latlng.lng); return; }
+  toggleMini(true);          // 지도를 보려는 동작이다 — 시트를 비켜준다
+  if(dogLayers.length){      // 강아지 코스가 떠 있으면 누른 자리에서 다시 짠다
+    dogOrigin={la:e.latlng.lat, lo:e.latlng.lng};
+    toggleMini(false); loadDog(); return;
+  }
+  if(routeMode){
+    if(!rFrom) setFrom(e.latlng.lat,e.latlng.lng);          // 1번째 탭 — 출발
+    else routeTo(e.latlng.lat,e.latlng.lng);                // 2번째 탭 — 도착
+    return;
+  }
   follow=false; fab.classList.remove('on'); hint.textContent=T().hint; query(e.latlng.lat,e.latlng.lng);
 });
 
@@ -235,7 +326,7 @@ map.on('click',e=>{
 function distM(a,b,c,d){const R=6371000,p=Math.PI/180;const x=(c-a)*p,y=(d-b)*p*Math.cos((a+c)/2*p);return Math.sqrt(x*x+y*y)*R;}
 let watchId=null;
 function startFollow(){
-  if(!navigator.geolocation){ nocov("GPS N/A"); return; }
+  if(!navigator.geolocation){ geoerr(2); return; }
   follow=true; fab.classList.add('on'); hint.textContent=T().follow;
   watchId=navigator.geolocation.watchPosition(p=>{
     const la=p.coords.latitude, lo=p.coords.longitude;
@@ -244,7 +335,7 @@ function startFollow(){
     if(follow) map.panTo([la,lo],{animate:true});
     const stale = !lastQ || distM(lastQ.la,lastQ.lo,la,lo)>30 || (Date.now()-lastQ.t)>600000;
     if(follow && stale && (p.coords.accuracy||99)<60) query(la,lo);
-  },err=>{ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; nocov(err.message); },
+  },err=>{ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; geoerr(err.code); },
   {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
 }
 fab.onclick=()=>{ if(follow){ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;} } else startFollow(); };
@@ -273,13 +364,33 @@ function pawCard(d){
 // 산책 코스와 **같은 비용 함수**를 쓰고 모양만 편도다. 최단 경로를 나란히 보여주는 이유:
 // "14초 더 걸으면 그늘 1.5배" 라는 비교가 있어야 사람이 실제로 길을 바꾼다.
 const ROUTE_API="/api/v1/route/shade";
-let routeMode=false, rLayers=[];
+// 출발지 지정 방식 변경 (2026-09-12): 예전에는 출발지가 "경로 모드 켜기 직전에 조회한 점"으로
+// 고정돼, 바꾸려면 모드를 껐다 → 새 점 탭(3초 대기) → 다시 켜야 했다. 네 단계였다.
+// 이제 경로 모드 안에서 첫 탭=출발, 둘째 탭=도착, 셋째 탭=처음부터. 출발 탭은 VPTI 조회를
+// 하지 않으므로 즉시 반응한다 — 출발지는 경로 계산에 좌표만 필요하다.
+let routeMode=false, rLayers=[], rFrom=null, rFromMarker=null, lastRoute=null;
+// 경유지 안내를 하려면 **원래 출발·도착**을 들고 있어야 한다 (2026-09-13).
+// 예전엔 가게를 누르면 그 가게가 새 목적지가 돼서 원래 가려던 곳이 사라졌다.
+let rOrigin=null, rDest=null, baseRoute=null;
 const routeBtn=document.getElementById('routeBtn');
-function clearRoutes(){ rLayers.forEach(l=>l.remove()); rLayers=[]; }
+function clearRoutes(){ rLayers.forEach(l=>l.remove()); rLayers=[]; lastRoute=null; }
+function clearFrom(){ if(rFromMarker){ rFromMarker.remove(); rFromMarker=null; } rFrom=null; }
+function routeHint(){
+  hint.textContent = !routeMode ? (follow?T().follow:T().hint)
+                   : (rFrom ? T().rTo : T().rFrom);
+}
 function setRouteMode(on){
   routeMode=on; routeBtn.classList.toggle('on',on);
-  hint.textContent = on ? T().routeOn : (follow?T().follow:T().hint);
-  if(!on) clearRoutes();
+  if(!on){ clearRoutes(); clearFrom(); }
+  routeHint();
+}
+function setFrom(la,lo){
+  clearRoutes(); clearFrom();
+  rFrom={la,lo};
+  rFromMarker=L.circleMarker([la,lo],{radius:7,color:"#fff",weight:2,
+    fillColor:"#4d7fa8",fillOpacity:.95}).addTo(map);
+  sheet.classList.add('hidden');
+  routeHint();
 }
 routeBtn.onclick=()=>setRouteMode(!routeMode);
 
@@ -289,16 +400,63 @@ function drawRoute(r,color,dash,w){
   const line=L.polyline(ll,{color,weight:w,opacity:.9,dashArray:dash}).addTo(map);
   rLayers.push(line); return line;
 }
+
+// 구간별 노면온도로 색을 매긴다 (2026-09-12).
+// 요약 한 줄("노면 30°C")은 최고값이라 어느 골목이 뜨거운지 알려주지 않는다.
+// 그늘 구간은 파랑, 뙤약볕은 주황~빨강. 경계는 강아지 발 화상 기준(50℃)에 맞춰 잡았다.
+// 색은 **체감기후(PET)** 기준. 노면온도가 아니다 — 사람이 느끼는 값으로 칠해야
+// "어느 길로 갈까"에 답이 된다. PET 가 없으면(야간 계산 실패 등) 노면온도로 물러난다.
+// 경계는 PET 열스트레스 등급(Matzarakis)에 맞췄다: 29 더움 / 35 매우더움 / 41 극심.
+function petColor(pet){
+  if(pet>=41) return "#c0392b";
+  if(pet>=35) return "#e8641c";
+  if(pet>=29) return "#eb9a1e";
+  if(pet>=23) return "#d9c024";
+  if(pet>=18) return "#2e9e6b";
+  if(pet>=9)  return "#2e7fb8";
+  return "#4a5db8";
+}
+function segColor(sg){
+  if(sg.pet!=null) return petColor(sg.pet);
+  if(sg.shaded) return "#2e7fb8";
+  if(sg.ts>=50) return "#e8641c";
+  if(sg.ts>=40) return "#d9c024";
+  return "#2e9e6b";
+}
+function drawSegments(r){
+  if(!r||!r.coords||!r.segments||!r.segments.length) return false;
+  const t=T();
+  r.segments.forEach(sg=>{
+    const a=r.coords[sg.i], b=r.coords[sg.i+1];
+    if(!a||!b) return;
+    const seg=L.polyline([[a.lat,a.lon],[b.lat,b.lon]],
+      {color:segColor(sg),weight:7,opacity:.95,lineCap:"butt"}).addTo(map);
+    const expo = sg.night ? t.night : (sg.shaded?t.shade:t.sun);
+    const feel = sg.pet!=null ? `${t.feelS} ${Math.round(sg.pet)}°C · ` : "";
+    // **왜** 그늘인지를 밝힌다. 색만 보여주면 "왜 여기가 초록이냐"에 답할 수 없다.
+    const why = sg.night ? "" : (t.why[sg.why] ? " — " + t.why[sg.why] : "");
+    const surf = sg.surface ? (t.surf[sg.surface] || sg.surface) : "";
+    seg.bindTooltip(
+      `${t.rSeg} · ${expo}${why}<br>${feel}${t.paw} ${Math.round(sg.ts)}°C`
+      + (surf ? ` (${surf}${sg.known===false?t.surfGuess:""})` : "")
+      + ` · ${Math.round(sg.m)}m`,
+      {sticky:true});
+    rLayers.push(seg);
+  });
+  return true;
+}
 function showRoute(d){
   const t=T(), c=d.comfort, sh=d.shortest, g=d.gain||{};
   const pct=v=>Math.round((v||0)*100), mn=v=>Math.max(1,Math.round((v||0)/60));
-  const same=g.same===true;
+  // 그늘 이득이 0 이하면 "더 걸으면 그늘"이라고 말하지 않는다 (2026-09-13).
+  // 예전에는 `+57s · 더 걸으면 그늘이 0% → 0%` 처럼, 이득이 없는데 돌아가라고 권했다.
+  const same = (g.same === true) || ((g.shade_ratio_gain || 0) <= 0);
   const head = same ? `<div class="act" style="background:#8899a61a;border:1px solid #8899a644">${t.rCmpNote}</div>`
     : `<div class="act" style="background:#2e9e6b1a;border:1px solid #2e9e6b44;color:#2e9e6b">
          +${Math.max(0,g.extra_seconds||0)}s · ${t.rGain} ${pct(sh.shade_ratio)}% → ${pct(c.shade_ratio)}%
          <small style="color:var(--txt)">${t.shadeW} ${pct(g.shade_ratio_gain)}%p ↑</small></div>`;
   sheet.classList.remove('hidden');
-  sheet.innerHTML = head + `
+  setSheet( head + `
     <div class="cmp">
       <div style="border-color:#2e9e6b66"><div class="t">${t.rShade}</div>
         <div class="m">${mn(c.seconds)}分 · ${c.meters}m</div>
@@ -307,27 +465,411 @@ function showRoute(d){
         <div class="m">${mn(sh.seconds)}分 · ${sh.meters}m</div>
         <div class="s">${t.shadeW} ${pct(sh.shade_ratio)}% · ${t.paw} ${Math.round(sh.max_surface_temp_c)}°C</div></div>
     </div>
-    <div class="foot"><span>${t.foot}</span><span>${d.weather?`${d.weather.ta}°C`:""}</span></div>`;
+    <button id="navBtn" class="navstart">🧭 ${t.navStart}</button>
+    <div class="foot"><span>${t.foot}</span><span>${d.weather?`${d.weather.ta}°C`:""}</span></div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:7px;font-size:11px;color:var(--muted)">
+      <span>${t.feelS}</span>
+      <span style="width:13px;height:4px;border-radius:2px;background:#2e7fb8"></span>~18
+      <span style="width:13px;height:4px;border-radius:2px;background:#2e9e6b"></span>23
+      <span style="width:13px;height:4px;border-radius:2px;background:#d9c024"></span>29
+      <span style="width:13px;height:4px;border-radius:2px;background:#eb9a1e"></span>35
+      <span style="width:13px;height:4px;border-radius:2px;background:#e8641c"></span>41°C+
+      <span style="width:13px;height:4px;border-radius:2px;background:#c0392b"></span>
+      <span style="opacity:.7">${t.approx}</span>
+    </div>`);
 }
 async function routeTo(la,lo){
-  const from = lastQ || (meMarker ? {la:meMarker.getLatLng().lat, lo:meMarker.getLatLng().lng} : null);
-  if(!from){ nocov(T().routeOn); return; }
+  const from = rFrom || lastQ
+            || (meMarker ? {la:meMarker.getLatLng().lat, lo:meMarker.getLatLng().lng} : null);
+  if(!from){ routeHint(); return; }
+  rOrigin={la:from.la, lo:from.lo}; rDest={la,lo};
   clearRoutes();
   sheet.classList.remove('hidden');
-  sheet.innerHTML=`<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>${T().rCalc}</div>`;
+  setSheet(`<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>${T().rCalc}</div>`);
   try{
     const q=`from_lat=${from.la.toFixed(5)}&from_lon=${from.lo.toFixed(5)}&to_lat=${la.toFixed(5)}&to_lon=${lo.toFixed(5)}`;
     const res=await fetch(`${ROUTE_API}?${q}`);
     const d=await res.json();
     if(!d.ok||!d.comfort){ nocov(d.reason||T().rFail); return; }
+    lastRoute = d.comfort; baseRoute = d.comfort;
     drawRoute(d.shortest,"#8899a6","6 6",4);
-    drawRoute(d.comfort,"#2e9e6b",null,6);
+    if(!drawSegments(d.comfort)) drawRoute(d.comfort,"#2e9e6b",null,6);
     const b=L.latLngBounds(d.comfort.coords.map(p=>[p.lat,p.lon]));
     rLayers.push(L.circleMarker([la,lo],{radius:7,color:"#fff",weight:2,fillColor:"#2e9e6b",fillOpacity:.95}).addTo(map));
     map.fitBounds(b,{padding:[40,120]});
     showRoute(d);
+    toggleMini(false);
+    clearFrom();                 // 다음 탭은 새 출발지 — 세 번째 탭이 곧 초기화다
+    hint.textContent=T().rRedo;
+  }catch(e){ nocov(T().rFail); clearFrom(); routeHint(); }
+}
+
+// ─── 주변 장소 → 목적지 고르기 (2026-09-13) ──────────────────
+// 그늘 경로는 A→B 로 이미 되지만, 관광객은 **가려는 가게가 지도 어디인지 모른다.**
+// 목적지를 찍을 방법이 없어 기능이 닿지 않았다. 주변에 뭐가 있는지 보여주고 하나 고르면
+// 그 지점을 목적지로 넘긴다. 정렬은 **거리순** — 사람은 갈 곳을 먼저 정하고,
+// 쾌적함은 그 길을 어떻게 갈지의 문제다. 출처: © OpenStreetMap contributors
+const POI_API="/api/v1/poi/near";
+const POI_ALONG="/api/v1/poi/along";
+const POI_ICON={food:"🍜",cafe:"☕",bar:"🍺",see:"⛩",shop:"🏪",util:"🚻"};
+const POI_TABS=[
+  {k:"restaurant,cafe", t:{ja:"食事",en:"Food",ko:"식사"}},
+  {k:"attraction,shrine,park", t:{ja:"観光",en:"See",ko:"관광"}},
+  {k:"convenience", t:{ja:"コンビニ",en:"Shop",ko:"편의점"}},
+  {k:"toilets,water", t:{ja:"トイレ・水",en:"Toilet·Water",ko:"화장실·물"}},
+];
+let poiLayers=[], poiTab=0, poiBusy=false;
+const poiBtn=document.getElementById('poiBtn');
+function clearPoi(){ poiLayers.forEach(l=>l.remove()); poiLayers=[]; }
+function poiOrigin(){
+  if(rFrom) return rFrom;
+  if(lastQ) return {la:lastQ.la, lo:lastQ.lo};
+  if(meMarker) return {la:meMarker.getLatLng().lat, lo:meMarker.getLatLng().lng};
+  const c=map.getCenter(); return {la:c.lat, lo:c.lng};
+}
+// 가게를 **경유지**로 끼워 넣는다: 출발 → 가게 → 원래 도착지.
+// 두 구간을 각각 그늘 경로로 받아 이어 붙인다 — 들르는 길도 쾌적해야 하기 때문이다.
+// 원래 경로가 없으면(경로를 아직 안 그렸으면) 그 가게를 목적지로 삼는다.
+async function poiVia(la,lo,name){
+  if(!(rOrigin && rDest)){
+    if(!routeMode) setRouteMode(true);
+    if(!rFrom){ const o=poiOrigin(); setFrom(o.la,o.lo); }
+    return routeTo(la,lo);
+  }
+  const t=T();
+  clearPoi(); clearRoutes();
+  sheet.classList.remove('hidden');
+  setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+t.rCalc+'</div>');
+  const q=(a,b)=>'from_lat='+a.la.toFixed(5)+'&from_lon='+a.lo.toFixed(5)
+                +'&to_lat='+b.la.toFixed(5)+'&to_lon='+b.lo.toFixed(5);
+  try{
+    const [r1,r2]=await Promise.all([
+      fetch(ROUTE_API+'?'+q(rOrigin,{la,lo})).then(r=>r.json()),
+      fetch(ROUTE_API+'?'+q({la,lo},rDest)).then(r=>r.json()),
+    ]);
+    const a=r1&&r1.comfort, b=r2&&r2.comfort;
+    if(!a||!b){ nocov(t.rFail); return; }
+    drawSegments(a); drawSegments(b);
+    const M=a.meters+b.meters, S=a.seconds+b.seconds;
+    const sh=(a.shade_ratio*a.meters + b.shade_ratio*b.meters)/Math.max(M,1);
+    const ts=Math.max(a.max_surface_temp_c, b.max_surface_temp_c);
+    // 표식: 출발 / 가게 / 도착
+    rLayers.push(L.circleMarker([rOrigin.la,rOrigin.lo],{radius:7,color:"#fff",weight:2,fillColor:"#4d7fa8",fillOpacity:.95}).addTo(map));
+    rLayers.push(L.marker([la,lo],{icon:L.divIcon({className:"",html:'<div class="poiPin">📍</div>',iconSize:[22,22],iconAnchor:[11,11]})}).addTo(map).bindTooltip(name,{direction:'top'}));
+    rLayers.push(L.circleMarker([rDest.la,rDest.lo],{radius:7,color:"#fff",weight:2,fillColor:"#2e9e6b",fillOpacity:.95}).addTo(map));
+    map.fitBounds(L.latLngBounds(a.coords.concat(b.coords).map(p=>[p.lat,p.lon])),{padding:[40,150]});
+    const mn=v=>Math.max(1,Math.round(v/60));
+    const base=baseRoute;
+    const extra = base ? (S-base.seconds) : null;
+    const head = base
+      ? '<div class="act" style="background:#4d7fa81a;border:1px solid #4d7fa844">'
+        +esc(name)+t.viaStop+'<br><small style="color:var(--txt)">'
+        +t.viaWas+' '+mn(base.seconds)+t.dogMin+' → '+mn(S)+t.dogMin
+        +' ('+(extra>=0?'+':'')+Math.round(extra/60)+t.dogMin+')</small></div>'
+      : '<div class="act">'+esc(name)+t.viaStop+'</div>';
+    setSheet(head+'<div class="cmp">'
+      +'<div style="border-color:#4d7fa866"><div class="t">'+t.viaLeg1+'</div>'
+      +'<div class="m">'+mn(a.seconds)+t.dogMin+' · '+a.meters+'m</div>'
+      +'<div class="s">'+t.shadeW+' '+Math.round(a.shade_ratio*100)+'%</div></div>'
+      +'<div style="border-color:#2e9e6b66"><div class="t">'+t.viaLeg2+'</div>'
+      +'<div class="m">'+mn(b.seconds)+t.dogMin+' · '+b.meters+'m</div>'
+      +'<div class="s">'+t.shadeW+' '+Math.round(b.shade_ratio*100)+'%</div></div></div>'
+      +'<div class="foot"><span>'+t.shadeW+' '+Math.round(sh*100)+'% · '+t.paw+' '+Math.round(ts)+'°C</span>'
+      +'<span>'+M+'m</span></div>');
+    lastRoute={coords:a.coords.concat(b.coords), segments:null};
   }catch(e){ nocov(T().rFail); }
 }
+async function loadPoi(){
+  if(poiBusy) return;
+  poiBusy=true;
+  const o=poiOrigin(), t=T();
+  clearPoi();
+  setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+t.poiLoad+'</div>');
+  sheet.classList.remove('hidden');
+  try{
+    const kinds=POI_TABS[poiTab].k;
+    const lang=(L_==='ko'?'ko':(L_==='en'?'en':'ja'));
+    // 경로가 그려져 있으면 **그 길 위**를 찾는다. 없으면 현재 지점 주변.
+    const onRoute = !!(lastRoute && lastRoute.coords && lastRoute.coords.length>1);
+    let url;
+    if(onRoute){
+      const pathq = lastRoute.coords.map(p=>p.lat.toFixed(5)+','+p.lon.toFixed(5)).join(';');
+      url = POI_ALONG+'?radius=150&lang='+lang+'&kinds='+encodeURIComponent(kinds)
+            +'&path='+encodeURIComponent(pathq);
+    } else {
+      url = POI_API+'?lat='+o.la.toFixed(5)+'&lon='+o.lo.toFixed(5)
+            +'&radius=800&lang='+lang+'&kinds='+encodeURIComponent(kinds);
+    }
+    const res=await fetch(url);
+    const d=await res.json();
+    const items=(d&&d.items)||[];
+    const tabs='<div class="chips">'+POI_TABS.map((x,i)=>
+      '<button data-i="'+i+'" class="'+(i===poiTab?'on':'')+'">'+x.t[L_]+'</button>').join('')+'</div>';
+    if(!items.length){
+      setSheet(tabs+'<div style="font-size:12.5px;color:var(--muted);padding:10px 2px;line-height:1.5">'
+        +t.poiNone+'</div><div class="foot"><span>© OpenStreetMap contributors</span></div>');
+    } else {
+      const rows=items.slice(0,40).map((x,i)=>
+        '<div class="prow" data-i="'+i+'"><div class="ic">'+(POI_ICON[x.kind]||'📍')+'</div>'
+        +'<div class="nm">'+esc(x.name)
+        +(x.name_en&&x.name_en!==x.name?' <small>'+esc(x.name_en)+'</small>':'')
+        +(x.cuisine?' <small>· '+esc(x.cuisine)+'</small>':'')+'</div>'
+        +'<div class="di">'+(x.at_m!=null
+              ? (t.poiAt+' '+x.at_m+'m<br><small style="opacity:.7">'+t.poiOff+' '+x.detour_m+'m</small>')
+              : x.meters+'m')+'</div></div>').join('');
+      setSheet(tabs+'<div class="plist">'+rows+'</div>'
+        +'<div class="foot"><span>'+(onRoute?t.poiOnRoute:t.poiPick)+'</span>'
+        +'<span>© OpenStreetMap</span></div>');
+      sheet.querySelectorAll('.prow').forEach(el=>{
+        el.onclick=()=>{ const x=items[+el.dataset.i]; poiVia(x.lat,x.lon,x.name); };
+      });
+      items.slice(0,14).forEach(x=>{
+        const m=L.marker([x.lat,x.lon],{icon:L.divIcon({className:"",
+          html:'<div class="poiPin">'+(POI_ICON[x.kind]||'📍')+'</div>',
+          iconSize:[18,18],iconAnchor:[9,9]})}).addTo(map);
+        m.bindTooltip(x.name+' · '+x.meters+'m',{direction:'top'});
+        m.on('click',()=>poiVia(x.lat,x.lon,x.name));
+        poiLayers.push(m);
+      });
+    }
+    sheet.querySelectorAll('.chips button').forEach(b=>{
+      b.onclick=(ev)=>{ ev.stopPropagation(); poiTab=+b.dataset.i; poiBusy=false; loadPoi(); };
+    });
+    poiBtn.classList.add('on');
+  }catch(e){ setSheet('<div style="font-size:13px;color:var(--muted)">'+T().err+'</div>'); }
+  poiBusy=false;
+}
+poiBtn.onclick=()=>{
+  if(poiLayers.length){ clearPoi(); poiBtn.classList.remove('on'); sheet.classList.add('hidden'); return; }
+  loadPoi();
+};
+function esc(x){ return String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ─── 강아지 산책 코스 (2026-09-13) ───────────────────────────
+// 서버에 이미 /dog/course 가 있었다 — 개 높이 WBGT·발 화상 임계(노면 44℃)로 비용을 매기고
+// **출발점으로 되돌아오는 순환 코스** 3개를 준다. 일본 앱에만 노출이 안 돼 있었다.
+// 사람 경로와 다른 점은 두 가지: 높이(개 체고에서 노면 복사를 더 받는다)와 발 화상이다.
+const DOG_API="/api/v1/dog/course";
+let dogLayers=[], dogMin=30, dogCm=45, dogOrigin=null;
+// 출발점은 **사용자가 찍은 자리**여야 한다 (2026-09-13). 예전엔 lastQ→현재위치→지도중심
+// 순으로 알아서 골랐는데, 그게 어디인지 화면에 안 보여 엉뚱한 데서 시작한 것처럼 보였다.
+const dogBtn=document.getElementById('dogBtn');
+function clearDog(){ dogLayers.forEach(l=>l.remove()); dogLayers=[]; }
+const DOG_COLORS=["#2e9e6b","#4d7fa8","#b4762e"];
+async function loadDog(){
+  const o=dogOrigin||poiOrigin(), t=T();
+  dogOrigin=o;
+  clearDog(); clearRoutes(); clearPoi();   // clearRoutes 가 lastRoute 를 비운다 → 아래에서 다시 채운다
+  setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+t.dogCalc+'</div>');
+  sheet.classList.remove('hidden');
+  try{
+    const res=await fetch(DOG_API+'?lat='+o.la.toFixed(5)+'&lon='+o.lo.toFixed(5)
+                          +'&minutes='+dogMin+'&withers_cm='+dogCm);
+    const d=await res.json();
+    const cs=(d&&d.courses)||[];
+    const opts='<div class="chips">'
+      +[15,30,45,60].map(m=>'<button data-m="'+m+'" class="'+(m===dogMin?'on':'')+'">'+m+t.dogMin+'</button>').join('')
+      +'<span style="width:8px"></span>'
+      +[[25,t.dogS],[45,t.dogM],[65,t.dogL]].map(x=>'<button data-cm="'+x[0]+'" class="'+(x[0]===dogCm?'on':'')+'">'+x[1]+'</button>').join('')
+      +'</div>';
+    if(!cs.length){
+      setSheet(opts+'<div style="font-size:12.5px;color:var(--muted);padding:10px 2px;line-height:1.5">'+t.dogNone+'</div>'
+        +'<div class="foot"><span>'+t.dogTap+'</span></div>');
+    } else {
+      const rows=cs.map((c,i)=>
+        '<div class="prow" data-i="'+i+'">'
+        +'<div class="ic" style="color:'+DOG_COLORS[i%3]+'">●</div>'
+        +'<div class="nm">'+esc(c.name||('코스 '+(i+1)))
+        +'<br><small>'+t.shadeW+' '+Math.round((c.shade_ratio||0)*100)+'% · '
+        +t.paw+' '+Math.round(c.max_surface_temp_c)+'°C</small></div>'
+        +'<div class="di">'+Math.max(1,Math.round((c.seconds||0)/60))+t.dogMin+'<br>'
+        +'<small style="opacity:.7">'+c.meters+'m</small></div></div>').join('');
+      const known = Math.round((cs[0].surface_known_ratio||0)*100);
+      setSheet(opts+'<div class="plist">'+rows+'</div>'
+        +'<button id="navBtn" class="navstart">🧭 '+t.navStart+'</button>'
+        +'<div class="foot"><span>'+t.dogTap+'</span><span>'+t.dogKnown+' '+known+'%</span></div>');
+      lastRoute = {coords: cs[0].coords};   // 기본은 첫 코스. 목록에서 고르면 바뀐다.
+      cs.forEach((c,i)=>{
+        if(!c.coords) return;
+        const line=L.polyline(c.coords.map(p=>[p.lat,p.lon]),
+          {color:DOG_COLORS[i%3],weight:i===0?6:4,opacity:i===0?.95:.55}).addTo(map);
+        dogLayers.push(line);
+      });
+      const b=L.latLngBounds(cs[0].coords.map(p=>[p.lat,p.lon]));
+      map.fitBounds(b,{padding:[40,140]});
+      dogLayers.push(L.circleMarker([o.la,o.lo],{radius:8,color:"#fff",weight:2,
+        fillColor:"#4d7fa8",fillOpacity:.95}).addTo(map)
+        .bindTooltip(t.dogStart,{permanent:true,direction:'top',offset:[0,-6]}));
+      sheet.querySelectorAll('.prow').forEach(el=>{
+        el.onclick=()=>{ const i=+el.dataset.i;
+          dogLayers.filter(l=>l.setStyle).forEach((l,j)=>{ if(l.setStyle&&j<cs.length)
+            l.setStyle({weight:j===i?6:4,opacity:j===i?.95:.35}); });
+          map.fitBounds(L.latLngBounds(cs[i].coords.map(p=>[p.lat,p.lon])),{padding:[40,140]});
+          lastRoute = {coords: cs[i].coords};          // 안내 대상 = 고른 코스
+          sheet.querySelectorAll('.prow').forEach(x=>x.style.background='');
+          el.style.background='#4d7fa81a';
+        };
+      });
+    }
+    sheet.querySelectorAll('.chips button').forEach(b2=>{
+      b2.onclick=(ev)=>{ ev.stopPropagation();
+        if(b2.dataset.m) dogMin=+b2.dataset.m; else dogCm=+b2.dataset.cm;
+        loadDog(); };
+    });
+    dogBtn.classList.add('on');
+  }catch(e){ setSheet('<div style="font-size:13px;color:var(--muted)">'+T().err+'</div>'); }
+}
+dogBtn.onclick=()=>{
+  if(dogLayers.length){ clearDog(); dogOrigin=null; dogBtn.classList.remove('on'); sheet.classList.add('hidden'); return; }
+  loadDog();
+};
+
+// ─── 턴바이턴 안내 (2026-09-13) ──────────────────────────────
+// 상수는 아이폰 DogNavEngine·안드로이드 TrailMap 과 **같은 값**이다 (2026-08-30 문서).
+// 웹만 다르게 굴면 같은 회사 앱이 서로 다른 말을 하게 된다.
+const NAV = {
+  OFF_M: 45,          // 이탈 판정 거리
+  OFF_HITS: 3,        // 연속 몇 번이면 이탈로 보나
+  BAD_ACC_M: 40,      // 수평정확도가 이보다 나쁘면 그 fix 는 무시
+  TURN_DEG: 35,       // 이 각도 이상이면 회전
+  UTURN_DEG: 135,     // 이 각도 초과면 유턴
+  PRE_M: 35,          // 회전 음성 예고 거리
+  ARRIVE_M: 20,       // 도착 판정
+  GRACE_MS: 45000,    // 출발 직후 이탈 유예(도로망 점과 실제 위치가 벌어져 있다)
+  GRACE_M: 30,
+};
+let navOn=false, navPts=[], navTurns=[], navWatch=null, navTrail=null, navMe=null,
+    navOff=0, navSpoken={}, navT0=0, navSnapped=false, navLoop=false, navS=0, navTotal=0;
+const navbar=document.getElementById('navbar');
+
+function _m(aLat,aLon,bLat,bLon){ const R=6371000,p=Math.PI/180;
+  const x=(bLon-aLon)*p*Math.cos((aLat+bLat)/2*p), y=(bLat-aLat)*p; return Math.hypot(x,y)*R; }
+function _bear(a,b){ const p=Math.PI/180;
+  const y=Math.sin((b.lon-a.lon)*p)*Math.cos(b.lat*p);
+  const x=Math.cos(a.lat*p)*Math.sin(b.lat*p)-Math.sin(a.lat*p)*Math.cos(b.lat*p)*Math.cos((b.lon-a.lon)*p);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360; }
+function _dAng(a,b){ return ((b-a+540)%360)-180; }
+
+// 경로 꼭짓점에서 회전 지점을 뽑는다. 짧은 변이 이어지면 각이 튀므로 20m 이상만 본다.
+function buildTurns(pts){
+  const out=[]; let acc=0;
+  const cum=[0]; for(let i=1;i<pts.length;i++) cum.push(cum[i-1]+_m(pts[i-1].lat,pts[i-1].lon,pts[i].lat,pts[i].lon));
+  for(let i=1;i<pts.length-1;i++){
+    let j=i-1; while(j>0 && _m(pts[j].lat,pts[j].lon,pts[i].lat,pts[i].lon)<20) j--;
+    let k=i+1; while(k<pts.length-1 && _m(pts[i].lat,pts[i].lon,pts[k].lat,pts[k].lon)<20) k++;
+    const d=_dAng(_bear(pts[j],pts[i]), _bear(pts[i],pts[k]));
+    if(Math.abs(d)>=NAV.TURN_DEG){
+      const kind = Math.abs(d)>NAV.UTURN_DEG ? 'u' : (d>0?'r':'l');
+      if(!out.length || cum[i]-out[out.length-1].at > 25) out.push({i, at:cum[i], kind});
+    }
+  }
+  out.push({i:pts.length-1, at:cum[cum.length-1], kind:'end'});
+  return out;
+}
+function speak(txt){
+  try{ if(!('speechSynthesis' in window)) return;
+    const u=new SpeechSynthesisUtterance(txt);
+    u.lang = L_==='ja'?'ja-JP':(L_==='en'?'en-US':'ko-KR'); u.rate=1.05;
+    window.speechSynthesis.speak(u);
+  }catch(e){}
+}
+// 현재 위치를 경로에 투영 — (경로상 진행거리, 벗어난 거리)
+// ⚠️ 순환 코스는 출발점과 도착점이 같은 자리다. 전체 경로에서 투영하면 현재 위치가
+//    **끝**에 붙어 시작하자마자 '도착' 이 된다 (2026-08-30 아이폰에서 겪은 함정).
+//    → 첫 투영은 앞쪽(코스 절반 또는 300m 중 짧은 쪽)에서만, 그 뒤엔 뒤 80m~앞 300m 창.
+function projectOn(pts, la, lo, lo_s, hi_s){
+  let best={d:1e9,s:0}; let cum=0;
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i], b=pts[i+1];
+    const L=_m(a.lat,a.lon,b.lat,b.lon);
+    const mlat=111320, mlon=111320*Math.cos(la*Math.PI/180);
+    const ax=0, ay=0, bx=(b.lon-a.lon)*mlon, by=(b.lat-a.lat)*mlat;
+    const px=(lo-a.lon)*mlon, py=(la-a.lat)*mlat;
+    const L2=bx*bx+by*by; const t=L2<=0?0:Math.max(0,Math.min(1,(px*bx+py*by)/L2));
+    const d=Math.hypot(px-bx*t, py-by*t);
+    const sHere=cum+L*t;
+    const inWin = (lo_s==null) || (sHere>=lo_s && sHere<=hi_s);
+    if(inWin && d<best.d) best={d, s:sHere};
+    cum+=L;
+  }
+  best.total=cum;
+  if(best.d>=1e9){ best.d=0; best.s=lo_s||0; }   // 창 안에 아무것도 없으면 제자리 유지
+  return best;
+}
+const ARROW={l:'↰', r:'↱', u:'⤺', end:'🏁'};
+function navRender(prj){
+  const t=T();
+  const nxt = navTurns.find(x=>x.at > prj.s - 5) || navTurns[navTurns.length-1];
+  const toTurn = Math.max(0, Math.round(nxt.at - prj.s));
+  const left = Math.max(0, Math.round(prj.total - prj.s));
+  const mins = Math.max(1, Math.round(left/70));   // 성인 분당 70m — 앱과 같은 값
+  const label = nxt.kind==='end' ? t.navArriveIn
+              : (toTurn+'m '+t.navThen+' '+(nxt.kind==='l'?t.navL:nxt.kind==='r'?t.navR:t.navU));
+  navbar.innerHTML='<button class="x">✕</button><div class="ar">'+(ARROW[nxt.kind]||'↑')+'</div>'
+    +'<div class="t1">'+label+'</div>'
+    +'<div class="t2">'+t.navLeft+' '+left+'m · '+mins+t.dogMin
+    +(prj.d>NAV.OFF_M?' · <span style="color:#e8641c">'+t.navOff+'</span>':'')+'</div>';
+  navbar.querySelector('.x').onclick=()=>navStop();
+  // 음성: 회전 35m 앞에서 한 번씩
+  if(nxt.kind!=='end' && toTurn<=NAV.PRE_M && !navSpoken[nxt.i]){
+    navSpoken[nxt.i]=1;
+    speak(nxt.kind==='l'?t.navL:nxt.kind==='r'?t.navR:t.navU);
+  }
+  if(left<=NAV.ARRIVE_M && !navSpoken.done){ navSpoken.done=1; speak(t.navArrived); }
+}
+function navStart(){
+  if(!(lastRoute&&lastRoute.coords&&lastRoute.coords.length>1)) return;
+  if(!navigator.geolocation){ geoerr(2); return; }
+  navPts=lastRoute.coords.slice(); navTurns=buildTurns(navPts);
+  navTotal=navTurns[navTurns.length-1].at;
+  const a0=navPts[0], z0=navPts[navPts.length-1];
+  navLoop = _m(a0.lat,a0.lon,z0.lat,z0.lon) < 40;   // 출발=도착이면 순환 코스
+  navOn=true; navOff=0; navSpoken={}; navT0=Date.now(); navSnapped=false; navS=0;
+  navbar.classList.add('on'); sheet.classList.add('hidden');
+  if(navTrail) navTrail.remove();
+  navTrail=L.polyline([],{color:'#e8901c',weight:5,opacity:.85}).addTo(map);
+  speak(T().navBegin);
+  navWatch=navigator.geolocation.watchPosition(p=>{
+    const acc=p.coords.accuracy;
+    if(acc==null || acc>NAV.BAD_ACC_M) return;      // 약신호 fix 는 버린다
+    const la=p.coords.latitude, lo=p.coords.longitude;
+    if(!navMe) navMe=L.circleMarker([la,lo],{radius:8,color:'#fff',weight:2,
+      fillColor:'#e8901c',fillOpacity:.95}).addTo(map);
+    else navMe.setLatLng([la,lo]);
+    navTrail.addLatLng([la,lo]);
+    map.setView([la,lo], Math.max(map.getZoom(),17), {animate:true});
+    // 순환 코스는 창을 제한한다. 편도는 제한 없이(null) 전체에서 찾는다.
+    let loS=null, hiS=null;
+    if(navLoop){
+      if(!navSnapped){ loS=0; hiS=Math.min(navTotal/2, 300); }
+      else { loS=Math.max(0,navS-80); hiS=Math.min(navTotal, navS+300); }
+    }
+    const prj=projectOn(navPts,la,lo,loS,hiS);
+    if(prj.d<=NAV.GRACE_M) navSnapped=true;
+    navS=prj.s;
+    const inGrace = !navSnapped && (Date.now()-navT0 < NAV.GRACE_MS);
+    if(prj.d>NAV.OFF_M && !inGrace){
+      navOff++;
+      if(navOff===NAV.OFF_HITS) speak(T().navOff);
+    } else navOff=0;
+    navRender(prj);
+  }, e=>{ if(e && e.code===1){ navStop(); geoerr(1); } },
+     {enableHighAccuracy:true, maximumAge:2000, timeout:15000});
+}
+function navStop(){
+  navOn=false; navbar.classList.remove('on');
+  if(navWatch!=null){ navigator.geolocation.clearWatch(navWatch); navWatch=null; }
+  if(navMe){ navMe.remove(); navMe=null; }
+  if(navTrail){ navTrail.remove(); navTrail=null; }
+  try{ window.speechSynthesis.cancel(); }catch(e){}
+}
+// 경로 시트가 다시 그려질 때마다 버튼을 다시 묶는다
+const _origSetSheet = setSheet;
+setSheet = function(html){
+  _origSetSheet(html);
+  const b=sheet.querySelector('#navBtn');
+  if(b) b.onclick=(ev)=>{ ev.stopPropagation(); navStart(); };
+};
 
 applyLang();
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('./sw.js').catch(()=>{}); }

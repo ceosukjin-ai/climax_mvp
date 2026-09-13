@@ -26,8 +26,25 @@ KST = timezone(timedelta(hours=9))
 ALBEDO, EPS_G, S0 = 0.20, 0.95, 200.0
 STEP_MIN, HOURS = 20, 8
 LAGS = np.arange(0, HOURS * 60 + 1, STEP_MIN) / 60.0          # h
-GRID = {"hc_a": [8, 12, 16, 20], "hc_b": [2, 4, 6], "f_stor": [0.2, 0.3, 0.4, 0.5],
-        "q_rel": [0, 20, 40, 60], "tau": [0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]}
+# 격자 확장 (2026-09-13). 9/13 탐색에서 hc_a·hc_b·q_rel 셋 다 **최댓값이 뽑혔다** —
+# 최적값이 격자 밖에 있다는 신호다. 경계에 붙은 해는 "최선"이 아니라 "볼 수 있었던 끝"이므로
+# 승격 근거가 못 된다. 세 축의 상한을 넉넉히 올리고 f_stor 하한도 낮춘다.
+# 조합 수 1,344 → 7,560 (약 5.6배). fit 소요 5분대 → 30분 내외, cron 상한 5,400초 안이다.
+GRID = {"hc_a": [8, 12, 16, 20, 24, 28], "hc_b": [2, 4, 6, 8, 10],
+        "f_stor": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+        "q_rel": [0, 20, 40, 60, 80, 100], "tau": [0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0]}
+# 최적해가 또 경계에 붙으면 리포트에서 눈에 띄게 알린다 (아래 _edge_warn).
+GRID_EDGE_KEYS = ("hc_a", "hc_b", "f_stor", "q_rel", "tau")
+
+
+def _edge_warn(best: dict) -> str:
+    """최적 파라미터가 격자 경계에 붙었는지 — 붙었으면 탐색범위가 모자란 것이다."""
+    hits = [k for k in GRID_EDGE_KEYS
+            if k in best and best[k] in (min(GRID[k]), max(GRID[k]))]
+    if not hits:
+        return ""
+    return ("  !! 격자 경계에 붙은 파라미터: " + ", ".join(hits)
+            + "  → 최적값이 탐색범위 밖일 수 있다. 범위를 넓혀 재실행할 것.")
 if "--fix-fstor" in sys.argv:
     # (a′) 아스팔트 80점이 저장비율 0.25 를 선호(0.5 는 Ts −8 악화) → hc 와 f_stor 둘 다 고정, q_rel·τ 만 학습.
     GRID = {"hc_a": [12], "hc_b": [4], "f_stor": [0.25],
@@ -173,11 +190,22 @@ async def main():
         l0 = l1 = float("nan")
     hold0, hold1 = h0r, h1r; e_te = None
     verdict = "통과(승격 후보)" if (h1r < h0r - 0.2 and abs(br_) < 1.0 and (not loso or l1 < l0)) else "탈락"
+    edge = _edge_warn(pR)
+    if edge:
+        verdict += " · 격자경계 주의"
     print(f"\n판정: {verdict}  (기준: 무작위날짜 검증 MAE 0.2↑ 개선 & |bias|<1 & LOSO 개선)")
+    if edge:
+        print(edge)
+    # 무작위 날짜 분할은 같은 날 인접 시각이 학습·검증에 함께 들어가 성적이 좋게 나온다.
+    # 시간분할(앞2/3→뒤1/3)이 더 정직한 지표이므로 둘이 엇갈리면 눈에 띄게 알린다 (2026-09-13).
+    if h1t - h1r > 0.5:
+        print(f"  !! 시간분할({h1t:.2f})이 무작위분할({h1r:.2f})보다 뚜렷이 나쁘다 "
+              f"— 무작위분할이 낙관적이다. 시간분할 기준으로 다시 볼 것.")
 
     metrics = {"n": n, "mae_current": round(mae0, 3), "mae_fit": round(maeA, 3),
                "time_split": [round(h0t, 3), round(h1t, 3)], "random_day": [round(h0r, 3), round(h1r, 3), round(br_, 3)],
-               "loso_station": [round(l0, 3), round(l1, 3)], "params_random": pR, "verdict": verdict}
+               "loso_station": [round(l0, 3), round(l1, 3)], "params_random": pR, "verdict": verdict,
+               "grid_edge": _edge_warn(pR)[:200] or None}
     await conn.execute("INSERT INTO brain_version (kind, params, metrics, n_train, promoted, reason) VALUES ($1,$2,$3,$4,FALSE,$5)",
                        ("ground_lag_fixfstor" if "--fix-fstor" in sys.argv else "ground_lag_fixhc" if "--fix-hc" in sys.argv else "ground_lag"), json.dumps(pA), json.dumps(metrics, ensure_ascii=False), n, f"day2-1b {verdict}, 승격은 사람 확인")
     await conn.close()

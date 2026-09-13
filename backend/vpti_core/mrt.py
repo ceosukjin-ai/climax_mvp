@@ -56,10 +56,12 @@ class MRTResult:
     sky_emissivity: float       # 천공 방사율 ε_sky
     ground_albedo: float        # 지면 알베도 (SMTI 도출)
     ground_emissivity: float    # 지면 방사율 (SMTI 도출)
+    tmrt_globe: float = 0.0     # **흑구가 읽었을** 평균복사온도 [°C] (2026-09-13)
 
     def as_dict(self) -> dict:
         return {
             "tmrt": round(self.tmrt, 2),
+            "tmrt_globe": round(self.tmrt_globe, 2),
             "sstr": round(self.sstr, 1),
             "shortwave": {
                 "direct": round(self.sw_direct, 1),
@@ -197,6 +199,7 @@ def estimate_wall_temp(
     air_temp_c: float, solar: "SolarResult", wall_albedo: float,
     wall_emissivity: float, sunlit_frac: float, wind_ms: float,
     eps_sky: float, config: MRTConfig = DEFAULT_CONFIG.mrt,
+    ground_temp_c: float | None = None, ground_albedo: float | None = None,
 ) -> float:
     """수직 벽면 온도 [°C] — 표면 에너지수지(지면과 동일 원리, 수직면 버전, 2026-09-09).
 
@@ -207,9 +210,20 @@ def estimate_wall_temp(
     beta = math.radians(max(solar.solar_elevation_deg, 0.0))
     s_direct = solar.dni * math.cos(beta) * max(0.0, min(1.0, sunlit_frac))
     s_diffuse = solar.dhi * 0.5
-    sw_abs = (1.0 - min(max(wall_albedo, 0.0), 1.0)) * max(0.0, s_direct + s_diffuse)
-    l_down = STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4 * (
-        0.5 * eps_sky + 0.5 * config.env_emissivity)
+    # 벽은 아래 절반으로 **노면**을 본다 (2026-09-13).
+    #   · 단파: 노면이 되쏜 빛 0.5·α_g·GHI 가 벽에 들어온다.
+    #   · 장파: 그 절반은 '기온짜리 주변'이 아니라 실제 노면온도다. 한여름 노면 55℃ vs 기온 33℃ 는
+    #           장파로만 약 150 W/m² 차이 — h_c 16 기준 벽온도 약 9℃ 차이다.
+    # 둘 다 빠져 있어서 계산 벽온도가 39℃(실제 45~55℃)에 머물렀고, 그 때문에 벽 스테이지를 켜면
+    # Tmrt 가 −6℃ 저평가되어 폭염 적중이 59/63 → 41/63 으로 무너졌다.
+    # ground_temp_c=None 이면 예전 계산 그대로 — 기본 동작은 안 바뀐다.
+    s_grd = 0.0 if ground_albedo is None else 0.5 * max(0.0, min(1.0, ground_albedo)) * max(0.0, solar.ghi)
+    sw_abs = (1.0 - min(max(wall_albedo, 0.0), 1.0)) * max(0.0, s_direct + s_diffuse + s_grd)
+    if ground_temp_c is None:
+        l_env = config.env_emissivity * STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4
+    else:
+        l_env = config.env_emissivity * STEFAN_BOLTZMANN * (ground_temp_c + KELVIN) ** 4
+    l_down = 0.5 * eps_sky * STEFAN_BOLTZMANN * (air_temp_c + KELVIN) ** 4 + 0.5 * l_env
     h_c = convective_coefficient(wind_ms, config)
     eps_w = min(max(wall_emissivity, 0.0), 1.0)
     ts = air_temp_c
@@ -237,6 +251,8 @@ def estimate_wall_temp_transient(
     빨리 식는다 → 같은 순간에도 재질별 벽온도가 갈린다. samples 없으면 정상상태로 폴백.
 
     samples: (age_s, air_temp_c, dni, dhi, solar_elev_deg, solar_az_deg) 과거→현재.
+      8-튜플로 주면 뒤 두 개를 (노면온도℃, 노면알베도) 로 읽는다 — 벽이 아래 절반으로 보는 면
+      (2026-09-13). 6-튜플이면 예전대로 '기온짜리 주변'. 정상상태 식과 같은 보정이다.
     facade_normal_deg 주면 그 벽 파사드 법선방위로 직달 입사(방위별 비대칭); None이면
     sunlit_frac 근사(등방).
     """
@@ -248,17 +264,29 @@ def estimate_wall_temp_transient(
     h_c = convective_coefficient(wind_ms, config)
     env = config.env_emissivity
 
-    def sw_abs(dni, dhi, el, az):
+    _n = len(samples[0])
+    _has_grd = _n >= 8
+
+    def sw_abs(dni, dhi, el, az, ghi_grd=0.0):
         if facade_normal_deg is None:            # 등방 근사(대표 sunlit_frac)
             direct = dni * math.cos(math.radians(max(el, 0.0))) * sf
         else:                                    # 방위별: 수직 벽면 직달 입사
             cos_inc = (math.cos(math.radians(max(el, 0.0)))
                        * math.cos(math.radians(az - facade_normal_deg)))
             direct = dni * max(0.0, cos_inc)
-        return (1.0 - alb) * max(0.0, direct + dhi * 0.5)
+        return (1.0 - alb) * max(0.0, direct + dhi * 0.5 + ghi_grd)
 
-    def l_down(ta):
-        return STEFAN_BOLTZMANN * (ta + KELVIN) ** 4 * (0.5 * eps_sky + 0.5 * env)
+    def l_down(ta, tg=None):
+        l_sky = 0.5 * eps_sky * STEFAN_BOLTZMANN * (ta + KELVIN) ** 4
+        t_env = ta if tg is None else tg
+        return l_sky + 0.5 * env * STEFAN_BOLTZMANN * (t_env + KELVIN) ** 4
+
+    def grd_sw(dni, dhi, el, ga):
+        """노면이 되쏜 빛 중 벽에 들어오는 몫 = 0.5 · α_g · GHI."""
+        if not ga:
+            return 0.0
+        ghi = dni * math.sin(math.radians(max(el, 0.0))) + dhi
+        return 0.5 * max(0.0, min(1.0, ga)) * max(0.0, ghi)
 
     def interp(age):
         for i in range(len(samples) - 1):
@@ -266,15 +294,17 @@ def estimate_wall_temp_transient(
             if a0 >= age >= a1:
                 f = 0.0 if a0 == a1 else (a0 - age) / (a0 - a1)
                 return tuple(samples[i][j] + (samples[i + 1][j] - samples[i][j]) * f
-                             for j in range(1, 6))
-        return samples[-1][1:6] if age <= samples[-1][0] else samples[0][1:6]
+                             for j in range(1, _n))
+        return samples[-1][1:_n] if age <= samples[-1][0] else samples[0][1:_n]
 
     # 초기: 가장 오래된 샘플의 정상상태
     ta, dni, dhi, el, az = samples[0][1:6]
+    tg0, ga0 = (samples[0][6], samples[0][7]) if _has_grd else (None, 0.0)
     ts = ta
     for _ in range(30):
         ts_k = ts + KELVIN
-        fv = sw_abs(dni, dhi, el, az) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
+        fv = (sw_abs(dni, dhi, el, az, grd_sw(dni, dhi, el, ga0))
+              + eps_w * (l_down(ta, tg0) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta))
         fp = -4.0 * eps_w * STEFAN_BOLTZMANN * ts_k ** 3 - h_c
         ts -= fv / fp
         if abs(fv / fp) < 1e-4:
@@ -282,9 +312,12 @@ def estimate_wall_temp_transient(
     # 과거→현재 적분(explicit Euler, dt)
     age = samples[0][0]
     while age > 0:
-        ta, dni, dhi, el, az = interp(age)
+        _v = interp(age)
+        ta, dni, dhi, el, az = _v[:5]
+        tg, ga = (_v[5], _v[6]) if _has_grd else (None, 0.0)
         ts_k = ts + KELVIN
-        flux = sw_abs(dni, dhi, el, az) + eps_w * (l_down(ta) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta)
+        flux = (sw_abs(dni, dhi, el, az, grd_sw(dni, dhi, el, ga))
+                + eps_w * (l_down(ta, tg) - STEFAN_BOLTZMANN * ts_k ** 4) - h_c * (ts - ta))
         ts += dt * flux / heat_capacity
         age -= dt
     return ts
@@ -303,6 +336,7 @@ def compute_mrt(
     direct_shade: float = 1.0,   # 태양방향 건물 차폐 (2026-08-16): 1.0=직사 노출, 0.0=그늘
     wall_temp_c: float | None = None,   # 측면 벽 온도 [°C] — None이면 벽=지면온도(기존)
     solar_lag: tuple[float, float] | None = None,   # 지면온도용 과거 일사 가중평균 (2026-09-10)
+    wall_albedo: float | None = None,   # 측면 벽 알베도 — None이면 벽 단파반사 없음(기존)
 ) -> MRTResult:
     """6방향 복사속 적분으로 평균복사온도 Tmrt 산출 (VDI 3787 Part 2).
 
@@ -357,10 +391,42 @@ def compute_mrt(
     sw_direct = a_k * fp * solar.dni * direct_shade
 
     sw_diffuse = 0.0   # 천공 산란 (DHI) — 천공시계 비례
-    sw_reflected = 0.0  # 지면 반사 (albedo·GHI) — 지면시계 비례
+    sw_reflected = 0.0  # 반사 단파 — 지면시계 비례
+    #
+    # 벽 단파 반사 (2026-09-13). 그 전에는 막힌 시계 전부를 `ground_albedo · GHI` 로 처리했다.
+    # 즉 옆에 선 **수직 벽**을 수평 지면인 양 다뤘다. 그래서 벽 재질이 Tmrt 에 영향을 주는
+    # 두 경로 중 장파(벽온도) 하나만 있었고, 밝은 벽이 보행자에게 햇빛을 더 되쏘는 성분이 빠져 있었다.
+    # 문헌(Taleghani, Erell 등)이 "고알베도 벽은 표면온도를 낮추지만 보행자 체감은 오히려 올린다"고
+    # 보고하는 게 이 성분이다. 한쪽만 있으면 알베도를 올릴수록 항상 시원해지는 편향이 생긴다.
+    #
+    # 수직면 입사는 지면과 다르다 — 직달이 cos(고도)로 들어오고(낮은 해가 더 때린다), 하늘은 절반만 본다.
+    # estimate_wall_temp 와 같은 식을 쓴다. 방위별 sunlit 은 보행자가 d 방향에서 보는 파사드의
+    # 법선(= d + 180°)과 태양 방위의 각도차로 정한다.
+    #
+    # direct_shade 는 곱하지 않는다. 그건 **보행자**가 그늘인가이고, 그늘에 선 사람에게
+    # 맞은편 볕 든 벽이 빛을 되쏘는 것은 실제로 일어나는 일이다.
+    #
+    # wall_albedo=None 이면 예전 계산 그대로 — 기본 동작은 바뀌지 않는다.
+    _fn = {"N": 180.0, "E": 270.0, "S": 0.0, "W": 90.0}
+    if wall_albedo is not None:
+        _aw = min(max(wall_albedo, 0.0), 1.0)
+        _bw = math.radians(max(solar.solar_elevation_deg, 0.0))
+        _cos = {d: max(0.0, math.cos(math.radians(solar.solar_azimuth_deg - n)))
+                for d, n in _fn.items()}
+        _cos["up"] = sum(_cos.values()) / len(_cos)   # 상향의 막힌 부분(협곡 상부 벽)은 방위 평균
+        _cos["down"] = 0.0                            # 하향은 지면 — 아래에서 지면 알베도로 처리
     for d in f:
         sw_diffuse += a_k * f[d] * (solar.dhi * psi_sky[d])
-        sw_reflected += a_k * f[d] * (ground_albedo * solar.ghi * psi_grd[d])
+        if wall_albedo is None or d == "down":
+            sw_reflected += a_k * f[d] * (ground_albedo * solar.ghi * psi_grd[d])
+        else:
+            # 벽에 들어오는 단파 = 직달(수직면 입사) + 천공산란(하늘 절반) + **지면반사(지면 절반)**.
+            # 세 번째 항을 빼면 벽 반사를 과소평가한다 — 벽도 지면을 절반 본다 (2026-09-13).
+            # 2차 반사(알베도²)라 크지는 않지만 노면이 밝을수록 무시할 수 없다.
+            _sw = (solar.dni * math.cos(_bw) * _cos[d]
+                   + 0.5 * solar.dhi
+                   + 0.5 * ground_albedo * solar.ghi)
+            sw_reflected += a_k * f[d] * (_aw * max(0.0, _sw) * psi_grd[d])
 
     # --- 장파 ---
     eps_sky = sky_emissivity(air_temp_c, humidity_pct, solar.cloud_fraction, config)
@@ -397,6 +463,31 @@ def compute_mrt(
     tmrt_k = (sstr / (eps_p * STEFAN_BOLTZMANN)) ** 0.25
     tmrt = tmrt_k - KELVIN
 
+    # --- 흑구가 읽었을 Tmrt (2026-09-13) ---
+    # 실측 Tmrt 는 흑구(Ø0.05m, ε0.95, ISO 7726)에서 온다. 흑구와 사람은 복사를 다르게 받는다:
+    #   · 기하 — 구는 어느 방향에서 보나 투영면적비가 0.25 로 같고 6방향 가중이 균등(1/6)하다.
+    #            서 있는 사람은 태양고도에 따라 fp 가 0.08~0.3 으로 변하고(Fanger) 방향가중도 다르다.
+    #            해가 높을수록 구는 빔을 그대로 받고 사람은 정수리로만 받는다 → 구가 더 뜨겁게 읽는다.
+    #   · 광학 — 무광 흑구는 단파를 0.95 흡수, 착의한 사람은 a_k(≈0.7).
+    # 그래서 엔진의 전신 Tmrt 를 흑구 실측과 직접 비교하면 계통적으로 낮게 나온다
+    # (2026-09-05 문서의 "MRT 잔여 +9.6°는 정의차"가 이것이다).
+    #
+    # 측정값을 변환하지 않는다 — **엔진이 흑구를 예측**한다. 변환식의 불확실성을 끌어들이지 않기 위해서다.
+    # 같은 복사환경(psi_sky/psi_grd/일사/지면·벽 온도)에 구의 기하·광학만 갈아끼운다.
+    a_g, eps_g, f_g, fp_g = 0.95, 0.95, 1.0 / 6.0, 0.25
+    _g = a_g * fp_g * solar.dni * direct_shade
+    for d in f:
+        _g += a_g * f_g * (solar.dhi * psi_sky[d])
+        if wall_albedo is None or d == "down":
+            _g += a_g * f_g * (ground_albedo * solar.ghi * psi_grd[d])
+        else:
+            _swg = (solar.dni * math.cos(_bw) * _cos[d]
+                    + 0.5 * solar.dhi + 0.5 * ground_albedo * solar.ghi)
+            _g += a_g * f_g * (_aw * max(0.0, _swg) * psi_grd[d])
+        _g += eps_g * f_g * (l_sky_flux * psi_sky[d])
+        _g += eps_g * f_g * ((l_surf_flux if d == "down" else wall_flux[d]) * psi_grd[d])
+    tmrt_globe = (_g / (eps_g * STEFAN_BOLTZMANN)) ** 0.25 - KELVIN
+
     return MRTResult(
         tmrt=tmrt,
         sstr=sstr,
@@ -410,6 +501,7 @@ def compute_mrt(
         sky_emissivity=eps_sky,
         ground_albedo=ground_albedo,
         ground_emissivity=ground_emissivity,
+        tmrt_globe=tmrt_globe,
     )
 
 

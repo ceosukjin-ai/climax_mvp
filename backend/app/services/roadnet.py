@@ -37,15 +37,31 @@ MAX_TILES = 120
 # Overpass 공개 서버는 IP 당 동시 슬롯이 2개다. 타일을 한꺼번에 쏘면 거절당한다.
 _SLOTS = asyncio.Semaphore(2)
 
-# 예의상 신원을 밝힌다 — 익명 대량요청은 차단 대상이 된다.
-_UA = {"User-Agent": "ClimaX/1.0 (+https://climaxapp.kr) route-tiles"}
+# 예의상 신원을 밝힌다 — 익명 대량요청은 차단 대상이 된다. 연락처를 넣어야 운영자가
+# 문제 시 차단 대신 연락한다 (2026-09-13).
+_UA = {"User-Agent": "ClimaX/1.0 (+https://climaxapp.kr; ceosukjin@gmail.com) route-tiles"}
 
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",          # 실서버에서 도달 확인 (200)
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.osm.ch/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
     # overpass.osm.jp 는 뺐다 — 2026-08-24 실서버 로그: SSL 인증서 도메인 불일치로 100% 실패.
 ]
+
+# ── 2026-09-13 장애 기록 ──────────────────────────────────────
+# overpass-api.de 가 DNS 로 두 IP 를 준다(65.109.112.52 / 162.55.144.139).
+# 그중 **한 대가 443 을 안 받는 상태**였는데, httpx 는 getaddrinfo 가 준 첫 IP 하나만
+# 시도하므로 그 IP 를 잡으면 connect 가 5초 타임아웃 → 그대로 실패했다.
+# 유럽망·DNS 는 멀쩡했고(osm.org 200, 80포트 200) 우리가 차단당한 것도 아니었다.
+#
+# → 대책 셋:
+#   (1) connect 타임아웃을 3초로 줄여 죽은 IP 를 빨리 포기한다
+#   (2) 같은 엔드포인트를 **두 번** 시도한다 — 재시도 때 DNS 라운드로빈이 다른 IP 를 준다
+#   (3) 엔드포인트를 늘린다(위)
+# 근본 해법은 도로망을 DB 에 두는 것이다(한국은 osm_way 188만 행으로 이미 그렇게 한다).
+# 무료 공개 서버 한 곳에 경로·산책·주변장소 세 기능이 통째로 매달린 구조는 출시 전에 정리할 것.
+_ATTEMPTS_PER_ENDPOINT = 2
 
 # 'lite' 는 service(단지 내 도로·주차장 진입로)와 track 을 뺀다 — 용량이 몇 배 줄어든다.
 HW_FULL = ("footway|path|pedestrian|steps|living_street|residential|service|"
@@ -104,9 +120,11 @@ async def _fetch_tile(ty: int, tx: int, detail: str) -> list[dict]:
     last: Exception | None = None
     # connect 는 5초 안에 안 붙으면 다음 서버로 — 죽은 서버에서 70초를 버리지 않는다.
     # read 는 넉넉히: 도로망 질의 자체가 수십 초 걸릴 수 있다.
-    timeout = httpx.Timeout(connect=5.0, read=70.0, write=20.0, pool=5.0)
+    # connect 3초 — 죽은 IP 를 오래 붙들지 않는다. read 는 넉넉히(질의 자체가 오래 걸린다).
+    timeout = httpx.Timeout(connect=3.0, read=70.0, write=20.0, pool=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for url in OVERPASS_ENDPOINTS:
+        urls = [u for u in OVERPASS_ENDPOINTS for _ in range(_ATTEMPTS_PER_ENDPOINT)]
+        for url in urls:
             try:
                 # ⚠️ 반드시 data= 로 넘겨 httpx 가 URL 인코딩하게 한다.
                 #    직접 f"data={query}" 로 만들면 질의 안의 공백("out geom qt;")에서

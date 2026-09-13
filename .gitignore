@@ -89,3 +89,15 @@ api.txt
 backend/aws_stations.json
 backend/.cache/
 *.ppk
+
+# 2026-09-14 — 실수로 대용량·백업 파일이 커밋되는 것을 막는다
+*.bak
+*.bak-*
+*.bak2-*
+*.bak3-*
+*.pbf
+*.zip
+data/plateau_*/
+data/osm_raw/
+_to_delete/
+Claude outputs/

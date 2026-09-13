@@ -581,6 +581,75 @@ async def roads(
 
 
 @router.get(
+    "/poi/near",
+    summary="내 주변 장소 — 목적지 고르기용 (식당·카페·관광지)",
+)
+async def poi_near(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    radius: int = Query(600, ge=100, le=1500, description="반경 m"),
+    kinds: str = Query("restaurant,cafe,attraction",
+                       description="restaurant,cafe,bar,attraction,shrine,park,convenience,toilets,water"),
+    lang: str = Query("ja", description="이름 우선 언어 (ja/en/ko)"),
+) -> JSONResponse:
+    """목적지를 고르기 위한 목록이다. **거리순**이며 쾌적도로 정렬하지 않는다 —
+    사람은 갈 곳을 먼저 정하고, 쾌적함은 그 길을 어떻게 갈지의 문제다.
+    고른 지점을 /route/shade 의 to_lat/to_lon 으로 넘기면 그늘 경로가 나온다.
+    출처: © OpenStreetMap contributors (ODbL).
+    """
+    from app.services import poi as _poi
+    ks = tuple(k.strip() for k in kinds.split(",") if k.strip() in _poi.KINDS)
+    if not ks:
+        ks = _poi.DEFAULT_KINDS
+    try:
+        items = await _poi.near(lat, lon, radius, ks, lang=lang)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("poi/near 실패: {}", e)
+        items = []
+    return JSONResponse({"ok": True, "count": len(items), "radius": radius,
+                         "items": items,
+                         "attribution": "© OpenStreetMap contributors"})
+
+
+@router.get(
+    "/poi/along",
+    summary="경로 위의 장소 — 가는 길에 뭐가 있나",
+)
+async def poi_along(
+    path: str = Query(..., description="경로 좌표 'lat,lon;lat,lon;…' (최대 300점)"),
+    radius: int = Query(150, ge=50, le=400, description="경로에서 벗어나는 허용 거리 m"),
+    kinds: str = Query("restaurant,cafe,attraction"),
+    lang: str = Query("ja"),
+) -> JSONResponse:
+    """/route/shade 로 받은 coords 를 그대로 넘기면 그 길 위의 장소를 돌려준다.
+    정렬은 **가는 순서**(출발지로부터 경로상 거리)이며, 각 항목에 경로에서 벗어나는
+    거리(detour_m)와 경로상 위치(at_m/at_pct)를 함께 준다.
+    출처: © OpenStreetMap contributors (ODbL).
+    """
+    from app.services import poi as _poi
+    pts: list[tuple[float, float]] = []
+    for part in path.split(";")[:300]:
+        try:
+            a, b = part.split(",")
+            la, lo = float(a), float(b)
+        except (ValueError, TypeError):
+            continue
+        if -90 <= la <= 90 and -180 <= lo <= 180:
+            pts.append((la, lo))
+    if len(pts) < 2:
+        return JSONResponse({"ok": False, "reason": "경로 좌표가 부족합니다.", "items": []})
+    ks = tuple(k.strip() for k in kinds.split(",") if k.strip() in _poi.KINDS) or _poi.DEFAULT_KINDS
+    try:
+        items = await _poi.along(pts, radius, ks, lang=lang)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("poi/along 실패: {}", e)
+        items = []
+    return JSONResponse({"ok": True, "count": len(items), "radius": radius,
+                         "items": items,
+                         "attribution": "© OpenStreetMap contributors"})
+
+
+@router.get(
     "/route/shade",
     summary="A→B 그늘 우선 경로(日陰ルート) — 최단 경로와 나란히",
 )
@@ -680,10 +749,10 @@ async def dog_course(
     lat: float = Query(..., ge=-90.0, le=90.0),
     lon: float = Query(..., ge=-180.0, le=180.0),
     minutes: int = Query(30, ge=10, le=120, description="목표 산책 시간(분)"),
-    air_c: float = Query(..., description="기온 °C"),
-    ghi: float = Query(0.0, ge=0.0, le=1400.0, description="유효 일사 W/m² (축열 반영값이면 더 좋음)"),
-    wind_ms: float = Query(1.0, ge=0.0, le=40.0),
-    rh: float = Query(60.0, ge=0.0, le=100.0),
+    air_c: float | None = Query(None, description="기온 °C. 생략하면 현재 날씨를 서버가 조회"),
+    ghi: float | None = Query(None, ge=0.0, le=1400.0, description="유효 일사 W/m²"),
+    wind_ms: float | None = Query(None, ge=0.0, le=40.0),
+    rh: float | None = Query(None, ge=0.0, le=100.0),
     rain: bool = Query(False),
     withers_cm: float = Query(45.0, ge=10.0, le=100.0, description="개 체고(cm)"),
     vuln_offset_c: float = Query(0.0, ge=-5.0, le=10.0, description="개체 취약도 오프셋 °C"),
@@ -721,7 +790,20 @@ async def dog_course(
     except RoadNetError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
-    cond = dc.Conditions(air_c=air_c, ghi=ghi, wind_ms=wind_ms, rh=rh,
+    # 날씨 미지정이면 서버가 조회한다 (2026-09-13) — 앱이 날씨를 따로 부르지 않게.
+    # route/shade 와 같은 규약이라 두 화면이 서로 다른 기상으로 답하지 않는다.
+    if air_c is None or rh is None or wind_ms is None or ghi is None:
+        from datetime import datetime as _dt3, timezone as _tz3
+        from app.services.open_meteo import get_current_observation
+        from vpti_core import estimate_solar as _es3, DEFAULT_CONFIG as _CFG3
+        obs = await get_current_observation(lat, lon)
+        sol3 = _es3(lat, lon, _dt3.now(_tz3.utc), config=_CFG3.solar)
+        air_c = obs.temperature_c if air_c is None else air_c
+        rh = obs.humidity_pct if rh is None else rh
+        wind_ms = obs.wind_speed_ms if wind_ms is None else wind_ms
+        ghi = float(getattr(sol3, "ghi", 0.0) or 0.0) if ghi is None else ghi
+
+    cond = dc.Conditions(air_c=air_c, ghi=ghi or 0.0, wind_ms=wind_ms, rh=rh,
                          rain=rain, withers_cm=withers_cm, vuln_offset_c=vuln_offset_c)
     # 스카이라인 격자 일괄 조회 → 건물 그늘 반영 (2026-09-11). 격자 없는 곳은 기존 OSM 태그 방식.
     _sky_cells, _sun = {}, None
@@ -1846,9 +1928,12 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         if wall_temp is None and sol.solar_elevation_deg > 0.0:   # 시리즈 없으면 정상상태
             wall_temp = estimate_wall_temp(obs.temperature_c, sol, _a, _e, 0.45,
                                            obs.wind_speed_ms, _epsk, DEFAULT_CONFIG.mrt)
+    # 벽 단파반사 — 벽온도 스테이지(OFF)와 무관하게 동작한다. wall_albedo=None 이면 예전 계산 그대로.
+    _wall_alb = wall_mat["albedo"] if get_settings().geo_wall_reflect else None
     r = compute_vpti_thermal(views_5=views, materials=mats, weather=wc,
                              road_axis_deg=0.0, lat=lat, lon=lon, when=now,
-                             direct_shade=direct_shade, wall_temp_c=wall_temp)
+                             direct_shade=direct_shade, wall_temp_c=wall_temp,
+                             wall_albedo=_wall_alb)
     # PET 잔차 AI — 물리 뼈대 위 학습 보정(부산 실측 80점, LOSO 2.66). 분포 밖이면 물리 폴백.
     from vpti_core.comfort import compute_pet
     from vpti_core.pet_residual import apply_pet_residual
@@ -1892,6 +1977,16 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
         "svf_source": svf_r.get("source"),
         "gvi": round(gvi, 3), "gvi_src": gvi_src,
+        # 위성 표면 지수 원값 — 논문·대시보드에서 '인공피복률' 로 바로 쓸 수 있게 노출 (2026-09-13).
+        # 계산은 전부터 하고 있었는데 재질 분율로만 쪼개져 밖으로 안 나갔다.
+        "surface": (None if surface is None else {
+            "ndvi": round(float(surface.get("ndvi") or 0.0), 3),
+            "ndwi": round(float(surface.get("ndwi") or 0.0), 3),
+            "albedo": round(float(surface.get("albedo") or 0.0), 3),
+            "veg_frac": surface.get("veg_frac"),      # 식생 분율
+            "imp_frac": surface.get("imp_frac"),      # 인공피복 비율
+            "water": surface.get("water"),
+        }),
         "material_src": mat_src,
         "materials": [{"m": m, "f": round(f, 2)} for m, f in
                       ((mm.material, mm.fraction) for mm in mats)],

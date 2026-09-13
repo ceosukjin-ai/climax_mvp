@@ -163,10 +163,18 @@ async def get_surface(lat: float, lon: float, half_deg: float = 0.0006) -> dict 
             ndvi = _m("ndvi")
             if ndvi is None:
                 continue
-            surface = {"ndvi": ndvi, "ndwi": _m("ndwi") or 0.0, "albedo": _m("albedo") or 0.15}
+            _ndwi = _m("ndwi") or 0.0
+            _alb = _m("albedo") or 0.15
+            # 식생분율·인공피복률 — surface_to_materials 와 **같은 식**을 쓴다(두 값이 어긋나면 안 된다).
+            _veg = 0.0 if _ndwi > 0.2 else max(0.0, min(0.95, (ndvi - 0.15) / 0.45))
+            surface = {"ndvi": ndvi, "ndwi": _ndwi, "albedo": _alb,
+                       "veg_frac": round(_veg, 3),
+                       "imp_frac": round(0.0 if _ndwi > 0.2 else 1.0 - _veg, 3),
+                       "water": bool(_ndwi > 0.2)}
             _surface_cache[key] = (time.time(), surface)
-            logger.info("[timing] 위성표면({:.4f},{:.4f}) NDVI{:.2f} NDWI{:.2f} alb{:.2f}",
-                        lat, lon, surface["ndvi"], surface["ndwi"], surface["albedo"])
+            logger.info("[timing] 위성표면({:.4f},{:.4f}) NDVI{:.2f} NDWI{:.2f} alb{:.2f} 인공피복{:.2f}",
+                        lat, lon, surface["ndvi"], surface["ndwi"], surface["albedo"],
+                        surface["imp_frac"])
             return surface
     except Exception as e:  # noqa: BLE001
         logger.warning("Sentinel Hub 표면조회 실패 ({},{}): {}", lat, lon, e)

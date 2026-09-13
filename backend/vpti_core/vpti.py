@@ -310,6 +310,7 @@ def compute_vpti_thermal(
     config: VPTICoreConfig = DEFAULT_CONFIG,
     direct_shade: float = 1.0,   # 태양방향 건물 차폐 (2026-08-16) — 그늘이면 0.0
     wall_temp_c: float | None = None,   # 측면 벽 온도 [°C] (2026-09-09) — None=벽=지면(기존)
+    wall_albedo: float | None = None,   # 측면 벽 알베도 (2026-09-13) — None=벽 단파반사 없음(기존)
     wind_is_pedestrian: bool = False,   # 입력 풍속이 이미 1.5m 현장 풍속이면 PWI 감쇠 생략 (2026-09-09)
 ) -> ThermalVPTIResult:
     """물리 기반 VPTI — 일사 → MRT → UTCI/PET.
@@ -397,6 +398,7 @@ def compute_vpti_thermal(
         config=config.mrt,
         direct_shade=direct_shade,              # 태양방향 건물 차폐 (2026-08-16)
         wall_temp_c=wall_temp_c,                # 측면 벽 온도 (2026-09-09)
+        wall_albedo=wall_albedo,                # 측면 벽 알베도 → 단파 반사 (2026-09-13)
         solar_lag=solar_lag,                    # 지면 열관성 시간지연 (2026-09-10)
     )
 

@@ -23,7 +23,55 @@ from __future__ import annotations
 import argparse, json, math, os, sys, time
 from collections import defaultdict
 
-COL = dict(sgg=8, bjd=9, gb=10, bun=11, ji=12, dong=22, main=23, height=42, floors=43, under=44)   # 건축HUB 2026-08 형식(서버 head 로 확인)
+COL = dict(sgg=8, bjd=9, gb=10, bun=11, ji=12, dong=22, main=23, height=42, floors=43, under=44,
+           strct=31, strct_nm=32, purps=34)   # 건축HUB 2026-08 형식(부산 실파일로 확인 2026-09-13)
+# 실파일 확인: [31]='51' [32]='일반목구조' [33]='목와'(지붕) [34]='03000' [35]='제1종근린생활시설'
+#   → 재질은 코드(31)가 아니라 **구조명(32)** 으로 판정한다. STRCT_NAME_RULES 참조.
+# ⚠️ 구조·주용도 열은 문서(31/34)와 기존 샘플출력(32/35)이 하나 어긋난다.
+#    실제 파일로 확인해야 하므로 --col-strct / --col-purps 로 바꿀 수 있게 두고,
+#    표제부 샘플에 31~35 를 모두 찍어 눈으로 고를 수 있게 한다 (2026-09-13).
+
+# 건축물대장 **구조명**(텍스트) → 외벽 재질 클래스.
+# wall_material.py 와 **같은 어휘**를 쓴다(glass/concrete/brick/wood/metal/stone).
+#
+# 왜 코드가 아니라 이름인가 (2026-09-13):
+#   처음엔 구조코드 앞자리로 매핑했는데 실제 부산 표제부는 `51 = 일반목구조` 였다.
+#   코드 체계를 잘못 짐작한 것이다. 코드값은 개정으로 바뀌지만 구조명은 사람이 읽는 문자열이라
+#   안정적이다. PLATEAU 構造種別도 wall_material.py 에서 같은 이유로 이름으로 다룬다.
+#
+# 순서가 규칙이다 — 위에서부터 먼저 걸리는 것을 쓴다.
+#   '철골철근콘크리트' 는 철골과 콘크리트를 모두 포함하지만 **외벽은 콘크리트**다 → 콘크리트를 먼저 본다.
+STRCT_NAME_RULES = [
+    ("concrete", ("콘크리트", "라멘", "프리캐스트", "피씨", "P.C", "PC조")),
+    ("metal",    ("철골", "철파이프", "강구조", "경량철", "철재", "샌드위치판넬", "판넬")),
+    ("wood",     ("목구조", "목조", "통나무", "목재")),
+    # brick 을 stone 보다 먼저 본다 — '벽돌' 안에 '돌' 이 들어 있다.
+    ("brick",    ("벽돌", "블록", "블럭", "조적", "흙", "토담", "황토")),
+    ("stone",    ("석조", "석구조", "자연석", "화강", "대리석")),
+    ("glass",    ("유리",)),
+]
+
+
+def strct_material(name: str) -> str | None:
+    """구조명 문자열 → 외벽 재질. 모르면 None (기본값으로 떨어뜨리지 않는다)."""
+    t = (name or "").replace(" ", "")
+    if not t:
+        return None
+    for mat, keys in STRCT_NAME_RULES:
+        if any(k in t for k in keys):
+            return mat
+    return None
+
+# 건축물대장 **주용도코드** → OSM building= 값. wall_material 의 1차 신호로 쓰인다.
+PURPS_BUILDING = {
+    "01": "house", "02": "apartments", "03": "retail", "04": "retail",
+    "05": "civic", "06": "church", "07": "retail", "08": "transportation",
+    "09": "hospital", "10": "school", "11": "civic", "12": "civic",
+    "13": "sports_hall", "14": "office", "15": "hotel", "16": "commercial",
+    "17": "industrial", "18": "warehouse", "19": "industrial", "20": "garage",
+    "21": "farm_auxiliary", "22": "industrial", "23": "civic", "24": "industrial",
+    "25": "industrial", "26": "civic", "27": "commercial", "28": "civic", "29": "hut",
+}
 SRC = "gis-bldg-2026-09"
 _GB_MAP = {"0": "1", "1": "2"}
 
@@ -75,10 +123,17 @@ def load_pyojebu(path: str, sido: str | None):
                 bad += 1
                 continue
             by_pnu[pnu].append((c[COL["dong"]].strip(), c[COL["main"]].strip() == "0",
-                                _i(c[COL["floors"]]), _f(c[COL["height"]])))
+                                _i(c[COL["floors"]]), _f(c[COL["height"]]),
+                                c[COL["strct"]].strip() if len(c) > COL["strct"] else "",
+                                c[COL["purps"]].strip() if len(c) > COL["purps"] else "",
+                                c[COL["strct_nm"]].strip() if len(c) > COL["strct_nm"] else ""))
             if n <= 3:
+                cand = " ".join(f"[{i}]={c[i].strip()!r}" for i in range(30, 36) if len(c) > i)
                 print(f"  표제부 샘플: pnu={pnu} 동={c[COL['dong']].strip()!r} 주부속={c[COL['main']].strip()} "
-                      f"층={c[COL['floors']].strip()} 높이={c[COL['height']].strip()} 구조={c[32].strip()!r} 용도={c[35].strip()!r}")
+                      f"층={c[COL['floors']].strip()} 높이={c[COL['height']].strip()}")
+                print(f"    구조·용도 후보 열: {cand}")
+                print(f"    → 현재 사용: 구조코드=col{COL['strct']} 구조명=col{COL['strct_nm']} 용도=col{COL['purps']} "
+                      f"(다르면 --col-strct / --col-purps 로 지정)")
     with_floor = sum(1 for L in by_pnu.values() for x in L if x[2] > 0)
     tot = sum(len(L) for L in by_pnu.values())
     print(f"표제부: {n:,}행 (건너뜀 {bad}) → 필지 {len(by_pnu):,}, 동 {tot:,}, 층수있음 {with_floor:,} "
@@ -89,7 +144,10 @@ def load_pyojebu(path: str, sido: str | None):
 
 
 def pick(rows: list, dong: str):
-    """조인 규칙: 동명 일치 > 주건축물 중 최대층 > 전체 최대층 (보수적: 그늘 과소 방지)."""
+    """조인 규칙: 동명 일치 > 주건축물 중 최대층 > 전체 최대층 (보수적: 그늘 과소 방지).
+
+    rows 원소 = (동명, 주건축물여부, 층수, 높이, 구조코드, 주용도코드, 구조명)
+    """
     if dong:
         m = [r for r in rows if r[0] and (r[0] == dong or dong in r[0] or r[0] in dong)]
         if m:
@@ -105,10 +163,19 @@ def main():
     ap.add_argument("--geojsonl", required=True); ap.add_argument("--pyojebu", required=True)
     ap.add_argument("--sido", default=None, help="시군구코드 앞 2자리(부산 26). 생략=전국")
     ap.add_argument("--out", required=True); ap.add_argument("--replace", action="store_true", help="같은 타일의 기존 kr: 건물을 교체")
+    ap.add_argument("--col-strct", type=int, default=None, help="표제부 구조코드 열(0-based). 기본 31")
+    ap.add_argument("--col-strct-nm", type=int, default=None, help="표제부 구조명 열(0-based). 기본 32")
+    ap.add_argument("--col-purps", type=int, default=None, help="표제부 주용도코드 열(0-based). 기본 34")
     a = ap.parse_args()
+    if a.col_strct is not None:
+        COL["strct"] = a.col_strct
+    if a.col_strct_nm is not None:
+        COL["strct_nm"] = a.col_strct_nm
+    if a.col_purps is not None:
+        COL["purps"] = a.col_purps
     by_pnu = load_pyojebu(a.pyojebu, a.sido)
     tiles: dict[str, dict] = defaultdict(dict)
-    st = dict(n=0, own=0, joined=0, joined_dong=0, still0=0, multi=0)
+    st = dict(n=0, own=0, joined=0, joined_dong=0, still0=0, multi=0, purps_ok=0, mat=0)
     t0 = time.time()
     with open(a.geojsonl, encoding="utf-8") as f:
         for line in f:
@@ -123,6 +190,15 @@ def main():
             floors, height = _i(p.get("A26")), _f(p.get("A16"))
             name, dong = (p.get("A24") or "").strip(), (p.get("A25") or "").strip()
             st["n"] += 1
+            strct = purps = strct_nm = ""
+            # 구조·용도는 층수 유무와 무관하게 표제부에서 가져온다 (2026-09-13).
+            # 층수는 GIS 건물(A26)에 있을 수 있지만 구조·용도는 표제부에만 있다.
+            if pnu in by_pnu:
+                _r = pick(by_pnu[pnu], dong)
+                if len(_r) > 5:
+                    strct, purps = _r[4], _r[5]
+                if len(_r) > 6:
+                    strct_nm = _r[6]
             if floors > 0:
                 st["own"] += 1
             elif pnu in by_pnu:
@@ -135,7 +211,24 @@ def main():
                         height = r[3]
                     if len(by_pnu[pnu]) > 1:
                         st["multi"] += 1
-            tags = {"building": "yes", "src": SRC, "pnu": pnu}
+            # 용도 → OSM building= 값. wall_material.py 의 1차 신호가 된다.
+            # 예전엔 전부 building=yes 라 한국 건물이 몽땅 '용도 불명 → 콘크리트 기본값' 이었다.
+            bval = PURPS_BUILDING.get(purps[:2], "yes") if purps else "yes"
+            tags = {"building": bval, "src": SRC, "pnu": pnu}
+            if purps:
+                tags["kr:purps"] = purps          # 원본 주용도코드 (근거 보존)
+            if strct:
+                tags["kr:strct"] = strct          # 원본 구조코드 (근거 보존)
+            if strct_nm:
+                tags["kr:strct_nm"] = strct_nm    # 원본 구조명 (재질 판정 근거)
+            if strct_nm:
+                mat = strct_material(strct_nm)
+                if mat:
+                    # 구조는 용도보다 강한 신호다 — wall_material 은 building:material 을 최우선으로 본다.
+                    tags["building:material"] = mat
+                    st["mat"] += 1
+            if bval != "yes":
+                st["purps_ok"] += 1
             if floors > 0:
                 tags["building:levels"] = str(floors)
             else:
@@ -153,6 +246,11 @@ def main():
                 tiles[tile_key(geom[0]["lat"], geom[0]["lon"])][eid] = {"id": eid, "geometry": geom, "tags": tags}
     print(f"폴리곤 {st['n']:,}: 자체층수 {st['own']:,}, 표제부조인 {st['joined']:,}(동명일치 {st['joined_dong']:,}, 다동필지 {st['multi']:,}), "
           f"여전히 결측 {st['still0']:,} ({100*st['still0']/max(st['n'],1):.1f}%)  {time.time()-t0:.0f}s")
+    print(f"용도 반영 {st['purps_ok']:,} ({100*st['purps_ok']/max(st['n'],1):.1f}%) · "
+          f"구조→외벽재질 {st['mat']:,} ({100*st['mat']/max(st['n'],1):.1f}%)")
+    if st["n"] and st["purps_ok"] / st["n"] < 0.3:
+        print("!! 용도 반영률이 30% 미만이다 — 구조·용도 열 번호가 틀렸을 수 있다.")
+        print("   표제부 샘플의 '구조·용도 후보 열' 출력을 보고 --col-strct / --col-purps 로 다시 지정할 것.")
     os.makedirs(a.out, exist_ok=True)
     written = 0
     for tkey, byid in tiles.items():

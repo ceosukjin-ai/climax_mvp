@@ -56,6 +56,13 @@ class Settings(BaseSettings):
     # 벽온도 스테이지(재질·열질량·방위) — 2026-09-10 기본 OFF. 부산 실측 80점에서 계산 벽온도(41°C)가
     # 폴백 '벽=지면온도'(55°C)보다 낮아 MAE 3.5→4.6 악화. 벽면센서 실측으로 교정 후 켤 것(GEO_WALL_STAGE=1).
     geo_wall_stage: bool = False
+    # 벽 단파반사 (2026-09-13) — 벽온도 스테이지와 **별개**다.
+    # 그 전에는 막힌 시계 전부를 `지면알베도 · GHI` 로 처리해 옆의 수직 벽을 수평 지면처럼 다뤘다.
+    # 즉 벽 재질이 Tmrt 에 작용하는 두 경로 중 장파만 있고, 밝은 벽이 보행자에게 햇빛을 되쏘는
+    # 성분이 통째로 빠져 있었다(문헌의 고알베도 벽 논쟁이 바로 이 항이다).
+    # 부산 80점: PET MAE 3.26 동일, 극심 적중 59/63 동일, **Tmrt bias +1.47 → +0.97**.
+    # 정확도 손실 없이 복사 물리가 맞아지므로 기본 ON. 문제 생기면 GEO_WALL_REFLECT=0 으로 되돌린다.
+    geo_wall_reflect: bool = True
     building_api_key: str = ""
     # Mapillary(Meta) 거리영상 액세스 토큰 — CC BY-SA, 저장·학습 합법(GSV와 달리).
     # 비어 있으면 Mapillary 미사용 → 기존처럼 GSV만(하위호환, opt-in).

@@ -178,14 +178,21 @@ class Conditions:
     vuln_offset_c: float = 0.0
 
 
-def edge_cost(surface: str, shaded: bool, c: Conditions) -> tuple[float, float]:
-    """한 구간의 비용. **WalkWindow 와 같은 식**이다."""
+def edge_cost(surface: str, shaded: bool, c: Conditions) -> tuple[float, float, float]:
+    """한 구간의 비용. **WalkWindow 와 같은 식**이다.
+
+    사람 기준 MRT(`mrt_h`)도 함께 돌려준다 (2026-09-12). 지금까지 여기서 계산해 놓고
+    강아지 높이로 변환한 뒤 버렸는데, 경로 위에 **구간별 체감기후**를 그리려면 이 값이 필요하다.
+    주의: 이 MRT 는 `기온 + 일사/900×12` 간이식이다. 점 조회에 쓰는 VPTI 정식 경로
+    (건물 레이캐스트·재질·열관성·가로수)와 다르므로 절대값은 ±2~3℃ 어긋날 수 있다.
+    구간 사이의 **상대 비교**가 목적이며, UI 에서도 개략치임을 밝힌다.
+    """
     ts = surface_temp_c(c.air_c, c.ghi, max(c.wind_ms, 0.3), surface, shaded, c.rain)
     ghi_mrt = c.ghi * 0.15 if shaded else c.ghi
     mrt_h = c.air_c + ghi_mrt / 900.0 * 12.0
     mrt_d = mrt_at_dog_height(mrt_h, ts, c.withers_cm)
     w = wbgt_outdoor(c.air_c, c.rh, max(c.wind_ms, 0.3), mrt_d)
-    return w + c.vuln_offset_c + max(0.0, ts - DAMAGE_THRESHOLD_C), ts
+    return w + c.vuln_offset_c + max(0.0, ts - DAMAGE_THRESHOLD_C), ts, mrt_h
 
 
 # ── 그래프 ───────────────────────────────────────────────────
@@ -201,8 +208,10 @@ def _haversine(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
 @dataclass
 class Graph:
     coords: list[tuple[float, float]] = field(default_factory=list)
-    adj: list[list[tuple[int, float, float, float, bool, bool]]] = field(default_factory=list)
-    # adj[i] = [(to, meters, cost, surface_temp, shaded, surface_known), ...]
+    adj: list[list[tuple[int, float, float, float, bool, bool, float, str, str]]] = field(default_factory=list)
+    # adj[i] = [(to, meters, cost, surface_temp, shaded, surface_known, mrt_human, why, surface), ...]
+    #   why = sun | bldg(건물그늘) | tree(가로수길) | green(공원·녹지) | covered(터널·지붕)
+    cond: Any = None          # 구간 PET 산출에 쓴다 (2026-09-12)
     edge_count: int = 0
     skyline_shaded_edges: int = 0   # 스카이라인 격자로 그늘 판정된 간선 수 (2026-09-11)
 
@@ -291,17 +300,28 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
             if d < 0.5:
                 continue
             mla, mlo = (p["lat"] + q["lat"]) / 2, (p["lon"] + q["lon"]) / 2
-            shaded = covered or tree_lined or in_green(mla, mlo)
+            # 왜 그늘인지를 함께 남긴다 (2026-09-13). 사용자가 "왜 여기가 초록이냐"고 물었을 때
+            # 답할 수 있어야 한다 — 판정하면서 이미 알고 있는 정보인데 버리고 있었다.
+            why = "sun"
+            if covered:
+                why = "covered"          # 터널·지붕·아케이드
+            elif tree_lined:
+                why = "tree"             # OSM tree_lined=yes (가로수길로 태그된 길)
+            elif in_green(mla, mlo):
+                why = "green"            # 공원·녹지 안
+            shaded = why != "sun"
             if not shaded and skyline and sun is not None:
                 cell = skyline.get(f"{round(mla, 4):.4f}:{round(mlo, 4):.4f}")
                 if cell is not None and cell.is_sun_blocked(sun[0], sun[1]):
                     shaded = True
+                    why = "bldg"         # 스카이라인 격자 — 건물이 태양을 막았다
                     g.skyline_shaded_edges += 1
-            cost, ts = edge_cost(surface, shaded, cond)
+            cost, ts, mrt_h = edge_cost(surface, shaded, cond)
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
-            g.adj[a].append((b, d, cost, ts, shaded, tagged is not None))
-            g.adj[b].append((a, d, cost, ts, shaded, tagged is not None))
+            g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
+            g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
             g.edge_count += 1
+    g.cond = cond
     return g
 
 
@@ -341,7 +361,7 @@ def _dijkstra(g: Graph, src: int, dst: int,
         seen[u] = True
         if u == dst:
             break
-        for (v, meters, cost, _ts, _sh, _kn) in g.adj[u]:
+        for (v, meters, cost, _ts, _sh, _kn, _mrt, _w, _sf) in g.adj[u]:
             if seen[v]:
                 continue
             w = (meters if weight == "distance" else meters * max(cost, 0.1)) \
@@ -383,18 +403,33 @@ def _turn_node(g: Graph, src: int, bearing_deg: float, meters: float) -> int | N
     return best if best >= 0 and best_d < meters * 0.6 else None
 
 
+# 구간 PET — 경로 전체 공통인 기온·습도·바람에 구간별 MRT 만 갈아끼운다.
+# 실패해도 경로는 그려져야 하므로 예외는 삼킨다.
+def _seg_pet(c: "Conditions", mrt_h: float) -> float | None:
+    try:
+        from vpti_core.comfort import compute_pet
+        r = compute_pet(tdb=c.air_c, tr=mrt_h, v=max(c.wind_ms, 0.3), rh=c.rh)
+        return float(r.value)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
     total_m = 0.0
     weighted_cost = 0.0
     max_ts = -999.0
     shaded_m = 0.0
     known_m = 0.0
+    # 구간별 값도 함께 내보낸다 (2026-09-12). 여기서 이미 전부 계산돼 있는데 평균만 내고
+    # 버리고 있었다 → 경로 위에서 "어느 골목이 더운지"를 보여주려면 이 값이 필요하다.
+    # 추가 계산도, 추가 API 호출도 없다. 기존 클라이언트는 이 필드를 안 읽으면 그만이다.
+    segments: list[dict[str, Any]] = []
     for i in range(1, len(nodes)):
         a, b = nodes[i - 1], nodes[i]
         e = next((x for x in g.adj[a] if x[0] == b), None)
         if e is None:
             continue
-        _v, meters, cost, ts, shaded, known = e
+        _v, meters, cost, ts, shaded, known, mrt_h, why, surf = e
         total_m += meters
         weighted_cost += cost * meters
         max_ts = max(max_ts, ts)
@@ -402,10 +437,26 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
             shaded_m += meters
         if known:
             known_m += meters
+        seg = {
+            "i": i - 1,                       # coords[i-1] → coords[i] 구간
+            "m": round(meters, 1),
+            "ts": round(ts, 1),               # 노면온도 ℃
+            "shaded": bool(shaded),
+            "known": bool(known),             # 노면 재질이 태그로 확인된 구간인가
+            "night": bool(g.cond is not None and g.cond.ghi <= 5.0),
+            "why": why,                   # 왜 그늘인가(또는 왜 양지인가)
+            "surface": surf,              # 노면 재질 (known=False 면 도로유형에서 추정)
+        }
+        if g.cond is not None:
+            pet = _seg_pet(g.cond, mrt_h)
+            if pet is not None:
+                seg["pet"] = round(pet, 1)    # 체감기후 ℃ — 간이 MRT 기반 개략치
+        segments.append(seg)
     if total_m <= 0:
         return {}
     return {
         "coords": [{"lat": g.coords[i][0], "lon": g.coords[i][1]} for i in nodes],
+        "segments": segments,
         "meters": round(total_m),
         "seconds": round(total_m / (WALK_SPEED_KMH * 1000 / 3600)),
         "mean_cost": round(weighted_cost / total_m, 2),
