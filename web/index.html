@@ -299,15 +299,58 @@
     el.classList.toggle("neg", v < 0);
   }
 
-  function getPosition() {
+  // ── 위치 정확도 등급 (2026-09-14) ────────────────────────────────
+  // 그늘 판정이 여기에 달려 있다. 태양고도 64°에서 3층 건물 그늘은 반경 3.7 m 라서,
+  // 위치 오차가 그보다 크면 볕/그늘은 사실상 추첨이다. 등급을 매겨 화면에 드러낸다.
+  const GPS = {
+    GOOD_M: 15,      // 이 이하면 즉시 채택 — 그늘 판정도 의미가 있다
+    WARN_M: 60,      // 이 위로는 공간 항(볕·그늘·하늘열림)을 믿을 수 없다
+    SETTLE_MS: 8000, // 목표에 못 미쳐도 여기까지는 기다렸다가 최선값을 쓴다
+    GIVEUP_MS: 20000,
+  };
+  function gpsGrade(acc) {
+    if (acc == null) return { code: "unknown", label: "정확도 불명", ok: false };
+    if (acc <= GPS.GOOD_M) return { code: "good", label: `±${Math.round(acc)}m 양호`, ok: true };
+    if (acc <= GPS.WARN_M) return { code: "fair", label: `±${Math.round(acc)}m 보통`, ok: true };
+    return { code: "poor", label: `±${Math.round(acc)}m 불량`, ok: false };
+  }
+
+  function getPosition(onProgress) {
+    // getCurrentPosition 은 **가장 먼저 도착한** fix 를 그대로 돌려준다. 브라우저는 거의 항상
+    // 와이파이·기지국 위치를 수십 ms 만에 먼저 내놓고, GPS 는 그 뒤 5~30초에 걸쳐 수렴한다.
+    // enableHighAccuracy 는 "GPS 를 켜라"이지 "GPS 를 기다려라"가 아니다. 그래서 같은 자리에서
+    // 동시에 눌러도 7 m / 17 m / 2000 m 가 나온다 — 기기 설정 문제가 아니라 이 호출의 문제다.
+    // watchPosition 으로 구독해 수렴을 기다리고, 목표에 닿거나 SETTLE_MS 가 지나면 최선값을 쓴다.
     return new Promise((resolve, reject) => {
       if (!navigator.geolocation) {
         reject(new Error("이 브라우저는 위치 정보를 지원하지 않아요."));
         return;
       }
-      navigator.geolocation.getCurrentPosition(
-        (pos) => resolve(pos.coords),
+      let best = null, watchId = null, settleT = null, giveupT = null, done = false;
+      const finish = (ok, payload) => {
+        if (done) return;
+        done = true;
+        if (watchId != null) navigator.geolocation.clearWatch(watchId);
+        clearTimeout(settleT); clearTimeout(giveupT);
+        ok ? resolve(payload) : reject(payload);
+      };
+      settleT = setTimeout(() => {
+        if (best) finish(true, best);
+      }, GPS.SETTLE_MS);
+      giveupT = setTimeout(() => {
+        if (best) finish(true, best);
+        else finish(false, new Error("위치 조회 시간 초과. 다시 시도해주세요."));
+      }, GPS.GIVEUP_MS);
+
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          const c = pos.coords;
+          if (!best || (c.accuracy != null && c.accuracy < best.accuracy)) best = c;
+          if (onProgress) onProgress(best);
+          if (best.accuracy != null && best.accuracy <= GPS.GOOD_M) finish(true, best);
+        },
         (err) => {
+          if (best) { finish(true, best); return; }   // 한 번이라도 받았으면 그걸 쓴다
           let msg;
           switch (err.code) {
             case 1: msg = "위치 권한이 거부됐어요. 브라우저 설정에서 허용해주세요. (HTTPS 또는 localhost 필요)"; break;
@@ -315,9 +358,9 @@
             case 3: msg = "위치 조회 시간 초과. 다시 시도해주세요."; break;
             default: msg = "위치 조회 실패: " + err.message;
           }
-          reject(new Error(msg));
+          finish(false, new Error(msg));
         },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: GPS.GIVEUP_MS, maximumAge: 0 }
       );
     });
   }
@@ -335,8 +378,17 @@
     return body;
   }
 
-  function renderResult(lat, lon, data) {
-    els.rCoord.textContent = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+  function renderResult(lat, lon, data, accM) {
+    const g = gpsGrade(accM);
+    const gc = { good: "#2e9e6b", fair: "#e0a13a", poor: "#d9483b", unknown: "#8899a6" }[g.code];
+    els.rCoord.innerHTML = `${lat.toFixed(6)}, ${lon.toFixed(6)}`
+      + ` <span style="color:${gc};font-weight:600;">${g.label}</span>`
+      + (g.ok ? "" : `<div style="color:${gc};font-size:.85em;margin-top:4px;line-height:1.45;">`
+          + `위성 신호를 못 받아 기지국·와이파이로 추정한 위치입니다. 볕·그늘과 하늘열림(공간 항)은 `
+          + `믿을 수 없습니다 — 그늘 경계가 수 m 단위라 이 오차 안에서 뒤집힙니다.<br>`
+          + `카톡·인스타 안에서 여셨다면 Safari나 Chrome으로 열어보세요. 아이폰은 설정 → 개인정보 보호 `
+          + `→ 위치 서비스 → Safari 웹사이트에서 '정확한 위치'를 켜야 합니다. PC는 GPS가 없어 항상 이 값입니다.`
+          + `</div>`);
     els.rTs.textContent = formatTs(data.timestamp);
     els.rSeason.textContent = SEASON_KO[data.season] || data.season || "—";
 
@@ -383,10 +435,13 @@
     els.btnMeasure.disabled = true;
     setStatus("GPS 위치 받는 중…");
     try {
-      const coords = await getPosition();
+      const coords = await getPosition((b) => {
+        setStatus(`GPS 수렴 중… 현재 ±${Math.round(b.accuracy)}m`);
+      });
       const lat = coords.latitude;
       const lon = coords.longitude;
-      setStatus(`좌표 OK (정확도 ±${Math.round(coords.accuracy)}m). VPTI 계산 중… (콜드 3~7초)`);
+      const g = gpsGrade(coords.accuracy);
+      setStatus(`좌표 OK (${g.label}). VPTI 계산 중… (콜드 3~7초)`);
 
       const t0 = performance.now();
       const data = await fetchVpti(lat, lon);
@@ -400,7 +455,7 @@
         raw: data,
         ts: data.timestamp || new Date().toISOString(),
       };
-      renderResult(lat, lon, data);
+      renderResult(lat, lon, data, coords.accuracy);
       setStatus(`완료 (${elapsed}ms)`);
 
       els.mTemp.value = "";

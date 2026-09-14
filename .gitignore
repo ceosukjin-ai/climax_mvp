@@ -110,4 +110,4 @@ data/momssi_measurements_export_*.csv
 data/momssi_measurements_export_*.csv.gz
 
 # 커밋 메시지 임시파일
-.commitmsg
+.commitmsg*
