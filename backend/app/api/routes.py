@@ -1847,8 +1847,14 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
     # 가로수 그늘 (2026-09-12): 건물이 안 막아도 태양 방향에 나무가 있으면 직사광이 줄어든다.
     # NDVI 로 뭉개지 않고 OSM 개별 나무 좌표로만 판정한다 — 공원 안 뙤약볕 길을 그늘이라 하지 않기 위해.
+    # 한국은 OFF (2026-09-14 실측 근거는 config.geo_tree_shade 주석 참조), 일본은 ON.
+    # 지역 판정은 거친 경위도 상자다 — 대마도·규슈 이남과 동경 130.9도 이동을 일본으로 본다.
+    # 부산(129.1E, 35.1N)·제주(126.5E)는 제외된다.
+    _jp = (lon >= 130.9) or (lon >= 129.2 and lat <= 34.3)
+    _use_tree = (get_settings().geo_tree_shade_jp if _jp
+                 else get_settings().geo_tree_shade)
     tree_f = 0.0
-    if not blocked:
+    if not blocked and _use_tree:
         try:
             from app.services.geo import tree_shade_factor
             tree_f = await tree_shade_factor(lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)

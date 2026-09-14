@@ -92,6 +92,7 @@ backend/.cache/
 
 # 2026-09-14 — 실수로 대용량·백업 파일이 커밋되는 것을 막는다
 *.bak
+*.bak*
 *.bak-*
 *.bak2-*
 *.bak3-*
@@ -101,3 +102,12 @@ data/plateau_*/
 data/osm_raw/
 _to_delete/
 Claude outputs/
+
+# DB 덤프 — 재생성 가능하고 크다. 필요하면 Object Storage.
+data/momssi_export_*.csv
+data/momssi_export_*.csv.gz
+data/momssi_measurements_export_*.csv
+data/momssi_measurements_export_*.csv.gz
+
+# 커밋 메시지 임시파일
+.commitmsg

@@ -63,6 +63,15 @@ class Settings(BaseSettings):
     # 부산 80점: PET MAE 3.26 동일, 극심 적중 59/63 동일, **Tmrt bias +1.47 → +0.97**.
     # 정확도 손실 없이 복사 물리가 맞아지므로 기본 ON. 문제 생기면 GEO_WALL_REFLECT=0 으로 되돌린다.
     geo_wall_reflect: bool = True
+    # 가로수 그늘 (2026-09-14 실측으로 한국 기본 OFF).
+    # 부산 80점 채점(scripts/shade_hit_80.py): 건물만 kappa +0.085 -> 건물+가로수 +0.064.
+    # 80점 중 가로수로 판정이 바뀐 곳은 1곳뿐이고 그 1곳이 오답이었다
+    # (명장제7동 35.21570,129.08440 — 실측 양지, tree_f 0.78, 어안 실측 TVF 0.04).
+    # OSM 가로수 좌표가 어긋났거나 수관 반경이 과대하다. 실측 그늘 21곳 중 TVF>=0.15 는 1곳뿐이라
+    # 이 표본으로는 층을 검증할 수 없다 → 수목 가로 실측 전까지 한국은 끈다.
+    geo_tree_shade: bool = False
+    # 일본은 並木道가 그늘의 핵심이고 OSM 가로수 밀도도 높다. 별도 검증 전까지 유지한다.
+    geo_tree_shade_jp: bool = True
     building_api_key: str = ""
     # Mapillary(Meta) 거리영상 액세스 토큰 — CC BY-SA, 저장·학습 합법(GSV와 달리).
     # 비어 있으면 Mapillary 미사용 → 기존처럼 GSV만(하위호환, opt-in).
