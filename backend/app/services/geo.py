@@ -930,6 +930,24 @@ def _load_register() -> dict:
     return _REGISTER
 
 
+def _register_keys(pnu19: str) -> list[str]:
+    """표제부 조회에 쓸 PNU 후보 — 대지구분 한 자리 때문에 안 맞는 걸 흡수한다 (2026-09-14).
+
+    11번째 자리가 대지구분인데 체계마다 값이 다르다.
+      지적 PNU(GIS SHP A2)        1=대지, 2=산
+      표제부·도로명주소(bd_mgt_sn)  0=대지, 1=산, 2=블록
+    2026-09-11 메모에 "V-World bd_mgt_sn↔표제부는 변환 없음"이라고 적었는데 틀렸다.
+    부암제1동 실측: 원본 그대로 0/156 적중, 11번째를 '0' 으로 바꾸면 119/156(76.3%).
+    그 동네 표제부에 2,818행이 있는데도 한 글자 때문에 한 건도 못 찾고 있었다.
+
+    어느 쪽이 맞는지 좌표마다 다를 수 있으므로 원본과 '0' 치환을 함께 조회한다.
+    """
+    if len(pnu19) < 19:
+        return []
+    alt = pnu19[:10] + "0" + pnu19[11:]
+    return [pnu19] if alt == pnu19 else [pnu19, alt]
+
+
 def _needs_floors(props: dict) -> str | None:
     """층수 결측이고 bd_mgt_sn 이 있으면 PNU19, 아니면 None."""
     try:
@@ -957,20 +975,26 @@ async def _fill_floors_from_register_many(props_list: list[dict]) -> None:
         if pool is None:
             reg = _load_register()
             for pnu in list(pending):
-                rows = reg.get(pnu)
+                rows = next((reg[k] for k in _register_keys(pnu) if reg.get(k)), None)
                 if rows:
                     for p in pending.pop(pnu):
                         _apply_register_rows(p, rows)
             return
+        # 대지구분 치환본까지 함께 조회한다(_register_keys 참조). 되찾은 행을 원래 PNU 로 돌려 매핑한다.
+        _alias: dict[str, str] = {}
+        for _pnu in pending:
+            for _k in _register_keys(_pnu):
+                _alias[_k] = _pnu
         async with pool.acquire() as c:
             recs = await c.fetch("SELECT pnu, dong, floors, height FROM bldg_register WHERE pnu = ANY($1::text[])",
-                                 list(pending))
+                                 list(_alias))
     except Exception as e:  # noqa: BLE001
         logger.debug("[register] DB 조회 생략: {}", e)
         return
     by: dict[str, list] = {}
     for r in recs:
-        by.setdefault(r["pnu"], []).append([r["dong"] or "", int(r["floors"] or 0), float(r["height"] or 0.0)])
+        key = _alias.get(r["pnu"], r["pnu"])
+        by.setdefault(key, []).append([r["dong"] or "", int(r["floors"] or 0), float(r["height"] or 0.0)])
     for pnu, plist in pending.items():
         rows = by.get(pnu)
         if rows:
@@ -983,7 +1007,8 @@ def _fill_floors_from_register(props: dict) -> None:
     pnu = _needs_floors(props)
     if not pnu:
         return
-    rows = _load_register().get(pnu)
+    reg = _load_register()
+    rows = next((reg[k] for k in _register_keys(pnu) if reg.get(k)), None)
     if not rows:
         return
     _apply_register_rows(props, rows)
