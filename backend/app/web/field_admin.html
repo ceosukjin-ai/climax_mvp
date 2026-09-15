@@ -47,6 +47,12 @@
   .status { font-size:13px; color:var(--mut); margin-top:10px; white-space:pre-line; }
   .pill { display:inline-block; background:#eef7f6; color:var(--teal); border-radius:99px; padding:2px 10px; font-size:12px; font-weight:700; }
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  #tgtMap{height:300px;border-radius:11px;margin-top:10px;background:#dcdcd6}
+  .lbl{font:600 11px/1 sans-serif;color:#fff;text-shadow:0 0 3px #000}
+  .leaflet-container{font:inherit}
+</style>
 </head>
 <body>
 <h1>🌡 현장 대조 <span class="pill">대표 전용</span></h1>
@@ -58,6 +64,11 @@
   <div class="row">
     <button class="ghost" onclick="loadTargets()">목록 불러오기</button>
     <button class="ghost" onclick="toggleDone()">완료 숨기기/보기</button>
+  </div>
+  <div id="tgtMap"></div>
+  <div class="status" style="margin:6px 0 0">
+    파란 점 = 기록지 표 좌표 · 주황 점 = 360 사진 EXIF 좌표 · 초록 = 현재 위치.
+    점을 눌러 그 좌표를 위/경도 칸에 넣습니다.
   </div>
   <div id="tgtList" style="margin-top:10px"></div>
 </div>
@@ -107,6 +118,7 @@
   <div class="status" id="resultNote"></div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 // 서버가 이 페이지를 직접 서빙하므로(/api/v1/field) 같은 서버로 상대경로 호출 —
 // http/https 어느 쪽이든 mixed-content 문제가 없다. 파일로 열었을 때만 절대주소 폴백.
@@ -150,7 +162,7 @@ function distM(a,b,c,d){
 async function loadTargets(){
   $("tgtWhy").textContent = "불러오는 중…";
   try {
-    const r = await fetch("field_targets.json?v=" + Date.now());
+    const r = await fetch(API + "/api/v1/field/targets?v=" + Date.now());
     TGT = await r.json();
   } catch(e){ $("tgtWhy").textContent = "목록을 못 읽었습니다: " + e.message; return; }
   if (navigator.geolocation){
@@ -171,8 +183,85 @@ function pick(lat, lon, id, which){
                    behavior:"smooth"});
 }
 
+// 지도 — 좌표를 눈으로 보고 고른다. 3월 실측은 표 좌표와 사진 좌표가 중앙 13 m,
+// 최대 100 m 어긋나 있어서 숫자만으로는 어느 쪽이 맞는지 판단할 수 없다.
+// 위성영상 위에 두 점을 올리고 현재 위치까지 겹쳐 보면 현장에서 바로 정해진다.
+let MAP = null, MLAYER = null, MEDOT = null, MERING = null;
+
+function ensureMap(){
+  if (MAP) return MAP;
+  MAP = L.map('tgtMap', {zoomControl:true}).setView([35.2340,129.0795], 16);
+  const sat = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    {maxZoom:21, maxNativeZoom:19, attribution:'Esri'}).addTo(MAP);
+  const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:19, attribution:'&copy; OSM'});
+  L.control.layers({'위성':sat, '지도':osm}, null, {collapsed:true}).addTo(MAP);
+  MLAYER = L.featureGroup().addTo(MAP);
+  return MAP;
+}
+
+function drawMap(){
+  if (!TGT) return;
+  ensureMap();
+  MLAYER.clearLayers();
+  const seen = [];
+  for (const g of TGT.groups){
+    for (const p of g.points){
+      if (HIDE_DONE && isDone(p.id)) continue;
+      const dim = isDone(p.id) ? 0.35 : 1;
+      const info = "<b>" + p.id + "</b><br>" + (p.note || "") +
+        (p.alt_gap_m ? "<br>표 좌표와 " + p.alt_gap_m + " m 차이" : "");
+      const m2 = L.circleMarker([p.lat,p.lon], {radius:7, color:'#fff', weight:2,
+          fillColor:'#e8590c', fillOpacity:dim})
+        .bindPopup(info + "<br><b>사진 EXIF 좌표</b><br>" +
+                   p.lat.toFixed(6) + ", " + p.lon.toFixed(6))
+        .on('click', ()=>pick(p.lat, p.lon, p.id, "사진 EXIF 좌표"))
+        .addTo(MLAYER);
+      seen.push([p.lat,p.lon]);
+      if (p.alt_lat){
+        L.circleMarker([p.alt_lat,p.alt_lon], {radius:7, color:'#fff', weight:2,
+            fillColor:'#1f6feb', fillOpacity:dim})
+          .bindPopup(info + "<br><b>기록지 표 좌표</b><br>" +
+                     p.alt_lat.toFixed(6) + ", " + p.alt_lon.toFixed(6))
+          .on('click', ()=>pick(p.alt_lat, p.alt_lon, p.id, "기록지 표 좌표"))
+          .addTo(MLAYER);
+        L.polyline([[p.alt_lat,p.alt_lon],[p.lat,p.lon]],
+          {color:'#333', weight:2, opacity:.6*dim, dashArray:'4,4'}).addTo(MLAYER);
+        seen.push([p.alt_lat,p.alt_lon]);
+      }
+      L.marker([p.lat,p.lon], {icon: L.divIcon({className:'lbl',
+        html:p.id.replace('point',''), iconSize:[22,12], iconAnchor:[-6,14]})}).addTo(MLAYER);
+    }
+  }
+  if (MY){
+    const ll = [MY[0], MY[1]];
+    if (MEDOT){ MAP.removeLayer(MEDOT); MAP.removeLayer(MERING); }
+    MERING = L.circle(ll, {radius:MY[2], color:'#2f7a3d', weight:1, fillOpacity:.08}).addTo(MAP);
+    MEDOT = L.circleMarker(ll, {radius:6, color:'#fff', weight:2,
+      fillColor:'#2f7a3d', fillOpacity:1})
+      .bindPopup("현재 위치<br>정확도 ±" + Math.round(MY[2]) + " m<br>" +
+                 MY[0].toFixed(6) + ", " + MY[1].toFixed(6))
+      .on('click', ()=>pick(MY[0], MY[1], "현재위치", "GPS ±" + Math.round(MY[2]) + " m"))
+      .addTo(MAP);
+  }
+  if (!MAP._fitOnce && seen.length){
+    MAP.fitBounds(L.latLngBounds(seen).pad(0.15));
+    MAP._fitOnce = true;
+  }
+  setTimeout(()=>MAP.invalidateSize(), 60);
+}
+
+function focusPoint(p){
+  ensureMap();
+  const c = p.alt_lat ? [(p.lat+p.alt_lat)/2, (p.lon+p.alt_lon)/2] : [p.lat, p.lon];
+  MAP.setView(c, 19);
+  document.getElementById('tgtMap').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
 function renderTargets(){
   if (!TGT) return;
+  drawMap();
   const box = $("tgtList");
   box.innerHTML = "";
   const g0 = TGT.groups[0];
@@ -191,7 +280,7 @@ function renderTargets(){
                          (done ? "opacity:.45" : "");
       const near = d !== null && d < 15;
       el.innerHTML =
-        "<div style='display:flex;align-items:baseline;gap:8px'>" +
+        "<div style='display:flex;align-items:baseline;gap:8px;cursor:pointer' onclick='0'>" +
           "<b style='font-size:15px'>" + p.id + "</b>" +
           (d !== null ? "<span style='margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;" +
              (near ? "color:#2f7a3d" : "") + "'>" + (d<1000 ? Math.round(d)+" m" : (d/1000).toFixed(1)+" km") + "</span>" : "") +
@@ -202,7 +291,7 @@ function renderTargets(){
       r1.className = "row";
       const b1 = document.createElement("button");
       b1.className = "ghost"; b1.textContent = "📷 사진 좌표";
-      b1.onclick = ()=>pick(p.lat, p.lon, p.id, "사진 EXIF 좌표");
+      b1.onclick = ()=>{ pick(p.lat, p.lon, p.id, "사진 EXIF 좌표"); };
       r1.appendChild(b1);
       if (p.alt_lat){
         const b2 = document.createElement("button");
@@ -214,6 +303,10 @@ function renderTargets(){
       b3.className = "ghost"; b3.textContent = done ? "↩︎ 취소" : "✓ 완료";
       b3.onclick = ()=>{ setDone(p.id, !done); renderTargets(); };
       r1.appendChild(b3);
+      const b4 = document.createElement("button");
+      b4.className = "ghost"; b4.textContent = "🗺 지도";
+      b4.onclick = ()=>focusPoint(p);
+      r1.appendChild(b4);
       el.appendChild(r1);
       box.appendChild(el);
     }

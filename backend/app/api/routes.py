@@ -1286,6 +1286,25 @@ async def field_tool_page():
     return FileResponse(p, media_type="text/html")
 
 
+@router.get("/field/targets", include_in_schema=False)
+async def field_targets():
+    """실측 '갈 지점' 좌표 목록 (2026-09-15).
+
+    `/api/v1/field` 페이지가 FileResponse 로 서빙돼 상대경로 정적파일을 못 읽는다 →
+    JSON 을 라우트로 따로 연다. 파일은 `app/web/field_targets.json` 이고 이미지에 포함된다.
+    좌표만 갱신하고 배포하면 현장 앱 목록이 바뀐다 — 앱 코드는 안 건드린다.
+    """
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    p = Path(__file__).resolve().parents[1] / "web" / "field_targets.json"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Not Found")
+    return FileResponse(p, media_type="application/json",
+                        headers={"Cache-Control": "no-store"})
+
+
 @router.get("/field/stats", include_in_schema=False)
 async def field_stats(
     request: Request,
