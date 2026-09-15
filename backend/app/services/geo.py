@@ -676,55 +676,128 @@ async def svf_geometric(
 #
 # 래스터: Meta/WRI 수관고. ENVI Byte, 좌상단 128.70/35.45, 화소 0.0001도, 값 0~40 m.
 #         GDAL 불필요 — numpy.memmap. 부산 전용이며, 해외는 같은 형식의 전지구본으로 교체한다.
-CANOPY_IMG = os.environ.get("CANOPY_IMG") or os.path.join(
-    os.path.dirname(_LOCAL_BUILDING_DIR), "canopy", "busan_canopy_max.img")
-CANOPY_W, CANOPY_H = 7000, 5000
-CANOPY_LON0, CANOPY_LAT0, CANOPY_PX = 128.70, 35.45, 0.0001
+# 저장 구조 — **1°×1° 타일** (2026-09-15 전환)
+#
+# 왜 바꿨나:
+#   처음엔 부산 크롭 한 장(7000×5000, 좌상단 128.70/35.45)을 코드에 박아 놓았다.
+#   부산 밖에서는 수관이 통째로 안 잡히고, 전국·일본으로 넓힐 방법이 없었다.
+#   건물 타일(`bldg_tile`)·도로망이 이미 타일 방식이므로 **같은 구조**로 맞춘다.
+#
+#   파일명   data/canopy/c_{floor(lat)}_{floor(lon)}.img   (+ .hdr 는 쓰지 않는다)
+#   한 타일  1° × 1°, 화소 0.0001° -> 10000 × 10000, Byte, 약 100 MB
+#   화소격자 **전 지구 공통** — 행/열을 0 도에서부터 센다. 타일 경계에서 어긋나지 않는다.
+#
+#   타일이 없는 좌표는 `canopy_observed=False` 로 나간다. **'나무 없음'이 아니라 '모름'이다.**
+#
+#   옛 부산 단일 파일(`busan_canopy_max.img`)은 타일이 하나도 없을 때만 폴백으로 읽는다.
+CANOPY_DIR = os.environ.get("CANOPY_DIR") or os.path.join(
+    os.path.dirname(_LOCAL_BUILDING_DIR), "canopy")
+CANOPY_PX = 0.0001                      # 약 9~11 m
+CANOPY_TILE_N = 10000                   # 1° / 0.0001°
 CANOPY_RAD_M = float(os.environ.get("CANOPY_RAD_M", "30"))
 CANOPY_MIN_H = float(os.environ.get("CANOPY_MIN_H", "3"))
 CANOPY_TAU = float(os.environ.get("CANOPY_TAU", "0.35"))
 CANOPY_ON = os.environ.get("GEO_CANOPY", "1") != "0"
 
-_CANOPY_RAS = None          # None=미시도, False=없음, 그 외=memmap
+# 폴백: 부산 단일 크롭 (옛 형식)
+CANOPY_IMG = os.environ.get("CANOPY_IMG") or os.path.join(CANOPY_DIR, "busan_canopy_max.img")
+CANOPY_W, CANOPY_H = 7000, 5000
+CANOPY_LON0, CANOPY_LAT0 = 128.70, 35.45
+
+_CANOPY_TILES: dict[tuple[int, int], object] = {}   # (la0, lo0) -> memmap | False
+_CANOPY_RAS = None          # 폴백 단일본. None=미시도, False=없음, 그 외=memmap
 _CANOPY_CACHE: dict[tuple[int, int], list] = {}
 
 
 def _canopy_raster():
-    """수관고 래스터 memmap. 파일이 없거나 numpy 가 없으면 None — 엔진은 그대로 건물만으로 돈다."""
+    """폴백 단일 래스터 memmap (옛 부산 크롭). 없으면 None."""
     global _CANOPY_RAS
     if _CANOPY_RAS is None:
         if not CANOPY_ON or not os.path.isfile(CANOPY_IMG):
             _CANOPY_RAS = False
-            logger.info("[canopy] 수관고 래스터 없음({}) — 건물만으로 계산한다", CANOPY_IMG)
         else:
             try:
                 import numpy as _np
                 _CANOPY_RAS = _np.memmap(CANOPY_IMG, dtype=_np.uint8, mode="r",
                                          shape=(CANOPY_H, CANOPY_W))
-                logger.info("[canopy] 수관고 래스터 적재 {} ({}x{})", CANOPY_IMG, CANOPY_W, CANOPY_H)
+                logger.info("[canopy] 폴백 단일 래스터 적재 {} ({}x{})",
+                            CANOPY_IMG, CANOPY_W, CANOPY_H)
             except Exception as e:  # noqa: BLE001
-                logger.warning("[canopy] 래스터 적재 실패: {}", e)
+                logger.warning("[canopy] 폴백 래스터 적재 실패: {}", e)
                 _CANOPY_RAS = False
     # ⚠️ numpy 배열은 불린으로 평가하면 ValueError 다 (2026-09-15 사고).
     #    `_CANOPY_RAS or None` 로 썼다가 전 지점이 'truth value of an array is ambiguous' 로 실패했다.
     return None if _CANOPY_RAS is False else _CANOPY_RAS
 
 
+def _canopy_tile(la0: int, lo0: int):
+    """1°×1° 수관고 타일 memmap. 없으면 None (음성 결과도 캐시한다)."""
+    if not CANOPY_ON:
+        return None
+    hit = _CANOPY_TILES.get((la0, lo0))
+    if hit is not None:
+        return None if hit is False else hit
+    path = os.path.join(CANOPY_DIR, f"c_{la0}_{lo0}.img")
+    if not os.path.isfile(path):
+        _CANOPY_TILES[(la0, lo0)] = False
+        return None
+    try:
+        import numpy as _np
+        m = _np.memmap(path, dtype=_np.uint8, mode="r",
+                       shape=(CANOPY_TILE_N, CANOPY_TILE_N))
+        _CANOPY_TILES[(la0, lo0)] = m
+        logger.info("[canopy] 타일 적재 c_{}_{}", la0, lo0)
+        return m
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[canopy] 타일 적재 실패 c_{}_{}: {}", la0, lo0, e)
+        _CANOPY_TILES[(la0, lo0)] = False
+        return None
+
+
+def _canopy_px(row: int, col: int) -> float | None:
+    """전 지구 화소격자 (row, col) 의 수고 [m]. 관측 안 된 곳이면 None.
+
+    row 는 **북쪽이 0** 이 되도록 위도를 뒤집어 센다: row = floor((90 - lat)/PX)
+    col = floor((lon + 180)/PX). 그래야 타일 경계에서 화소가 어긋나지 않는다.
+    """
+    la0 = 90 - 1 - row // CANOPY_TILE_N      # 타일의 남쪽 위도(정수)
+    lo0 = col // CANOPY_TILE_N - 180
+    t = _canopy_tile(la0, lo0)
+    if t is None:
+        # 폴백 — 옛 부산 단일본
+        r = _canopy_raster()
+        if r is None:
+            return None
+        lat = 90.0 - (row + 0.5) * CANOPY_PX
+        lon = (col + 0.5) * CANOPY_PX - 180.0
+        rr = int((CANOPY_LAT0 - lat) / CANOPY_PX)
+        cc = int((lon - CANOPY_LON0) / CANOPY_PX)
+        if 0 <= rr < CANOPY_H and 0 <= cc < CANOPY_W:
+            return float(r[rr, cc])
+        return None
+    return float(t[row % CANOPY_TILE_N, col % CANOPY_TILE_N])
+
+
 def canopy_observed(lat: float, lon: float) -> bool:
     """이 좌표를 수관고 래스터가 **실제로 관측했는가** (2026-09-15).
 
     왜 필요한가:
-      `canopy_items()` 는 (가) 래스터 범위 밖 과 (나) 래스터가 봤는데 수관이 없음 을
-      똑같이 빈 배열로 돌려준다. 그러면 부산 밖에서 부를 때 "나무 없음"으로 계산된다.
-      **미관측을 '없음'으로 쓰는 것은 거짓말이다.** 전국·해외로 넓히면 그대로 오류가 된다.
+      `canopy_items()` 는 (가) 자료 범위 밖 과 (나) 자료가 봤는데 수관이 없음 을
+      똑같이 빈 배열로 돌려준다. 그러면 자료 없는 곳에서 "나무 없음"으로 계산된다.
+      **미관측을 '없음'으로 쓰는 것은 거짓말이다.**
 
-      오늘 확인된 또 하나: 이 래스터는 **도심 가로수를 못 본다**(9 m·원본 1.1 m 두 해상도에서
-      단면 시험 통과 실패). 그러므로 래스터 안이어도 canopy=0 은 '큰 수관이 없다'까지만
+      또 하나: 이 래스터는 **도심 가로수를 못 본다**(9 m·원본 1.1 m 두 해상도에서 단면 시험
+      통과 실패, 2026-09-15). 그러므로 자료 안이어도 canopy=0 은 '큰 수관이 없다'까지만
       말할 수 있고, 가로수 유무는 말할 수 없다. 그 판단은 가로수 자료(A)가 한다.
 
       -> 호출부는 이 값을 받아 "나무 없음"과 "모름"을 구분해 표시·가중해야 한다.
     """
-    if not CANOPY_ON or _canopy_raster() is None:
+    if not CANOPY_ON:
+        return False
+    if _canopy_tile(int(math.floor(lat)), int(math.floor(lon))) is not None:
+        return True
+    r = _canopy_raster()
+    if r is None:
         return False
     row = int(round((CANOPY_LAT0 - lat) / CANOPY_PX))
     col = int(round((lon - CANOPY_LON0) / CANOPY_PX))
@@ -738,20 +811,23 @@ def canopy_items(lat: float, lon: float, rad_m: float | None = None,
     화소를 중심±각폭으로 근사하지 않고 **정사각 폴리곤**으로 만들어 건물과 같은
     `_ray_ring_hit` 으로 쏜다. 근사에서 오는 의심을 남기지 않기 위해서다.
     화소는 위경도 격자라 m 로는 직사각이다 — 변 길이를 위도별로 따로 계산한다.
+
+    화소 좌표는 **전 지구 공통 격자**로 센다(`_canopy_px`). 반경이 타일 경계를 넘어도
+    자연스럽게 이어진다.
     """
-    r = _canopy_raster()
-    if r is None:
+    if not CANOPY_ON:
         return []
     rad_m = CANOPY_RAD_M if rad_m is None else rad_m
     min_h = CANOPY_MIN_H if min_h is None else min_h
-    row0 = int(round((CANOPY_LAT0 - lat) / CANOPY_PX))
-    col0 = int(round((lon - CANOPY_LON0) / CANOPY_PX))
-    if row0 < 0 or row0 >= CANOPY_H or col0 < 0 or col0 >= CANOPY_W:
-        return []                      # 래스터 범위 밖 (부산 전용본)
+    row0 = int((90.0 - lat) / CANOPY_PX)
+    col0 = int((lon + 180.0) / CANOPY_PX)
     key = (row0, col0)
     hit = _CANOPY_CACHE.get(key)
     if hit is not None:
         return hit
+    if not canopy_observed(lat, lon):
+        _CANOPY_CACHE[key] = []
+        return []
     m_lat = 111320.0 * CANOPY_PX
     m_lon = 111320.0 * math.cos(math.radians(lat)) * CANOPY_PX
     n_la = int(math.ceil(rad_m / m_lat)) + 1
@@ -760,17 +836,15 @@ def canopy_items(lat: float, lon: float, rad_m: float | None = None,
     out: list[tuple[list[tuple[float, float]], float]] = []
     for dr in range(-n_la, n_la + 1):
         rr = row0 + dr
-        if rr < 0 or rr >= CANOPY_H:
-            continue
         for dc in range(-n_lo, n_lo + 1):
             cc = col0 + dc
-            if cc < 0 or cc >= CANOPY_W:
+            h = _canopy_px(rr, cc)
+            if h is None or h < min_h:
                 continue
-            h = float(r[rr, cc])
-            if h < min_h:
-                continue
-            x = ((cc + 0.5) * CANOPY_PX + CANOPY_LON0 - lon) * 111320.0 * math.cos(math.radians(lat))
-            y = (CANOPY_LAT0 - (rr + 0.5) * CANOPY_PX - lat) * 111320.0
+            plat = 90.0 - (rr + 0.5) * CANOPY_PX
+            plon = (cc + 0.5) * CANOPY_PX - 180.0
+            x = (plon - lon) * 111320.0 * math.cos(math.radians(lat))
+            y = (plat - lat) * 111320.0
             if math.hypot(x, y) > rad_m + max(m_lat, m_lon):
                 continue
             out.append(([(x - hx, y - hy), (x + hx, y - hy), (x + hx, y + hy),
