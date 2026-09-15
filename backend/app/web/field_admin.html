@@ -52,6 +52,16 @@
 <h1>🌡 현장 대조 <span class="pill">대표 전용</span></h1>
 <div class="sub">실측을 넣으면 같은 순간 엔진 산출과 자동 대조 · 짝은 서버에 적재</div>
 
+<div class="card" id="tgtCard">
+  <h2>🎯 갈 지점 <span style="font-weight:400;color:var(--mut)">(가까운 순)</span></h2>
+  <div id="tgtWhy" class="status" style="margin:0 0 8px"></div>
+  <div class="row">
+    <button class="ghost" onclick="loadTargets()">목록 불러오기</button>
+    <button class="ghost" onclick="toggleDone()">완료 숨기기/보기</button>
+  </div>
+  <div id="tgtList" style="margin-top:10px"></div>
+</div>
+
 <div class="card">
   <h2>📍 위치</h2>
   <div class="row">
@@ -113,6 +123,101 @@ function useGPS(){
     p => { $("lat").value = p.coords.latitude.toFixed(6); $("lon").value = p.coords.longitude.toFixed(6); },
     e => { $("status").textContent = "GPS 실패(" + e.message + ") — http/파일에서는 막힘. 수동 입력 또는 우리 집."; }
   );
+}
+
+// ── 갈 지점 (2026-09-15) ────────────────────────────────────────────────────
+// 왜: "이 좌표에서 재 주세요" 를 말로 주고받으면 현장에서 잃어버린다.
+//     `field_targets.json` 을 갱신하면 여기에 그대로 뜬다. 앱을 고칠 필요가 없다.
+//
+// 좌표 두 개를 같이 보여준다 — 3월 실측은 **기록지 표 좌표와 사진 EXIF 좌표가**
+// 중앙 13 m, 최대 100 m 어긋나 있다. 어느 쪽이 맞는지는 현장에서 눈으로 판정하는 게 제일 낫다.
+// 기본값은 **사진 좌표**다(정답지인 360 사진이 찍힌 자리이므로).
+let TGT = null, HIDE_DONE = false, MY = null;
+
+function doneKey(id){ return "climax_tgt_done_" + id; }
+function isDone(id){ try { return localStorage.getItem(doneKey(id)) === "1"; } catch(e){ return false; } }
+function setDone(id, v){ try { v ? localStorage.setItem(doneKey(id),"1")
+                                : localStorage.removeItem(doneKey(id)); } catch(e){} }
+function toggleDone(){ HIDE_DONE = !HIDE_DONE; renderTargets(); }
+
+function distM(a,b,c,d){
+  const R=6371000, r=Math.PI/180;
+  const dp=(c-a)*r, dl=(d-b)*r;
+  const x=Math.sin(dp/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+
+async function loadTargets(){
+  $("tgtWhy").textContent = "불러오는 중…";
+  try {
+    const r = await fetch("field_targets.json?v=" + Date.now());
+    TGT = await r.json();
+  } catch(e){ $("tgtWhy").textContent = "목록을 못 읽었습니다: " + e.message; return; }
+  if (navigator.geolocation){
+    navigator.geolocation.watchPosition(p=>{
+      MY = [p.coords.latitude, p.coords.longitude, p.coords.accuracy];
+      renderTargets();
+    }, ()=>renderTargets(), {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+  }
+  renderTargets();
+}
+
+function pick(lat, lon, id, which){
+  $("lat").value = lat.toFixed(6);
+  $("lon").value = lon.toFixed(6);
+  $("m_note").value = id + " (" + which + ")";
+  $("status").textContent = id + " 좌표를 넣었습니다 — " + which;
+  window.scrollTo({top: $("lat").getBoundingClientRect().top + window.scrollY - 80,
+                   behavior:"smooth"});
+}
+
+function renderTargets(){
+  if (!TGT) return;
+  const box = $("tgtList");
+  box.innerHTML = "";
+  const g0 = TGT.groups[0];
+  $("tgtWhy").innerHTML = "<b>" + TGT.groups.map(g=>g.title).join(" · ") + "</b><br>" +
+    g0.why + "<br><b>할 일:</b> " + g0.do +
+    (MY ? "<br>현재 위치 정확도 ±" + Math.round(MY[2]) + " m" : "");
+
+  for (const g of TGT.groups){
+    const rows = g.points.map(p=>({p, d: MY ? distM(MY[0],MY[1],p.lat,p.lon) : null}));
+    if (MY) rows.sort((a,b)=>a.d-b.d);
+    for (const {p, d} of rows){
+      const done = isDone(p.id);
+      if (HIDE_DONE && done) continue;
+      const el = document.createElement("div");
+      el.style.cssText = "padding:9px 0;border-top:1px solid var(--line);" +
+                         (done ? "opacity:.45" : "");
+      const near = d !== null && d < 15;
+      el.innerHTML =
+        "<div style='display:flex;align-items:baseline;gap:8px'>" +
+          "<b style='font-size:15px'>" + p.id + "</b>" +
+          (d !== null ? "<span style='margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;" +
+             (near ? "color:#2f7a3d" : "") + "'>" + (d<1000 ? Math.round(d)+" m" : (d/1000).toFixed(1)+" km") + "</span>" : "") +
+        "</div>" +
+        "<div style='color:var(--mut);font-size:12.5px;margin:2px 0 6px'>" + (p.note||"") +
+          (p.alt_gap_m ? " · 표 좌표와 " + p.alt_gap_m + " m 차이" : "") + "</div>";
+      const r1 = document.createElement("div");
+      r1.className = "row";
+      const b1 = document.createElement("button");
+      b1.className = "ghost"; b1.textContent = "📷 사진 좌표";
+      b1.onclick = ()=>pick(p.lat, p.lon, p.id, "사진 EXIF 좌표");
+      r1.appendChild(b1);
+      if (p.alt_lat){
+        const b2 = document.createElement("button");
+        b2.className = "ghost"; b2.textContent = "📋 표 좌표";
+        b2.onclick = ()=>pick(p.alt_lat, p.alt_lon, p.id, "기록지 표 좌표");
+        r1.appendChild(b2);
+      }
+      const b3 = document.createElement("button");
+      b3.className = "ghost"; b3.textContent = done ? "↩︎ 취소" : "✓ 완료";
+      b3.onclick = ()=>{ setDone(p.id, !done); renderTargets(); };
+      r1.appendChild(b3);
+      el.appendChild(r1);
+      box.appendChild(el);
+    }
+  }
 }
 
 function fieldKey(){

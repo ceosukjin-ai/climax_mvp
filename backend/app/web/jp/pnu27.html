@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f7f5">
+<title>PNU 27지점 좌표 확인</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --bg:#f7f7f5; --panel:#fff; --ink:#1c1c19; --mut:#6b6b63; --line:#e2e2dc;
+    --tbl:#1f6feb;    /* 표 좌표 */
+    --exif:#e8590c;   /* 사진 EXIF 좌표 */
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{font:14px/1.55 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+       color:var(--ink);background:var(--bg);display:flex;flex-direction:column}
+  header{padding:calc(10px + env(safe-area-inset-top,0px)) 18px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+  h1{margin:0 0 4px;font-size:17px;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:12.5px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12.5px}
+  .legend i{display:inline-block;width:11px;height:11px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+  main{flex:1;display:flex;min-height:0}
+  #map{flex:1;min-width:0}
+  aside{width:330px;background:var(--panel);border-left:1px solid var(--line);
+        overflow:auto;padding:10px 0}
+  .hint{padding:0 14px 10px;color:var(--mut);font-size:12px}
+  .row{padding:9px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .row:hover{background:#f0f0ec}
+  .row.on{background:#eaf1fd}
+  .row b{font-size:13px}
+  .row .d{float:right;font-variant-numeric:tabular-nums;font-weight:600}
+  .far .d{color:#c92a2a}
+  .mid .d{color:#e8590c}
+  .near .d{color:#2f7a3d}
+  .row small{display:block;color:var(--mut);font-size:11.5px;margin-top:2px;
+             font-variant-numeric:tabular-nums}
+  @media (max-width:820px){
+    main{flex-direction:column}
+    #map{height:56vh;flex:none}
+    aside{width:auto;border-left:0;border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
+  }
+  .lbl{font:600 11px/1 sans-serif;color:#fff;text-shadow:0 0 3px #000}
+</style>
+</head>
+<body>
+<header>
+  <h1>PNU 27지점 좌표 확인 — 2026-03 실측</h1>
+  <div class="sub">기록지 표 좌표와 360 사진 EXIF GPS 좌표를 겹쳐 놓았습니다. 어느 쪽이 실제로 서 계셨던 자리인지 확인해 주세요.</div>
+  <div class="legend">
+    <span><i style="background:#1f6feb"></i>표 좌표 (기록지)</span>
+    <span><i style="background:#e8590c"></i>사진 EXIF 좌표</span>
+    <span><i style="background:#2f7a3d"></i>현재 위치 (◎ 버튼)</span><span style="color:#6b6b63">— 두 점을 잇는 선의 길이가 차이입니다</span>
+  </div>
+</header>
+<main>
+  <div id="map"></div>
+  <aside>
+    <div class="hint">차이가 큰 순서입니다. 클릭하면 그 지점으로 이동합니다.</div>
+    <div id="list"></div>
+  </aside>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// (측정ID, 표위도, 표경도, 사진위도, 사진경도, 사진SVF, 사진GVI)
+const PTS = [
+["point01",35.233287,129.075365,35.233,129.075306,0.818,0.0516],
+["point02",35.233835,129.075259,35.233783,129.075394,0.7831,0.1494],
+["point03",35.235551,129.075896,35.235478,129.075869,0.4624,0.3538],
+["point04",35.237031,129.077661,35.236858,129.077414,0.6009,0.1242],
+["point05",35.23728,129.079165,35.237156,129.079203,0.3617,0.2904],
+["point06",35.235948,129.079915,35.235972,129.079867,0.8039,0.0147],
+["point07",35.235699,129.078456,35.235694,129.078597,0.8605,0.0287],
+["point08",35.235664,129.076865,35.235614,129.076997,0.4821,0.1898],
+["point09",35.234428,129.076639,35.234322,129.076636,0.5488,0.2122],
+["point10",35.232462,129.076411,35.232469,129.076603,0.3145,0.3449],
+["point11",35.232439,129.077071,35.232372,129.077278,0.5096,0.2011],
+["point12",35.234393,129.078885,35.234397,129.078844,0.5741,0.0507],
+["point13",35.235325,129.079672,35.235344,129.079619,0.7166,0.1003],
+["point14",35.236497,129.081942,35.236381,129.0818,0.5588,0.1288],
+["point15",35.234311,129.080633,35.234303,129.0806,0.7522,0.1264],
+["point16",35.233629,129.080098,35.233575,129.080006,0.5867,0.2065],
+["point17",35.231567,129.078525,35.231533,129.078569,0.3107,0.3201],
+["point18",35.231046,129.079488,35.231075,129.079242,0.1441,0.4129],
+["point19",35.232078,129.080433,35.232086,129.080369,0.5602,0.098],
+["point20",35.233211,129.08082,35.233197,129.081917,0.6258,0.2],
+["point21",35.233582,129.082434,35.233661,129.082342,0.7746,0.0987],
+["point23",35.233726,129.083761,35.233531,129.083692,0.734,0.0749],
+["point25",35.232873,129.083063,35.232986,129.082719,0.6382,0.0513],
+["point26",35.231565,129.083619,35.231578,129.083564,0.8987,0.0763],
+["point27",35.231365,129.083521,35.231356,129.083439,0.8486,0.0157],
+["point30",35.23198,129.08143,35.231919,129.081322,0.7886,0.0813],
+["point31",35.231616,129.080382,35.231819,129.080336,0.7381,0.0722]
+];
+
+function hav(a,b,c,d){
+  const R=6371000, r=Math.PI/180;
+  const dp=(c-a)*r, dl=(d-b)*r;
+  const x=Math.sin(dp/2)**2+Math.cos(a*r)*Math.cos(c*r)*Math.sin(dl/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+
+const map = L.map('map', {zoomControl:true}).setView([35.2340,129.0795], 16);
+const sat = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {maxZoom:21, maxNativeZoom:19, attribution:'Esri World Imagery'}).addTo(map);
+const osm = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {maxZoom:19, attribution:'&copy; OpenStreetMap'});
+L.control.layers({'위성영상':sat, '일반지도':osm}, null, {collapsed:false}).addTo(map);
+
+const rows = PTS.map(p=>{
+  const [id,la1,lo1,la2,lo2,svf,gvi] = p;
+  return {id, la1, lo1, la2, lo2, svf, gvi, d: hav(la1,lo1,la2,lo2)};
+}).sort((a,b)=> b.d - a.d);
+
+const store = {};
+const group = L.featureGroup().addTo(map);
+
+for (const r of rows){
+  const info =
+    `<b>${r.id}</b><br>차이 <b>${r.d.toFixed(0)} m</b><br>` +
+    `사진 SVF ${r.svf.toFixed(3)} · GVI ${r.gvi.toFixed(3)}<br>` +
+    `<span style="color:#1f6feb">표</span> ${r.la1.toFixed(6)}, ${r.lo1.toFixed(6)}<br>` +
+    `<span style="color:#e8590c">사진</span> ${r.la2.toFixed(6)}, ${r.lo2.toFixed(6)}`;
+
+  const m1 = L.circleMarker([r.la1,r.lo1], {radius:7, color:'#fff', weight:2,
+      fillColor:'#1f6feb', fillOpacity:1}).bindPopup(info).addTo(group);
+  const m2 = L.circleMarker([r.la2,r.lo2], {radius:7, color:'#fff', weight:2,
+      fillColor:'#e8590c', fillOpacity:1}).bindPopup(info).addTo(group);
+  L.polyline([[r.la1,r.lo1],[r.la2,r.lo2]],
+      {color:'#333', weight:2, opacity:.7, dashArray:'4,4'}).addTo(group);
+  L.marker([r.la1,r.lo1], {icon: L.divIcon({className:'lbl',
+      html:r.id.replace('point',''), iconSize:[22,12], iconAnchor:[-6,14]})}).addTo(group);
+  store[r.id] = {m1, m2, r};
+}
+map.fitBounds(group.getBounds().pad(0.12));
+
+// 현재 위치 — 현장에서 "지금 내가 어느 점 옆인가" 를 보려고 넣는다 (2026-09-15).
+// 폰 GPS 정확도를 원으로 같이 그린다. 원이 크면 그 좌표를 믿지 말라는 뜻이다.
+let meDot = null, meRing = null;
+const btn = L.control({position:'topleft'});
+btn.onAdd = function(){
+  const d = L.DomUtil.create('div','leaflet-bar');
+  d.innerHTML = '<a href="#" title="현재 위치" style="font-size:16px;line-height:26px">◎</a>';
+  d.onclick = (e)=>{
+    e.preventDefault();
+    if (!navigator.geolocation){ alert('이 브라우저는 위치를 지원하지 않습니다.'); return; }
+    navigator.geolocation.watchPosition(pos=>{
+      const c = pos.coords, ll = [c.latitude, c.longitude];
+      if (!meDot){
+        meDot = L.circleMarker(ll,{radius:6,color:'#fff',weight:2,
+                 fillColor:'#2f7a3d',fillOpacity:1}).addTo(map);
+        meRing = L.circle(ll,{radius:c.accuracy,color:'#2f7a3d',weight:1,
+                 fillOpacity:.08}).addTo(map);
+      } else { meDot.setLatLng(ll); meRing.setLatLng(ll).setRadius(c.accuracy); }
+      meDot.bindPopup(`현재 위치<br>정확도 ±${Math.round(c.accuracy)} m<br>` +
+                      `${c.latitude.toFixed(6)}, ${c.longitude.toFixed(6)}`);
+      map.setView(ll, Math.max(map.getZoom(), 19));
+    }, err=>alert('위치 조회 실패: '+err.message),
+       {enableHighAccuracy:true, maximumAge:0, timeout:20000});
+  };
+  return d;
+};
+btn.addTo(map);
+
+const list = document.getElementById('list');
+for (const r of rows){
+  const cls = r.d >= 30 ? 'far' : (r.d >= 12 ? 'mid' : 'near');
+  const el = document.createElement('div');
+  el.className = 'row ' + cls;
+  el.innerHTML = `<span class="d">${r.d.toFixed(0)} m</span><b>${r.id}</b>` +
+    `<small>사진 SVF ${r.svf.toFixed(3)} · GVI ${r.gvi.toFixed(3)}<br>` +
+    `표 ${r.la1.toFixed(6)}, ${r.lo1.toFixed(6)}<br>` +
+    `사진 ${r.la2.toFixed(6)}, ${r.lo2.toFixed(6)}</small>`;
+  el.onclick = ()=>{
+    document.querySelectorAll('.row').forEach(x=>x.classList.remove('on'));
+    el.classList.add('on');
+    map.setView([(r.la1+r.la2)/2,(r.lo1+r.lo2)/2], 19);
+    store[r.id].m1.openPopup();
+  };
+  list.appendChild(el);
+}
+</script>
+</body>
+</html>
