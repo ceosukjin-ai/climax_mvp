@@ -414,6 +414,56 @@ async def sun_blocked_outdoor(
     return False, None
 
 
+async def canopy_shade_factor(
+    lat: float,
+    lon: float,
+    sun_azimuth_deg: float,
+    sun_elevation_deg: float,
+    eye_height_m: float = 1.5,
+) -> float:
+    """태양 방향의 **수관**이 직달일사를 가리는 비율 0~1 (2026-09-15).
+
+    왜 필요한가 — 측정으로 드러난 것:
+      수관을 SVF 에만 넣었더니 공원에서 낮 MRT 가 **−0.1도** 밖에 안 내려갔다.
+      같은 지점에서 직달까지 가렸다고 가정하면 **−4.3도** 였다. 40배 차이다.
+      공원이 시원한 이유는 하늘이 덜 보여서가 아니라 **나무가 햇빛을 직접 막아서**다.
+      그 경로가 비어 있었다. `sun_blocked_outdoor` 는 건물만 본다.
+
+    건물과 다른 점:
+      건물 그늘은 0/1 이다(콘크리트는 빛을 안 통과시킨다). 수관은 **부분 차단**이다.
+      잎 사이로 새는 몫이 있으므로 (1 - CANOPY_TAU) 만큼만 가린다.
+
+    ⚠️ 여기 쓰는 CANOPY_TAU 는 **SVF 용으로 적합한 값을 빌려온 것**이다.
+       직달빔 투과율과 천공시계 유효 차폐율은 물리적으로 같지 않다.
+       열화상·흑구 실측으로 따로 교정하기 전까지는 미검증 값이다. 논문에 그렇게 적을 것.
+
+    스냅을 타지 않는다 — `sun_blocked_outdoor` 와 같은 규칙이다(그늘 판정은 원좌표 기준).
+    """
+    if sun_elevation_deg <= 0.0 or not CANOPY_ON:
+        return 0.0
+    items = canopy_items(lat, lon)
+    if not items:
+        return 0.0
+    dx, dy = math.sin(math.radians(sun_azimuth_deg)), math.cos(math.radians(sun_azimuth_deg))
+    beta_max = 0.0
+    for ring, H in items:
+        h = H - eye_height_m
+        if h <= 0 or len(ring) < 4:
+            continue
+        if _point_in_ring(0.0, 0.0, ring):
+            beta_max = 90.0            # 수관 화소 안 — 머리 위가 가려져 있다
+            break
+        t = _ray_ring_hit(dx, dy, ring)
+        if t is None:
+            continue
+        b = math.degrees(math.atan2(h, t))
+        if b > beta_max:
+            beta_max = b
+    if sun_elevation_deg >= beta_max:
+        return 0.0
+    return round(1.0 - CANOPY_TAU, 3)
+
+
 def _ray_ring_hit(dx: float, dy: float, ring: list[tuple[float, float]]) -> float | None:
     """원점(0,0)에서 방위벡터 (dx,dy) 로 쏜 광선이 폴리곤 외곽선에 처음 닿는 거리(m). 없으면 None."""
     best = None

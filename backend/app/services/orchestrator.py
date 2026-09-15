@@ -966,12 +966,19 @@ class VPTIOrchestrator:
         try:
             sun = _es(clat, clon, when, cloud_fraction=cloud_fraction)
             if sun.is_daytime:
-                from app.services.geo import sun_blocked_outdoor
+                from app.services.geo import sun_blocked_outdoor, canopy_shade_factor
                 blocked, _ = await asyncio.wait_for(
                     sun_blocked_outdoor(clat, clon, sun.solar_azimuth_deg,
                                         sun.solar_elevation_deg), timeout=2.0)
                 if blocked:
                     direct_shade = 0.0
+                else:
+                    # 수관 그늘 (2026-09-15) — 건물이 안 가릴 때만 본다.
+                    # 나무는 부분 차단이라 0.0 이 아니라 (1-τ) 만큼만 깎는다.
+                    _cf = await asyncio.wait_for(
+                        canopy_shade_factor(clat, clon, sun.solar_azimuth_deg,
+                                            sun.solar_elevation_deg), timeout=2.0)
+                    direct_shade = max(0.0, 1.0 - _cf)
         except Exception:  # noqa: BLE001
             pass
         r = _cvt(views_5=views, materials=mats, weather=wc,
@@ -1057,7 +1064,7 @@ class VPTIOrchestrator:
         shade_note: str | None = None
         try:
             from vpti_core.solar import estimate_solar
-            from app.services.geo import sun_blocked_outdoor
+            from app.services.geo import sun_blocked_outdoor, canopy_shade_factor
 
             sun = estimate_solar(clat, clon, when, sky_code=sky_code,
                                  cloud_fraction=cloud_fraction)
@@ -1072,6 +1079,24 @@ class VPTIOrchestrator:
                 if blocked:
                     direct_shade = 0.0
                     logger.info("[shade] {} — 직달 차단", shade_note)
+                else:
+                    # 수관 그늘 (2026-09-15) — 건물이 안 가릴 때만 본다.
+                    #
+                    # 왜 넣었나: 수관을 SVF 에만 넣었더니 공원에서 낮 MRT 가 −0.1도밖에 안 내려갔다.
+                    # 직달까지 가렸다고 가정하면 −4.3도였다. 공원의 시원함은 대부분 직달 차폐다.
+                    #
+                    # 건물과 달리 0.0 으로 떨어뜨리지 않는다 — 잎 사이로 새는 몫이 있다.
+                    _cf = await asyncio.wait_for(
+                        canopy_shade_factor(
+                            clat, clon,
+                            sun.solar_azimuth_deg, sun.solar_elevation_deg,
+                        ),
+                        timeout=2.0,
+                    )
+                    if _cf > 0.0:
+                        direct_shade = max(0.0, 1.0 - _cf)
+                        shade_note = "수관 그늘"
+                        logger.info("[shade] 수관 그늘 — 직달 {:.0%} 차단", _cf)
         except Exception as e:  # noqa: BLE001
             logger.warning("[shade] 판정 실패({}) → 미차폐 가정", type(e).__name__)
 
