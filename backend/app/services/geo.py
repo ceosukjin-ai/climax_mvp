@@ -57,6 +57,14 @@ MIN_ELONGATION = 1.25
 SEARCH_RADIUS_M = 100
 # 층고 근사 (기압 층 추정과 동일한 값 사용)
 FLOOR_HEIGHT_M = 2.8
+# 층수→건물 절대높이 환산 (2026-09-15, 실측 적합)
+# 부산 5개 실측권역 주변에서 height 와 층수를 둘 다 가진 1,161동 최소제곱 적합:
+#     실제높이 = 3.018 x 층수 + 0.902   (절대오차 평균 1.31 m)
+# 기존 층수x2.8 은 절대오차 1.72 m, 오차 중앙 +1.10 m 로 꾸준히 낮게 잡았다.
+# 지붕·파라펫이 층고에 안 들어가기 때문이다. 자료가 늘면 반드시 다시 적합할 것.
+# (아래 FLOOR_HEIGHT_M 은 실내 창 높이 근사에 계속 쓰므로 그대로 둔다.)
+FLOOR_PER_M = 3.018
+ROOF_ADD_M = 0.902
 # 차폐 시 일사 배율 — 직달일사가 사라지고 산란 성분만 남는다.
 SHADED_GAIN = 0.35
 MAX_NEIGHBORS = 12
@@ -96,7 +104,7 @@ def _height_m_from_props(props: dict, default_floors: int | None = None) -> floa
         if default_floors is None:
             return None
         floors = default_floors
-    return floors * FLOOR_HEIGHT_M
+    return floors * FLOOR_PER_M + ROOF_ADD_M
 
 
 @dataclass
