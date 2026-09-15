@@ -20,12 +20,27 @@
   docker exec climax-api python3 /tmp/canopy_transect.py /tmp/garosu_std.csv
 """
 from __future__ import annotations
-import csv, math, random, sys
+import csv, math, os, random, sys
 import numpy as np
 
-IMG = "/tmp/canopy/busan_canopy.img"
-HDR = "/tmp/canopy/busan_canopy.hdr"
-BBOX = (128.70, 34.95, 129.40, 35.45)      # 래스터 범위
+# 2026-09-15 — 원본 해상도 재시험용으로 경로를 환경변수로 뺀다.
+#
+# 왜 다시 하나:
+#   9/12 에 "위성은 도심 가로수를 못 본다"고 결론 냈다. 그런데 그 시험을 **9 m 화소**
+#   (`-tr 0.0001`)로 했다. 가로수 한 줄의 폭이 5 m 다. **못 보는 게 당연한 조건이었다.**
+#   원본(Meta/WRI v2)은 화소 1.19 m 다. 자료의 한계인지 우리 리샘플링의 한계인지
+#   구분하지 않고 결론을 내렸다. 그 결론 위에 지금 설계가 다 서 있다 — 다시 재야 한다.
+#
+#   뒤집히면: 공공데이터 없는 나라에서도 가로수 그늘이 된다(무영상 특허 범위).
+#   안 뒤집히면: 9/12 결론이 제대로 확정되고 논문에 자신 있게 쓴다.
+#
+# 판정 기준 (미리 정한다):
+#   9/12 결과 — 가로수길 변동폭 0.16 m(7%), 대조군 0.17 m. 형태 동일, 신호 없음.
+#   → **가로수길 변동폭이 대조군의 2배를 넘고, 양쪽 봉우리 또는 중심선 함몰이 보이면 뒤집힌 것.**
+#
+# BBOX 는 래스터 헤더에서 직접 읽는다(크롭 범위를 바꿔도 코드를 안 고치게).
+IMG = os.environ.get("CANOPY_IMG", "/tmp/canopy/busan_canopy.img")
+HDR = os.environ.get("CANOPY_HDR") or (IMG[:-4] + ".hdr" if IMG.endswith(".img") else IMG + ".hdr")
 OFFS = list(range(-25, 26))                 # -25 ~ +25 m
 
 
@@ -67,6 +82,13 @@ class Ras:
         self.ulx, self.uly = float(mi[3]), float(mi[4])
         self.xr, self.yr = float(mi[5]), float(mi[6])
         self.a = np.memmap(IMG, dtype=np.uint8, mode="r", shape=(self.nl, self.ns))
+        # 래스터가 실제로 덮는 범위 — 구간 걸러내기에 쓴다.
+        self.bbox = (self.ulx, self.uly - self.nl * self.yr,
+                     self.ulx + self.ns * self.xr, self.uly)
+        print(f"래스터 {IMG}\n  {self.ns} x {self.nl} 화소  화소크기 {self.xr:.7f} x {self.yr:.7f} deg"
+              f"  (약 {self.xr * 111320 * math.cos(math.radians(self.uly)):.2f} x "
+              f"{self.yr * 111320:.2f} m)")
+        print(f"  범위 {self.bbox[0]:.4f},{self.bbox[1]:.4f} ~ {self.bbox[2]:.4f},{self.bbox[3]:.4f}")
 
     def at(self, lat, lon):
         c = int((lon - self.ulx) / self.xr)
@@ -109,7 +131,7 @@ def show(title, prof, n):
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "/tmp/garosu_std.csv"
     ras = Ras()
-    W, S, E, N = BBOX
+    W, S, E, N = ras.bbox
     segs = []
     with open_csv(path) as f:
         for row in csv.DictReader(f):
