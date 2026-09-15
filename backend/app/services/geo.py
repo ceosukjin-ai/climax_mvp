@@ -451,8 +451,16 @@ async def canopy_shade_factor(
         if h <= 0 or len(ring) < 4:
             continue
         if _point_in_ring(0.0, 0.0, ring):
-            beta_max = 90.0            # 수관 화소 안 — 머리 위가 가려져 있다
-            break
+            # 품은 화소 — SVF 쪽과 **같은 edge 규칙**을 쓴다(화소 반경 거리의 나무로 본다).
+            # 90도로 두면 화소 안에 들어가는 순간 태양 방위와 무관하게 늘 가려져, 방향성이 사라진다.
+            xs = [x for x, _y in ring]
+            ys = [_y for _x, _y in ring]
+            rad = (abs(max(xs) - min(xs)) + abs(max(ys) - min(ys))) / 4.0
+            if rad > 0.1:
+                b = math.degrees(math.atan2(h, rad))
+                if b > beta_max:
+                    beta_max = b
+            continue
         t = _ray_ring_hit(dx, dy, ring)
         if t is None:
             continue
@@ -779,21 +787,42 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
             continue
         blds.append((ring, h))
 
-    # 수관 — 관측점을 품은 화소는 머리 위가 막힌 것이므로 천정까지 본다.
+    # 수관 — 관측점을 **품은** 화소를 어떻게 볼 것인가 (2026-09-15, edge 규칙)
+    #
+    # 처음엔 'zenith' 로 했다: 화소 안이면 전 방위를 천정까지 막는다.
+    # 그러면 화소 안 어디에 서 있든 SVF 가 **정확히 1-τ = 0.550** 으로 포화한다.
+    # 실측으로 확인됐다 — 래스터에서 고른 수관 15/16/18/21/24 m 네 지점이 전부 SVF 0.550.
+    # 울창한 숲과 가로수 한 그루 밑이 같은 값이 된다.
+    #
+    # 왜 물리적으로 틀렸나: 이 래스터는 `canopy_max` — 화소 안 **최고값**이다.
+    # 10 m 화소에 큰 나무 한 그루만 있어도 화소 전체가 16 m 로 잡힌다.
+    # 'zenith' 는 그 화소 어디에 서 있든 수관이 머리 위를 꽉 덮었다고 가정한다.
+    # **자료가 보장하지 않는 것을 가정하는 것이다.**
+    #
+    # 'edge': 화소 어딘가에 나무가 있으니 평균적으로 **화소 반경**만큼 떨어져 있다고 본다.
+    #   수관 16 m -> 상승각 71도 -> SVF 약 0.60
+    #   수관  5 m -> 상승각 35도 -> SVF 약 0.85      포화하지 않는다.
+    #
+    # 실측 비교(106지점)에서 두 규칙 차이는 잡음 수준이었다(가중 MAE 0.121 vs 0.124).
+    # 실측이 답을 안 주므로 물리로 정했다. 논문에 그렇게 적을 것.
     cnp: list[tuple[list, float]] = []
-    cnp_zenith = False
+    cnp_self = 0.0                 # 품은 화소가 만드는 최소 상승각(rad)
     for ring, H in (canopy or []):
         if len(ring) < 4:
             continue
-        if _point_in_ring(0.0, 0.0, ring):
-            if H > eye_height_m:
-                cnp_zenith = True
-            continue
         h = H - eye_height_m
-        if h > 0:
-            cnp.append((ring, h))
+        if h <= 0:
+            continue
+        if _point_in_ring(0.0, 0.0, ring):
+            xs = [x for x, _y in ring]
+            ys = [_y for _x, _y in ring]
+            rad = (abs(max(xs) - min(xs)) + abs(max(ys) - min(ys))) / 4.0
+            if rad > 0.1:
+                cnp_self = max(cnp_self, math.atan2(h, rad))
+            continue
+        cnp.append((ring, h))
 
-    if not blds and not cnp and not cnp_zenith:
+    if not blds and not cnp and cnp_self <= 0.0:
         return 1.0, 0
 
     n_sectors = max(1, int(360 / az_step_deg))
@@ -810,17 +839,16 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
             if beta > beta_max:
                 beta_max = beta
         blocked = math.sin(beta_max) ** 2
-        if cnp or cnp_zenith:
-            # 수관 지평선각 — 관측점이 수관 화소 안이면 그 방위는 천정까지 막혔다고 본다.
-            bt = math.pi / 2.0 if cnp_zenith else 0.0
-            if not cnp_zenith:
-                for ring, h in cnp:
-                    t = _ray_ring_hit(dx, dy, ring)
-                    if t is None:
-                        continue
-                    v = math.atan2(h, t)
-                    if v > bt:
-                        bt = v
+        if cnp or cnp_self > 0.0:
+            # 수관 지평선각 — 품은 화소는 '화소 반경 거리의 나무'로 본다(위 edge 주석).
+            bt = cnp_self
+            for ring, h in cnp:
+                t = _ray_ring_hit(dx, dy, ring)
+                if t is None:
+                    continue
+                v = math.atan2(h, t)
+                if v > bt:
+                    bt = v
             # 건물보다 높은 부분만 (1-τ) 만큼 추가로 막는다. τ 는 유효 차폐율의 여집합이다.
             blocked += max(0.0, math.sin(bt) ** 2 - blocked) * (1.0 - CANOPY_TAU)
         sin2_sum += blocked
