@@ -1283,7 +1283,10 @@ async def field_tool_page():
     p = Path(__file__).resolve().parents[1] / "web" / "field_admin.html"
     if not p.exists():
         raise HTTPException(status_code=404, detail="Not Found")
-    return FileResponse(p, media_type="text/html")
+    # no-store (2026-09-15): 홈 화면에 추가한 아이폰 웹앱이 옛 화면을 계속 띄웠다.
+    # 현장 도구라 배포 즉시 반영돼야 한다. 페이지가 작아 매번 받아도 부담이 없다.
+    return FileResponse(p, media_type="text/html",
+                        headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @router.get("/field/targets", include_in_schema=False)
