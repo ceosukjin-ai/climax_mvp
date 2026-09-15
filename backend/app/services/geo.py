@@ -629,7 +629,9 @@ def _canopy_raster():
             except Exception as e:  # noqa: BLE001
                 logger.warning("[canopy] 래스터 적재 실패: {}", e)
                 _CANOPY_RAS = False
-    return _CANOPY_RAS or None
+    # ⚠️ numpy 배열은 불린으로 평가하면 ValueError 다 (2026-09-15 사고).
+    #    `_CANOPY_RAS or None` 로 썼다가 전 지점이 'truth value of an array is ambiguous' 로 실패했다.
+    return None if _CANOPY_RAS is False else _CANOPY_RAS
 
 
 def canopy_items(lat: float, lon: float, rad_m: float | None = None,
