@@ -618,10 +618,12 @@ async def svf_geometric(
         svf, nb = vals[1]
         return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
                 "centered_m": round(centered, 1), "street_axis_deg": axis,
-                "n_canopy": len(canopy)}
+                "n_canopy": len(canopy),
+                "canopy_observed": canopy_observed(lat, lon)}
     svf, nb = _svf_from_rings(rings, eye_height_m, az_step_deg, default_floors, canopy=canopy)
     return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
-            "centered_m": 0.0, "n_canopy": len(canopy)}
+            "centered_m": 0.0, "n_canopy": len(canopy),
+            "canopy_observed": canopy_observed(lat, lon)}
 
 
 # === 수관 차폐 — 위성 수관고 (2026-09-15) ===
@@ -706,6 +708,27 @@ def _canopy_raster():
     # ⚠️ numpy 배열은 불린으로 평가하면 ValueError 다 (2026-09-15 사고).
     #    `_CANOPY_RAS or None` 로 썼다가 전 지점이 'truth value of an array is ambiguous' 로 실패했다.
     return None if _CANOPY_RAS is False else _CANOPY_RAS
+
+
+def canopy_observed(lat: float, lon: float) -> bool:
+    """이 좌표를 수관고 래스터가 **실제로 관측했는가** (2026-09-15).
+
+    왜 필요한가:
+      `canopy_items()` 는 (가) 래스터 범위 밖 과 (나) 래스터가 봤는데 수관이 없음 을
+      똑같이 빈 배열로 돌려준다. 그러면 부산 밖에서 부를 때 "나무 없음"으로 계산된다.
+      **미관측을 '없음'으로 쓰는 것은 거짓말이다.** 전국·해외로 넓히면 그대로 오류가 된다.
+
+      오늘 확인된 또 하나: 이 래스터는 **도심 가로수를 못 본다**(9 m·원본 1.1 m 두 해상도에서
+      단면 시험 통과 실패). 그러므로 래스터 안이어도 canopy=0 은 '큰 수관이 없다'까지만
+      말할 수 있고, 가로수 유무는 말할 수 없다. 그 판단은 가로수 자료(A)가 한다.
+
+      -> 호출부는 이 값을 받아 "나무 없음"과 "모름"을 구분해 표시·가중해야 한다.
+    """
+    if not CANOPY_ON or _canopy_raster() is None:
+        return False
+    row = int(round((CANOPY_LAT0 - lat) / CANOPY_PX))
+    col = int(round((lon - CANOPY_LON0) / CANOPY_PX))
+    return 0 <= row < CANOPY_H and 0 <= col < CANOPY_W
 
 
 def canopy_items(lat: float, lon: float, rad_m: float | None = None,

@@ -67,7 +67,7 @@
   </div>
   <div id="tgtMap"></div>
   <div class="status" style="margin:6px 0 0">
-    파란 점 = 기록지 표 좌표 · 주황 점 = 360 사진 EXIF 좌표 · 초록 = 현재 위치.
+    주황 = 3월 재촬영 · 보라 = 가로수 · 초록 = 큰 나무 · 파랑 = 기록지 표 좌표 · 연두 = 현재 위치.
     점을 눌러 그 좌표를 위/경도 칸에 넣습니다.
   </div>
   <div id="tgtList" style="margin-top:10px"></div>
@@ -206,14 +206,17 @@ function drawMap(){
   ensureMap();
   MLAYER.clearLayers();
   const seen = [];
+  // 그룹별 색 — 현장에서 어떤 종류의 지점인지 지도만 보고 알게 한다.
+  const GC = {mar27:'#e8590c', garosu:'#7048e8', canopy:'#2f7a3d'};
   for (const g of TGT.groups){
+    const col = GC[g.id] || '#e8590c';
     for (const p of g.points){
       if (HIDE_DONE && isDone(p.id)) continue;
       const dim = isDone(p.id) ? 0.35 : 1;
       const info = "<b>" + p.id + "</b><br>" + (p.note || "") +
         (p.alt_gap_m ? "<br>표 좌표와 " + p.alt_gap_m + " m 차이" : "");
       const m2 = L.circleMarker([p.lat,p.lon], {radius:7, color:'#fff', weight:2,
-          fillColor:'#e8590c', fillOpacity:dim})
+          fillColor:col, fillOpacity:dim})
         .bindPopup(info + "<br><b>사진 EXIF 좌표</b><br>" +
                    p.lat.toFixed(6) + ", " + p.lon.toFixed(6))
         .on('click', ()=>pick(p.lat, p.lon, p.id, "사진 EXIF 좌표"))
@@ -231,7 +234,8 @@ function drawMap(){
         seen.push([p.alt_lat,p.alt_lon]);
       }
       L.marker([p.lat,p.lon], {icon: L.divIcon({className:'lbl',
-        html:p.id.replace('point',''), iconSize:[22,12], iconAnchor:[-6,14]})}).addTo(MLAYER);
+        html:p.id.replace('point','').replace('가로수','G').replace('수관','C'),
+        iconSize:[22,12], iconAnchor:[-6,14]})}).addTo(MLAYER);
     }
   }
   if (MY){
@@ -264,12 +268,20 @@ function renderTargets(){
   drawMap();
   const box = $("tgtList");
   box.innerHTML = "";
-  const g0 = TGT.groups[0];
-  $("tgtWhy").innerHTML = "<b>" + TGT.groups.map(g=>g.title).join(" · ") + "</b><br>" +
-    g0.why + "<br><b>할 일:</b> " + g0.do +
+  $("tgtWhy").innerHTML =
+    TGT.groups.map(g=>"<b>" + g.title + "</b> (" + g.points.length + ")").join(" · ") +
     (MY ? "<br>현재 위치 정확도 ±" + Math.round(MY[2]) + " m" : "");
 
   for (const g of TGT.groups){
+    // 그룹 머리 — 왜 가는지, 뭘 하는지를 현장에서 바로 읽게 둔다.
+    const h = document.createElement("div");
+    h.style.cssText = "margin:14px 0 2px;padding:10px 12px;border-radius:10px;" +
+                      "background:#eef1f6;border:1px solid var(--line)";
+    h.innerHTML = "<b style='font-size:14px'>" + g.title + "</b>" +
+      "<div style='color:var(--mut);font-size:12px;margin-top:4px'>" + (g.why||"") + "</div>" +
+      "<div style='font-size:12.5px;margin-top:6px'><b>할 일:</b> " + (g.do||"") + "</div>";
+    box.appendChild(h);
+
     const rows = g.points.map(p=>({p, d: MY ? distM(MY[0],MY[1],p.lat,p.lon) : null}));
     if (MY) rows.sort((a,b)=>a.d-b.d);
     for (const {p, d} of rows){
