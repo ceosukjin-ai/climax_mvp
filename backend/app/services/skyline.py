@@ -192,26 +192,101 @@ def _svf_from_horizon(h: list[float]) -> float:
     return max(0.0, min(1.0, 1.0 - sum(math.sin(math.radians(b)) ** 2 for b in h) / len(h)))
 
 
+def _canopy_horizon(canopy: list, az_step: int) -> list[float]:
+    """수관 화소의 방위별 상승각 [deg]. `geo.canopy_items()` 형식 (정사각 폴리곤, 수고 m).
+
+    관측점을 **품은** 화소는 geo 와 **같은 edge 규칙**을 쓴다 — 화소 반경 거리의 나무로 본다.
+    (zenith 로 두면 화소 안에서 SVF 가 1-τ 로 포화한다. 2026-09-15 확인.)
+    """
+    from app.services.geo import _point_in_ring, _ray_ring_hit
+    items, self_deg = [], 0.0
+    for ring, H in canopy or []:
+        h = H - EYE_M
+        if h <= 0 or len(ring) < 4:
+            continue
+        if _point_in_ring(0.0, 0.0, ring):
+            xs = [x for x, _y in ring]; ys = [_y for _x, _y in ring]
+            rad = (abs(max(xs) - min(xs)) + abs(max(ys) - min(ys))) / 4.0
+            if rad > 0.1:
+                self_deg = max(self_deg, math.degrees(math.atan2(h, rad)))
+            continue
+        items.append((ring, h))
+    n = 360 // az_step
+    out = [self_deg] * n
+    for i in range(n):
+        az = math.radians(i * az_step)
+        dx, dy = math.sin(az), math.cos(az)
+        b = self_deg
+        for ring, h in items:
+            t = _ray_ring_hit(dx, dy, ring)
+            if t is not None:
+                v = math.degrees(math.atan2(h, t))
+                if v > b:
+                    b = v
+        out[i] = b
+    return out
+
+
+def _svf_blend(hor_b: list[float], hor_c: list[float] | None) -> float:
+    """건물 지평선과 수관 지평선을 합쳐 SVF (2026-09-15).
+
+        방위별 차폐 = sin²β_건물 + max(0, sin²β_수관 - sin²β_건물) x (1 - τ)
+
+    τ 는 유효 차폐율의 여집합(`geo.CANOPY_TAU`, 실측 스캔으로 0.35). 잎 투과율이 아니다 —
+    래스터가 10 m 격자 최대값이라 화소 점유율이 섞여 있다.
+
+    ⚠️ 이 함수가 없으면 격자와 실시간 계산이 **서로 다른 값**을 낸다.
+       `geo.svf_geometric` 은 수관을 보는데 격자는 안 봤다(2026-09-15 이전).
+       격자를 재계산할 때 반드시 같이 들어가야 한다.
+    """
+    if not hor_c:
+        return _svf_from_horizon(hor_b)
+    from app.services.geo import CANOPY_TAU
+    k = 1.0 - CANOPY_TAU
+    s = 0.0
+    for b, c in zip(hor_b, hor_c):
+        sb = math.sin(math.radians(b)) ** 2
+        sc = math.sin(math.radians(c)) ** 2
+        s += sb + max(0.0, sc - sb) * k
+    return max(0.0, min(1.0, 1.0 - s / len(hor_b)))
+
+
 def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) -> Skyline:
     """오늘 검증된 절차 그대로: 건물 밖으로 스냅 → 가로 중심선 스냅 → 도로축 ±4m 3점 중앙값(SVF).
     horizon 은 중심점에서 5°, SVF 는 2° 로 계산(svf_geometric 과 동일 값)."""
     from app.services.geo import _snap_outside, _snap_to_street_center, _shift_rings, street_width_geometric  # noqa: F401
     if not rings:
         return Skyline(cell_id(lat, lon), lat, lon, [0.0] * N_AZ, 1.0, 0.0, None, None, None, 0, 0.0, src)
+    # 수관 — 스냅을 따라가야 한다. 두 스냅은 평행이동만 하므로 _probe_delta 로 이동량을 되찾는다
+    # (geo.svf_geometric 과 **완전히 같은 절차**. 다르면 격자와 실시간 값이 갈라진다).
+    from app.services.geo import canopy_items, _shift_items, _probe_delta
+    canopy = canopy_items(lat, lon)
+    _b0 = rings
     rings, _snapped = _snap_outside(rings)
+    _ox, _oy = _probe_delta(_b0, rings)
+    _b0 = rings
     rings, centered, axis = _snap_to_street_center(rings)
+    _dx, _dy = _probe_delta(_b0, rings)
+    canopy = _shift_items(canopy, _ox + _dx, _oy + _dy)
+
     hor = _horizon_np if _np is not None else _horizon_from_rings
-    horizon5, n_bld = hor(rings, AZ_STEP)
+    horizon5, n_bld = hor(rings, AZ_STEP)     # 저장되는 지평선은 **건물만** — 볕/그늘 판정용
     if axis is not None:
         vals = []
         ax = math.radians(axis)
         for off in (-4.0, 0.0, 4.0):
-            rr, _ = _snap_outside(_shift_rings(rings, math.sin(ax) * off, math.cos(ax) * off))
-            vals.append(_svf_from_horizon(hor(rr, SVF_AZ_STEP)[0]))
+            _sx, _sy = math.sin(ax) * off, math.cos(ax) * off
+            _bb = _shift_rings(rings, _sx, _sy)
+            rr, _ = _snap_outside(_bb)
+            _ex, _ey = _probe_delta(_bb, rr)
+            _cc = _shift_items(canopy, _sx + _ex, _sy + _ey)
+            vals.append(_svf_blend(hor(rr, SVF_AZ_STEP)[0],
+                                   _canopy_horizon(_cc, SVF_AZ_STEP) if _cc else None))
         vals.sort()
         svf = vals[1]
     else:
-        svf = _svf_from_horizon(hor(rings, SVF_AZ_STEP)[0])
+        svf = _svf_blend(hor(rings, SVF_AZ_STEP)[0],
+                         _canopy_horizon(canopy, SVF_AZ_STEP) if canopy else None)
     # 가로폭·H/W — 중심점에서 마주보는 광선쌍 최소합 (street_width_geometric 과 같은 정의)
     width, hw = _width_np(rings) if _np is not None else _width_from_rings(rings)
     bvi = max(0.0, 1.0 - svf)      # 위성 GVI 가 나중에 빼 간다(orchestrator._analyze_geometry 와 동일)
