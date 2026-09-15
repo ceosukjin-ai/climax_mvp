@@ -92,10 +92,26 @@ def _height_m_from_props(props: dict, default_floors: int | None = None) -> floa
     """
     h = props.get("height")
     if h is not None:
+        hv = None
         try:
-            return float(str(h).strip().split()[0])
+            hv = float(str(h).strip().split()[0])
         except (TypeError, ValueError, IndexError):
-            pass
+            hv = None
+        if hv is not None and hv > 0:
+            # 층수와 모순이면 높이를 버린다 (2026-09-15).
+            # 표제부가 대지 단위로 붙어, 한 대지의 최고층 값이 부속동까지 덮어쓴 자료가 있다.
+            # 부산대 캠퍼스 실측: 조소실·음악관·테니스장관리동이 전부 height=44.8 m, 층수=1.
+            # 3.1 m 앞 건물이 44.8 m 면 상승각 85.9도 — PNU 27지점 과차폐(bias −0.25)의 원인.
+            # 층당 8 m 를 넘으면 모순으로 본다(엔씨백화점 7층 47.2 m = 6.7 m/층 은 통과).
+            _fl = 0
+            try:
+                _fl = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
+            except (TypeError, ValueError):
+                _fl = 0
+            if _fl >= 1 and hv > _fl * 8.0:
+                props["height_rejected"] = hv
+            else:
+                return hv
     try:
         floors = int(props.get("gro_flo_co") or props.get("building:levels") or 0)
     except (TypeError, ValueError):
@@ -1029,13 +1045,23 @@ def _apply_register_rows(props: dict, rows: list) -> None:
         m = [r for r in rows if r[0] and (r[0] == dong or dong in r[0] or r[0] in dong)]
         if m:
             pick = max(m, key=lambda r: r[1])
-    if pick is None:
-        pick = max(rows, key=lambda r: r[1])
-    if pick[1] > 0:
-        props["gro_flo_co"] = int(pick[1])
-        props["floors_src"] = "register"
-    if pick[2] and pick[2] > 0 and not props.get("height"):
-        props["height"] = float(pick[2])
+    if pick is not None:
+        # 동 이름이 맞은 행 — 층수·높이 모두 그 행에서 가져온다.
+        if pick[1] > 0:
+            props["gro_flo_co"] = int(pick[1])
+            props["floors_src"] = "register"
+        if pick[2] and pick[2] > 0 and not props.get("height"):
+            props["height"] = float(pick[2])
+        return
+    # 이름이 안 맞을 때 (2026-09-15 수정)
+    # 종전에는 **대지 최고층** 행을 골라 붙였다. 한 대지에 여러 동인 곳 — 대학·병원·단지·공장 —
+    # 에서 본관 값이 부속동까지 덮어쓴다. 부산대 캠퍼스가 통째로 그렇게 오염돼 있었다.
+    #   · 층수는 그 대지의 **중앙값**으로 보수적으로 채운다.
+    #   · **높이는 채우지 않는다.** 동을 특정하지 못하면 높이는 쓸 수 없는 값이다.
+    _fl = sorted(int(r[1]) for r in rows if r[1] and int(r[1]) > 0)
+    if _fl:
+        props["gro_flo_co"] = _fl[len(_fl) // 2]
+        props["floors_src"] = "register_median"
 
 
 async def _rings_from_vworld(
