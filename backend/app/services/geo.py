@@ -532,25 +532,188 @@ async def svf_geometric(
     rings, src = await _rings_cached(lat, lon)
     if not rings:
         return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 폴리곤 없음"}
+    # 수관(2026-09-15) — **스냅을 따라가야 한다.** 엔진은 좌표를 두 번 옮긴다:
+    #   ① 실측 좌표 → _snap_outside(건물 안이면 밖으로) → ② → _snap_to_street_center(가로 중심선) → ③
+    # 건물은 ③ 기준으로 다시 계산되는데 수관을 ① 에서 읽으면 최대 30 m 어긋난다
+    # (옆 골목 나무가 머리 위에 있는 것으로 계산된다). 두 스냅은 **평행이동만** 하므로
+    # _probe_delta 로 이동량을 되찾아 수관도 같이 옮긴다.
+    canopy = canopy_items(lat, lon)
+    _before = rings
     rings, snapped = _snap_outside(rings)   # GPS 오차로 건물 안이면 골목으로 끌어냄
+    _ox, _oy = _probe_delta(_before, rings)
+    _before = rings
     rings, centered, axis = _snap_to_street_center(rings)   # 벽 → 가로 중심선
+    _dx2, _dy2 = _probe_delta(_before, rings)
+    canopy = _shift_items(canopy, _ox + _dx2, _oy + _dy2)
     if axis is not None:
         # 도로축 따라 ±4m 3점의 중앙값 — GPS 5~10m 오차에 강건 (2026-09-10)
         vals = []
         ax = math.radians(axis)
         for off in (-4.0, 0.0, 4.0):
-            rr, _ = _snap_outside(_shift_rings(rings, math.sin(ax) * off, math.cos(ax) * off))
-            vals.append(_svf_from_rings(rr, eye_height_m, az_step_deg, default_floors))
+            _sx, _sy = math.sin(ax) * off, math.cos(ax) * off
+            _b = _shift_rings(rings, _sx, _sy)
+            rr, _ = _snap_outside(_b)
+            _ex, _ey = _probe_delta(_b, rr)
+            vals.append(_svf_from_rings(rr, eye_height_m, az_step_deg, default_floors,
+                                        canopy=_shift_items(canopy, _sx + _ex, _sy + _ey)))
         vals.sort()
         svf, nb = vals[1]
         return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
-                "centered_m": round(centered, 1), "street_axis_deg": axis}
-    svf, nb = _svf_from_rings(rings, eye_height_m, az_step_deg, default_floors)
-    return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1), "centered_m": 0.0}
+                "centered_m": round(centered, 1), "street_axis_deg": axis,
+                "n_canopy": len(canopy)}
+    svf, nb = _svf_from_rings(rings, eye_height_m, az_step_deg, default_floors, canopy=canopy)
+    return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
+            "centered_m": 0.0, "n_canopy": len(canopy)}
 
 
-def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_floors: int) -> tuple[float, int]:
-    """원점(0,0)에서 ray-cast SVF. 반환 (svf, 차폐 건물 수)."""
+# === 수관 차폐 — 위성 수관고 (2026-09-15) ===
+# 왜 필요한가 (3월 PNU 27지점 실측):
+#     GVI 0.00~0.05 (나무없음)  오차 0.101
+#     GVI 0.25~1.01 (나무많음)  오차 0.587
+#   같은 엔진인데 나무 있는 곳에서만 6배로 벌어진다. 엔진이 나무를 아예 안 보기 때문이다.
+#   건물 높이를 아무리 다듬어도 이 0.587 은 안 줄어든다 — 실제로 부산대 캠퍼스 2,118동 중
+#   건축물대장으로 높이를 받을 수 있는 건 37동뿐이었다(9/15 배치 진단).
+#
+# 왜 보정식이 아니라 기하인가:
+#   `SVF - a x GVI` 식으로 때우면 **사진 GVI 가 있어야만** 돌아간다. 무영상 전지구 산출이
+#   목표라 사진 없는 곳에서 못 쓴다. 수관고 화소를 건물과 **같은 차폐물**로 보고 같은
+#   ray-cast 에 태우면 SVF 와 그늘 판정에 동시에 쓰이고 해외로 그대로 확장된다.
+#
+# 결합 규칙 (자유 파라미터는 τ 하나뿐):
+#     방위별 차폐 = sin²β_건물 + max(0, sin²β_수관 - sin²β_건물) x (1 - τ)
+#     SVF = 1 - mean(방위별 차폐)                                   (Steyn 1980)
+#   τ=1 이면 수관을 안 보는 현행과 같고, τ=0 이면 건물처럼 완전 불투명이다.
+#
+# ⚠️ τ 는 '잎 투과율'이 **아니다**. 래스터가 10 m 격자의 **최대값**이라 나무 한 그루가 화소를
+#    다 채운 것처럼 잡힌다. τ 는 (화소 점유율 x 잎 불투과율) 을 합친 **유효 차폐율**이다.
+#    논문에 그렇게 적을 것. 3월(낙엽수 잎 전)과 8월에서 최적 τ 가 같게 나온 것도 이 해석을 뒷받침한다.
+#
+# 106지점 격자 훑기 결과 (반경 25/35/45 m 가 소수 셋째자리까지 동일 -> 30 m 로 고정):
+#     반경 30 m / 최소수고 3 m / τ 0.55
+#       3월 PNU 27   MAE 0.317 -> 0.170   bias +0.302 -> +0.055   r 0.269 -> 0.543
+#       8월 부산 79  MAE 0.121 -> 0.108
+#       8월 무목 44  MAE 0.085 -> 0.080   <- 대조군. 나빠지면 기각이었고, 오히려 개선됐다.
+#     LOO MAE 0.171 -> 0.129 — 과적합이 아니다.
+#   최소수고 2 m 가 MAE 0.162 로 근소하게 낫지만 τ 를 조금만 내려도 대조군이 실격선에 붙는다.
+#   2 m 는 관목·건물 가장자리 잡음일 가능성이 높고 눈높이 1.5 m 에서 하늘을 막지도 못한다.
+#   0.008 을 포기하고 안정성을 택했다. **사전 규칙이 아니라 판단이다.**
+#
+# 래스터: Meta/WRI 수관고. ENVI Byte, 좌상단 128.70/35.45, 화소 0.0001도, 값 0~40 m.
+#         GDAL 불필요 — numpy.memmap. 부산 전용이며, 해외는 같은 형식의 전지구본으로 교체한다.
+CANOPY_IMG = os.environ.get("CANOPY_IMG") or os.path.join(
+    os.path.dirname(_LOCAL_BUILDING_DIR), "canopy", "busan_canopy_max.img")
+CANOPY_W, CANOPY_H = 7000, 5000
+CANOPY_LON0, CANOPY_LAT0, CANOPY_PX = 128.70, 35.45, 0.0001
+CANOPY_RAD_M = float(os.environ.get("CANOPY_RAD_M", "30"))
+CANOPY_MIN_H = float(os.environ.get("CANOPY_MIN_H", "3"))
+CANOPY_TAU = float(os.environ.get("CANOPY_TAU", "0.55"))
+CANOPY_ON = os.environ.get("GEO_CANOPY", "1") != "0"
+
+_CANOPY_RAS = None          # None=미시도, False=없음, 그 외=memmap
+_CANOPY_CACHE: dict[tuple[int, int], list] = {}
+
+
+def _canopy_raster():
+    """수관고 래스터 memmap. 파일이 없거나 numpy 가 없으면 None — 엔진은 그대로 건물만으로 돈다."""
+    global _CANOPY_RAS
+    if _CANOPY_RAS is None:
+        if not CANOPY_ON or not os.path.isfile(CANOPY_IMG):
+            _CANOPY_RAS = False
+            logger.info("[canopy] 수관고 래스터 없음({}) — 건물만으로 계산한다", CANOPY_IMG)
+        else:
+            try:
+                import numpy as _np
+                _CANOPY_RAS = _np.memmap(CANOPY_IMG, dtype=_np.uint8, mode="r",
+                                         shape=(CANOPY_H, CANOPY_W))
+                logger.info("[canopy] 수관고 래스터 적재 {} ({}x{})", CANOPY_IMG, CANOPY_W, CANOPY_H)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[canopy] 래스터 적재 실패: {}", e)
+                _CANOPY_RAS = False
+    return _CANOPY_RAS or None
+
+
+def canopy_items(lat: float, lon: float, rad_m: float | None = None,
+                 min_h: float | None = None) -> list[tuple[list[tuple[float, float]], float]]:
+    """관측점 주변 수관 화소를 (정사각 폴리곤, 수고 m) 목록으로. 좌표는 관측점 기준 로컬 m.
+
+    화소를 중심±각폭으로 근사하지 않고 **정사각 폴리곤**으로 만들어 건물과 같은
+    `_ray_ring_hit` 으로 쏜다. 근사에서 오는 의심을 남기지 않기 위해서다.
+    화소는 위경도 격자라 m 로는 직사각이다 — 변 길이를 위도별로 따로 계산한다.
+    """
+    r = _canopy_raster()
+    if r is None:
+        return []
+    rad_m = CANOPY_RAD_M if rad_m is None else rad_m
+    min_h = CANOPY_MIN_H if min_h is None else min_h
+    row0 = int(round((CANOPY_LAT0 - lat) / CANOPY_PX))
+    col0 = int(round((lon - CANOPY_LON0) / CANOPY_PX))
+    if row0 < 0 or row0 >= CANOPY_H or col0 < 0 or col0 >= CANOPY_W:
+        return []                      # 래스터 범위 밖 (부산 전용본)
+    key = (row0, col0)
+    hit = _CANOPY_CACHE.get(key)
+    if hit is not None:
+        return hit
+    m_lat = 111320.0 * CANOPY_PX
+    m_lon = 111320.0 * math.cos(math.radians(lat)) * CANOPY_PX
+    n_la = int(math.ceil(rad_m / m_lat)) + 1
+    n_lo = int(math.ceil(rad_m / m_lon)) + 1
+    hx, hy = m_lon / 2.0, m_lat / 2.0
+    out: list[tuple[list[tuple[float, float]], float]] = []
+    for dr in range(-n_la, n_la + 1):
+        rr = row0 + dr
+        if rr < 0 or rr >= CANOPY_H:
+            continue
+        for dc in range(-n_lo, n_lo + 1):
+            cc = col0 + dc
+            if cc < 0 or cc >= CANOPY_W:
+                continue
+            h = float(r[rr, cc])
+            if h < min_h:
+                continue
+            x = ((cc + 0.5) * CANOPY_PX + CANOPY_LON0 - lon) * 111320.0 * math.cos(math.radians(lat))
+            y = (CANOPY_LAT0 - (rr + 0.5) * CANOPY_PX - lat) * 111320.0
+            if math.hypot(x, y) > rad_m + max(m_lat, m_lon):
+                continue
+            out.append(([(x - hx, y - hy), (x + hx, y - hy), (x + hx, y + hy),
+                         (x - hx, y + hy), (x - hx, y - hy)], h))
+    if len(_CANOPY_CACHE) > _LOCAL_TILE_CACHE_MAX:
+        for k in list(_CANOPY_CACHE)[: len(_CANOPY_CACHE) // 2]:
+            _CANOPY_CACHE.pop(k, None)
+    _CANOPY_CACHE[key] = out
+    return out
+
+
+def _shift_items(items: list, ox: float, oy: float) -> list:
+    """수관 폴리곤을 rings 와 같은 양만큼 평행이동 (스냅을 따라가게)."""
+    if not items or (ox == 0.0 and oy == 0.0):
+        return items
+    return [([(x - ox, y - oy) for x, y in ring], h) for ring, h in items]
+
+
+def _probe_delta(before: list, after: list) -> tuple[float, float]:
+    """스냅 앞뒤 rings 를 비교해 원점이 얼마나 옮겨졌는지 되찾는다.
+
+    `_snap_outside` 와 `_snap_to_street_center` 는 **평행이동만** 한다(원소 순서·꼭짓점 순서 불변).
+    그래서 첫 꼭짓점 하나만 비교하면 이동량이 정확히 나온다. 이동이 없으면 같은 객체를 돌려주므로
+    (0,0) 이 된다. 수관을 관측점과 **같은 자리**에서 읽으려면 이 값이 필요하다.
+    """
+    if before is after or not before or not after:
+        return 0.0, 0.0
+    try:
+        bx, by = before[0][0][0]
+        ax, ay = after[0][0][0]
+    except (IndexError, TypeError, ValueError):
+        return 0.0, 0.0
+    return bx - ax, by - ay
+
+
+def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_floors: int,
+                    canopy: list | None = None) -> tuple[float, int]:
+    """원점(0,0)에서 ray-cast SVF. 반환 (svf, 차폐 건물 수).
+
+    `canopy` 는 (정사각 폴리곤, 수고 m) 목록 — 건물과 **같은 광선**에 태우되, 건물보다 높은
+    부분만 (1-CANOPY_TAU) 만큼 막는다. None 이면 종전과 완전히 동일하게 동작한다.
+    """
     # (외곽선 좌표, 높이) — 점을 품은 건물은 제외(그 안이면 판정불가), 층수결측은 기본높이
     blds: list[tuple[list[tuple[float, float]], float]] = []
     for ring, props in rings:
@@ -563,7 +726,22 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
         if h <= 0:
             continue
         blds.append((ring, h))
-    if not blds:
+
+    # 수관 — 관측점을 품은 화소는 머리 위가 막힌 것이므로 천정까지 본다.
+    cnp: list[tuple[list, float]] = []
+    cnp_zenith = False
+    for ring, H in (canopy or []):
+        if len(ring) < 4:
+            continue
+        if _point_in_ring(0.0, 0.0, ring):
+            if H > eye_height_m:
+                cnp_zenith = True
+            continue
+        h = H - eye_height_m
+        if h > 0:
+            cnp.append((ring, h))
+
+    if not blds and not cnp and not cnp_zenith:
         return 1.0, 0
 
     n_sectors = max(1, int(360 / az_step_deg))
@@ -579,7 +757,21 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
             beta = math.atan2(h, t)
             if beta > beta_max:
                 beta_max = beta
-        sin2_sum += math.sin(beta_max) ** 2
+        blocked = math.sin(beta_max) ** 2
+        if cnp or cnp_zenith:
+            # 수관 지평선각 — 관측점이 수관 화소 안이면 그 방위는 천정까지 막혔다고 본다.
+            bt = math.pi / 2.0 if cnp_zenith else 0.0
+            if not cnp_zenith:
+                for ring, h in cnp:
+                    t = _ray_ring_hit(dx, dy, ring)
+                    if t is None:
+                        continue
+                    v = math.atan2(h, t)
+                    if v > bt:
+                        bt = v
+            # 건물보다 높은 부분만 (1-τ) 만큼 추가로 막는다. τ 는 유효 차폐율의 여집합이다.
+            blocked += max(0.0, math.sin(bt) ** 2 - blocked) * (1.0 - CANOPY_TAU)
+        sin2_sum += blocked
     svf = 1.0 - sin2_sum / n_sectors
     return round(max(0.0, min(1.0, svf)), 3), len(blds)
 
