@@ -40,7 +40,8 @@ def wkt(ring: list) -> str | None:
 
 async def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("geojsonl"); ap.add_argument("--src", default="osm")
+    ap.add_argument("geojsonl", help="geojsonseq 파일. '-' 면 표준입력(osmium export 에서 바로)")
+    ap.add_argument("--src", default="osm")
     ap.add_argument("--mark-bbox", nargs=4, type=float, metavar=("S", "W", "N", "E"))
     ap.add_argument("--batch", type=int, default=5000)
     a = ap.parse_args()
@@ -64,34 +65,40 @@ async def main():
                 await c.executemany(INSERT, buf)
             buf = []
 
-    with open(a.geojsonl, encoding="utf-8") as f:
+    # 표준입력 지원 (2026-09-16). 도로망과 같은 이유다 — 중간 geojsonl 이 수 GB 라
+    # WAS 디스크(여유 약 10 GB)가 먼저 찬다. osmium 이 뱉는 대로 바로 넣으면 그 파일이 안 생긴다.
+    f = sys.stdin if a.geojsonl == "-" else open(a.geojsonl, encoding="utf-8")
+    try:
         for line in f:
-            line = line.strip().lstrip("\x1e")
-            if not line.startswith("{"):
-                continue
-            ft = json.loads(line); p = ft.get("properties") or {}
-            if "building" not in p:
-                skip += 1; continue
-            oid = str(ft.get("id") or p.get("@id") or "")
-            if not oid or oid[0] not in "wra" or not oid[1:].isdigit():
-                skip += 1; continue
-            g = ft.get("geometry") or {}; t = g.get("type"); c_ = g.get("coordinates") or []
-            rings = [c_[0]] if t == "Polygon" else ([pp[0] for pp in c_ if pp] if t == "MultiPolygon" else [])
-            if not rings:
-                skip += 1; continue
-            tags = {k: p[k] for k in KEEP if k in p}
-            for k, ring in enumerate(rings):
-                w = wkt(ring)
-                if w is None:
+                line = line.strip().lstrip("\x1e")
+                if not line.startswith("{"):
                     continue
-                tk = tkey(ring[0][1], ring[0][0])
-                buf.append((f"{a.src}/{oid}" + (f":{k}" if k else ""), json.dumps(tags, ensure_ascii=False), w, tk))
-                per_tile[tk] = per_tile.get(tk, 0) + 1
-                n += 1
-            if len(buf) >= a.batch:
-                await flush()
-                if n % 200000 < a.batch:
-                    print(f"  건물 {n:,} ({time.time()-t0:.0f}s)", flush=True)
+                ft = json.loads(line); p = ft.get("properties") or {}
+                if "building" not in p:
+                    skip += 1; continue
+                oid = str(ft.get("id") or p.get("@id") or "")
+                if not oid or oid[0] not in "wra" or not oid[1:].isdigit():
+                    skip += 1; continue
+                g = ft.get("geometry") or {}; t = g.get("type"); c_ = g.get("coordinates") or []
+                rings = [c_[0]] if t == "Polygon" else ([pp[0] for pp in c_ if pp] if t == "MultiPolygon" else [])
+                if not rings:
+                    skip += 1; continue
+                tags = {k: p[k] for k in KEEP if k in p}
+                for k, ring in enumerate(rings):
+                    w = wkt(ring)
+                    if w is None:
+                        continue
+                    tk = tkey(ring[0][1], ring[0][0])
+                    buf.append((f"{a.src}/{oid}" + (f":{k}" if k else ""), json.dumps(tags, ensure_ascii=False), w, tk))
+                    per_tile[tk] = per_tile.get(tk, 0) + 1
+                    n += 1
+                if len(buf) >= a.batch:
+                    await flush()
+                    if n % 200000 < a.batch:
+                        print(f"  건물 {n:,} ({time.time()-t0:.0f}s)", flush=True)
+    finally:
+        if f is not sys.stdin:
+            f.close()
     await flush()
     marks = dict(per_tile)
     if a.mark_bbox:
