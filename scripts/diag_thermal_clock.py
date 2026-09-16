@@ -56,7 +56,7 @@ def main():
     if not shots:
         raise SystemExit(f"열화상을 못 찾았다: {root}")
 
-    print(f"\n{'날짜':<10}{'열화상':>7}{'실측':>6}{'최적오프셋':>11}{'평균거리':>10}{'차점과차이':>11}")
+    print(f"\n{'날짜':<10}{'열화상':>7}{'실측':>6}{'최적오프셋':>11}{'중앙거리':>10}{'차점과차이':>11}")
     for day in sorted(shots):
         t = sorted(shots[day])
         ref = FIELD.get(day)
@@ -64,11 +64,15 @@ def main():
             print(f"{day:<10}{len(t):>7}{'-':>6}   (실측 시각 없음 — FIELD 에 추가 필요)")
             continue
         r = [mins(x) for x in ref]
+        # 평균이 아니라 **중앙값**으로 잰다 (2026-09-16).
+        # 한 번 갔다가 못 찍어서 다시 가 찍은 사진이 섞여 있다(8/25). 그런 사진은 짝이 될
+        # 실측이 아예 없어 거리가 크게 나오고, 평균을 쓰면 그 몇 장이 오프셋을 끌고 간다.
+        # 중앙값은 "사진의 절반 이상이 얼마나 잘 맞나"를 보므로 재방문분에 휘둘리지 않는다.
+        import statistics as _st
         scores = []
         for off in range(-90, 91):
-            # 각 열화상에서 가장 가까운 실측까지의 거리 평균
-            d = sum(min(abs(x + off - y) for y in r) for x in t) / len(t)
-            scores.append((d, off))
+            ds = [min(abs(x + off - y) for y in r) for x in t]
+            scores.append((_st.median(ds), off))
         scores.sort()
         best_d, best_off = scores[0]
         # 차점: 최적에서 10분 이상 떨어진 오프셋 중 가장 좋은 것 (봉우리 폭 때문)
@@ -77,7 +81,8 @@ def main():
 
     print("\n읽는 법:")
     print("  · '최적오프셋' 이 그 세션에서 카메라에 더해야 할 분이다(+33 = 카메라가 33분 늦음).")
-    print("  · '평균거리' 가 3분 안쪽이면 짝이 잘 맞은 것이다.")
+    print("  · '중앙거리' 가 3분 안쪽이면 짝이 잘 맞은 것이다. 평균이 아니라 중앙값이라")
+    print("    다시 가서 찍은 사진(짝이 없는 것)이 섞여 있어도 흔들리지 않는다.")
     print("  · '차점과차이' 가 작으면(<2분) 봉우리가 뚜렷하지 않다 — 그 세션은 믿지 말 것.")
     print("  · 세션마다 오프셋이 같으면 → 한 번 잘못 맞춰진 것. 다르면 → 중간에 건드린 것이다.")
 
