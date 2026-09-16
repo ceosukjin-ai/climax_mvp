@@ -9,8 +9,10 @@
 #
 # 디스크: 도로망과 같은 방식 — osmium 출력을 파이프로 바로 넣어 중간 파일을 만들지 않는다.
 #
-#   bash scripts/load_jp_bldg.sh yokohama
-#   AREAS="yokohama osaka nagoya" nohup bash scripts/load_jp_bldg.sh > ~/jp_bldg.log 2>&1 &
+#   도시 하나:  bash scripts/load_jp_bldg.sh yokohama
+#   일본 전국:  AREAS="all-kanto all-kansai all-chubu all-kyushu all-tohoku all-chugoku all-shikoku all-hokkaido" \
+#                 nohup bash scripts/load_jp_bldg.sh > ~/jp_bldg_all.log 2>&1 &
+#   ⚠️ 전국은 DB 쓰기가 무겁다. 스카이라인 격자 배치와 **같이 돌리지 말 것** — 둘 다 같은 DB 를 때린다.
 set -u
 cd "$(dirname "$0")/.."
 D=${D:-$HOME/data}; mkdir -p "$D"
@@ -28,6 +30,20 @@ area_def() {
     nagoya)   echo "chubu  35.05 136.83 35.25 137.05" ;;
     fukuoka)  echo "kyushu 33.53 130.30 33.66 130.48" ;;
     sapporo)  echo "hokkaido 43.00 141.25 43.12 141.45" ;;
+    # 지방 통째로 (2026-09-16). 도시만 넣었더니 그 사이와 시골이 비어 답이 안 나온다
+    # (벳푸·나하·후지산기슭·지치부 산간 모두 실패). bldg_poly 는 동당 0.41 KB
+    # (2,056만 동 / 8.4 GB)라 일본 전국 약 8,500만 동이 35 GB — 80 GB 안에 들어간다.
+    # ⚠️ 2026-09-16 정정: 앞서 동당 1.8 KB 로 보고 "전국 155 GB, 불가"라고 판단했다.
+    #    459만 동으로 나눈 계산 착오였다. 전국이 가능하다.
+    # bbox 는 각 지방을 넉넉히 덮는다. 겹쳐도 UPSERT 라 문제없다.
+    all-hokkaido) echo "hokkaido 41.20 139.20 45.70 146.10" ;;
+    all-tohoku)   echo "tohoku   36.70 139.00 41.70 142.20" ;;
+    all-kanto)    echo "kanto    34.80 138.30 37.30 141.00" ;;
+    all-chubu)    echo "chubu    34.40 135.70 38.70 140.00" ;;
+    all-kansai)   echo "kansai   33.30 133.90 36.50 136.60" ;;
+    all-chugoku)  echo "chugoku  33.70 130.70 36.10 134.60" ;;
+    all-shikoku)  echo "shikoku  32.60 131.90 34.60 134.90" ;;
+    all-kyushu)   echo "kyushu   23.90 122.80 34.90 132.20" ;;   # 오키나와 포함
     *) echo ""; ;;
   esac
 }
