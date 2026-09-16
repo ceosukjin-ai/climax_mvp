@@ -1424,7 +1424,12 @@ async def field_check(
         "pvpti": round(result.pvpti, 2),
         "risk": result.risk_level,
         "index": base.index,
-        "mrt": round(base.tr, 2),          # 엔진 Tmrt
+        "mrt": round(base.tr, 2),          # 엔진 Tmrt — **사람 기준**
+        # 흑구가 읽었을 Tmrt (2026-09-16). 현장 흑구계(Extech HT200, Ø50mm)와 맞댈 값은 이쪽이다.
+        # 사람 기준과 비교하면 정의차(구는 fp 0.25 고정·흡수 0.95, 사람은 fp 0.08~0.3·0.7)가
+        # 통째로 잔차로 잡힌다 — 9/5 문서의 "MRT 잔여 +9.6°는 정의차"가 그것이다.
+        "mrt_globe": (round(result.tmrt_globe, 2)
+                      if getattr(result, "tmrt_globe", None) else None),
         "ta": round(base.tdb, 2),          # 엔진이 쓴 기온(기상청)
         "rh": round(base.rh, 1),
         "u_p": round(base.v_input, 2),     # 보행자 풍속 (클램프 전)
@@ -1440,6 +1445,25 @@ async def field_check(
                           ("pet", "pvpti"), ("mrt", "mrt")):
         if meas.get(k_meas) is not None and est.get(k_est) is not None:
             resid[k_est] = round(est[k_est] - float(meas[k_meas]), 2)
+
+    # 흑구 잔차 (2026-09-16). 현장에서 재는 것은 흑구온도(globe_c)인데 여기서 아무 잔차도
+    # 만들지 않아, 실측을 저장해도 **MRT 대조가 전혀 쌓이지 않고 있었다.**
+    # 실측을 변환하지 않는다 — 엔진의 흑구 예측(mrt_globe)과 실측 흑구온도에서 같은 식으로
+    # 구한 Tmrt 를 맞댄다. ISO 7726 강제대류, Extech HT200 은 Ø50mm·ε0.95.
+    _tg = meas.get("globe_c")
+    if _tg is not None and est.get("mrt_globe") is not None:
+        try:
+            _ta = float(meas.get("ta", est["ta"]))
+            _v = max(float(meas.get("wind_ms", est["u_p"])), 0.05)
+            _tg = float(_tg)
+            _D, _eps = float(body.get("globe_d_m") or 0.05), 0.95
+            _obs = (((_tg + 273.15) ** 4
+                     + 1.1e8 * _v ** 0.6 / (_eps * _D ** 0.4) * (_tg - _ta)) ** 0.25) - 273.15
+            resid["mrt_globe"] = round(est["mrt_globe"] - _obs, 2)
+            est["mrt_globe_obs"] = round(_obs, 2)
+            est["globe_d_m"] = _D
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
 
     archive = getattr(request.app.state, "archive", None)
     if archive is not None:

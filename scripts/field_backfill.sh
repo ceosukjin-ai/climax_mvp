@@ -36,9 +36,11 @@ except Exception:
 e = d.get('est') or {}
 r = d.get('residual') or {}
 print('저장' if d.get('saved') else '저장안됨',
-      ' 엔진 pVPTI', e.get('pvpti'), ' MRT', e.get('mrt'), ' Ta', e.get('ta'),
-      '| 잔차 MRT', r.get('mrt'), ' 풍속', r.get('u_p'),
-      '| 태양', e.get('solar_at') or '현재시각')
+      ' pVPTI', e.get('pvpti'), ' Ta', e.get('ta'),
+      '| 흑구MRT 엔진', e.get('mrt_globe'), ' 실측', e.get('mrt_globe_obs'),
+      ' 잔차', r.get('mrt_globe'),
+      '| 사람MRT', e.get('mrt'),
+      '|', e.get('solar_at') or '현재시각')
 "
 done < "$F"
 echo "보낸 줄 $n"

@@ -76,6 +76,11 @@ class PersonalizedVPTIResult:
     season: Season                # 계절 (base 로부터)
     stress_category: str          # 개인화 PET 열스트레스 등급
     comfort: ComfortResult        # 개인화 PET 상세
+    # **흑구가 읽었을** Tmrt (2026-09-16). mrt.py 가 이미 계산하는데 여기까지 안 올라와서
+    # 현장 실측 대조가 사람 기준 Tmrt 와 비교되고 있었다. 흑구는 사람보다 뜨겁게 읽으므로
+    # (구는 fp=0.25 고정·a_k 0.95, 사람은 fp 0.08~0.3·a_k 0.7) 그 차이가 통째로 잔차로 잡혔다.
+    # 9/5 문서의 "MRT 잔여 +9.6°는 정의차"가 이것이다. 실측과 맞댈 값은 이쪽이다.
+    tmrt_globe: float | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -303,4 +308,11 @@ def compute_pvpti(
     road_axis_deg, lat, lon, when, ...)를 그대로 전달한다.
     """
     base = compute_vpti_thermal(config=config, **thermal_kwargs)
-    return evaluate_personalized(base, bio, profile, config)
+    out = evaluate_personalized(base, bio, profile, config)
+    # frozen dataclass 라 대입이 안 된다 — replace 로 새로 만든다.
+    _m = getattr(base, "mrt", None)
+    _g = getattr(_m, "tmrt_globe", None) if _m is not None else None
+    if _g:
+        import dataclasses as _dc
+        out = _dc.replace(out, tmrt_globe=float(_g))
+    return out
