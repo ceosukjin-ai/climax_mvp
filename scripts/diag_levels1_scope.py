@@ -29,17 +29,33 @@ async def main():
     pool = await _get_pool()
     if pool is None:
         print("DB 연결 없음"); return
-    print(f"\n{'구역':<14}{'건물':>9}{'levels=1':>10}{'비율':>7}{'levels중앙':>11}{'height보유':>10}{'src':>22}")
+    # levels=1 비율만으로는 못 가린다 (2026-09-16). 보수동 25%·중앙값 1층은 실제로 단층집이
+    # 많은 동네라 정상일 수 있다. 진짜 신호는 **height 가 levels 와 모순돼 엔진이 버리는 것**이다:
+    # 제2공학관은 height 44.8 / levels 1 이라 `height > 층수 x 8` 규칙에 걸려 44.8 을 버리고
+    # levels 1 -> 3.9 m 로 떨어진다. 그 결과 5층 건물이 하늘을 안 막는다.
+    # '버림+1층' 이 그 지역에서 얼마나 되는지가 오염의 크기다.
+    print(f"\n{'구역':<14}{'건물':>9}{'lv=1':>7}{'중앙':>5}"
+          f"{'height버림':>10}{'버림+1층':>9}{'비율':>6}{'height종류':>11}{'최빈height':>11}")
     for nm, s, w, n, e in AREAS:
         r = await pool.fetchrow(
             """
+            WITH b AS (
+              SELECT NULLIF(substring(btrim(tags->>'height') from '^[0-9]+(?:\.[0-9]+)?'),'')::float h,
+                     NULLIF(regexp_replace(tags->>'building:levels','[^0-9]','','g'),'')::int fl
+              FROM bldg_poly WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326)
+            )
             SELECT count(*) tot,
-                   count(*) FILTER (WHERE (tags->>'building:levels')='1') lv1,
-                   count(*) FILTER (WHERE tags ? 'height') hh,
-                   percentile_disc(0.5) WITHIN GROUP (
-                       ORDER BY NULLIF(regexp_replace(tags->>'building:levels','[^0-9]','','g'),'')::int
-                   ) med
-            FROM bldg_poly WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326)
+                   count(*) FILTER (WHERE fl=1) lv1,
+                   percentile_disc(0.5) WITHIN GROUP (ORDER BY fl) med,
+                   count(*) FILTER (WHERE h IS NOT NULL AND fl IS NOT NULL AND h > fl*8.0) rej,
+                   count(*) FILTER (WHERE h IS NOT NULL AND fl=1 AND h > 8.0) rej1
+            FROM b
+            """, w, s, e, n)
+        hv = await pool.fetchrow(
+            """
+            SELECT count(DISTINCT tags->>'height') k,
+                   mode() WITHIN GROUP (ORDER BY tags->>'height') m
+            FROM bldg_poly WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326) AND tags ? 'height'
             """, w, s, e, n)
         src = await pool.fetchval(
             "SELECT string_agg(DISTINCT src, ',') FROM bldg_tile "
@@ -47,12 +63,17 @@ async def main():
             [f"{la}_{lo}" for la in range(int(s*100), int(n*100)+1)
              for lo in range(int(w*100), int(e*100)+1)])
         tot = r["tot"] or 0
-        print(f"{nm:<14}{tot:>9,}{r['lv1'] or 0:>10,}"
-              f"{(100*(r['lv1'] or 0)/max(tot,1)):>6.0f}%{str(r['med']):>11}"
-              f"{r['hh'] or 0:>10,}{str(src)[:22]:>22}")
+        print(f"{nm:<14}{tot:>9,}{r['lv1'] or 0:>7,}{str(r['med']):>5}"
+              f"{r['rej'] or 0:>10,}{r['rej1'] or 0:>9,}"
+              f"{(100*(r['rej1'] or 0)/max(tot,1)):>5.0f}%"
+              f"{hv['k'] or 0:>11,}{str(hv['m'])[:9]:>11}")
+        _ = src
     print("\n읽는 법:")
-    print("  · 'levels=1 비율' 이 캠퍼스만 높으면 국소 문제, 부산 전역이 높으면 논문이 흔들린다.")
-    print("  · 'src' 는 그 타일을 무엇으로 적재했는지다. 구역마다 다르면 적재 경로가 범인이다.")
+    print("  · 'height버림' — height 가 층수 x 8 을 넘어 엔진이 버린 건물. 오염의 직접 증거다.")
+    print("  · '버림+1층' — 버린 뒤 levels=1 로 떨어져 **3.9 m 가 된** 건물. 이게 하늘을 안 막는다.")
+    print("  · 'height종류' 가 건물 수에 비해 아주 적고 '최빈height' 가 한 값에 몰려 있으면,")
+    print("    지번 하나로 묶여 같은 값이 박힌 것이다(캠퍼스 44.8 처럼).")
+    print("  · '버림+1층 비율' 이 캠퍼스만 높으면 국소, 부산 전역이 높으면 논문 수치를 다시 내야 한다.")
 
 
 asyncio.run(main())
