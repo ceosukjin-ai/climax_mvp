@@ -42,9 +42,36 @@ async def main():
                               "WHERE lat BETWEEN 35.0 AND 35.4 AND lon BETWEEN 128.8 AND 129.3")
     print(f"  전체 {tot:,}   도쿄권 {jp:,}   부산권 {kr:,}")
 
+    # [3] 배치가 쓸 재료가 도쿄에 있는지 (2026-09-16).
+    # build_skyline_grid 는 osm_way(보행도로)에서 격자를 뽑고, bldg_tile 로 걸러낸다.
+    # 둘 중 하나라도 비면 7시간 돌려 0칸이 나온다. 돌리기 전에 여기서 막는다.
+    print("\n[3] 도쿄 배치 재료")
+    async with pool.acquire() as c:
+        for nm, s0, n0, w0, e0 in (("도쿄23구", 35.50, 35.82, 139.55, 139.92),
+                                   ("부산(대조)", 35.05, 35.30, 128.95, 129.25)):
+            try:
+                ways = await c.fetchval(
+                    "SELECT count(*) FROM osm_way WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326) "
+                    "AND tags ? 'highway' AND GeometryType(geom)='LINESTRING'", w0, s0, e0, n0)
+            except Exception as ex:  # noqa: BLE001
+                ways = f"조회실패({type(ex).__name__})"
+            try:
+                tiles = await c.fetchval(
+                    "SELECT count(*) FROM bldg_tile WHERE tkey = ANY($1::text[])",
+                    [f"{la}_{lo}" for la in range(int(s0 * 100), int(n0 * 100) + 1)
+                     for lo in range(int(w0 * 100), int(e0 * 100) + 1)])
+                blds = await c.fetchval(
+                    "SELECT count(*) FROM bldg_poly WHERE geom && ST_MakeEnvelope($1,$2,$3,$4,4326)",
+                    w0, s0, e0, n0)
+            except Exception as ex:  # noqa: BLE001
+                tiles = blds = f"조회실패({type(ex).__name__})"
+            print(f"  {nm:<10} 보행도로 {ways:>10}   건물타일 {tiles:>7}   건물 {blds:>10}")
+
     print("\n판정:")
     print("  · 도쿄 고도가 +이고 도쿄권 칸이 0 이면 -> (B). 일본 격자를 만들어야 한다.")
     print("    그 전까지 일본의 '日陰ルート' 는 OSM 태그 그늘만 본다(건물 그늘 없음).")
+    print("  · [3] 에서 도쿄 보행도로나 건물타일이 0 이면 -> 격자 배치를 돌려도 0칸이다.")
+    print("    그 재료부터 적재해야 한다. 부산 줄과 자릿수를 비교할 것.")
 
 
 if __name__ == "__main__":
