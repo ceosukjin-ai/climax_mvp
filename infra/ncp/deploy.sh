@@ -50,6 +50,19 @@ fi
 # -------------------------------------------------------------------------
 # 2. Docker 이미지 빌드
 # -------------------------------------------------------------------------
+# 배치가 돌고 있으면 알려준다 (2026-09-16).
+# 배포는 API 를 재시작하고, 그 사이 health 가 200 이 아니다. watch_health 가 그걸 보고
+# **돌던 배치를 죽인다**(이제 2회 연속 실패로 완화했지만 5분 안에 안 끝나면 여전히 죽는다).
+# 배치가 있으면 사람이 알고 시작하게 한다 — 조용히 20만 칸을 날리지 않기 위해서다.
+_batch=$(docker ps -q --filter name=ncp-api-run | wc -l)
+if [ "${_batch:-0}" -gt 0 ]; then
+    echo ""
+    echo "!! 배치 컨테이너 ${_batch}개가 돌고 있다."
+    echo "   배포하면 watch_health 가 이걸 죽일 수 있다(격자는 --resume 이라 재개는 된다)."
+    echo "   그래도 진행하려면 5초 안에 Ctrl-C 를 누르지 말 것."
+    sleep 5
+fi
+
 echo ">>> Building API image"
 cd "$BACKEND_DIR"
 docker build -t climax-backend:latest .
