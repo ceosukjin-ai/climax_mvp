@@ -1396,12 +1396,28 @@ async def field_check(
     meas: dict = body.get("meas") or {}
     note: str | None = body.get("note")
 
+    # 실측 시각 (2026-09-16). 폰에 접근키가 없어 저장이 막힌 사이 잰 값을 캡처로만
+    # 남긴 일이 있었다. 그걸 나중에 올리면 **지금 태양**으로 엔진 값이 만들어져
+    # 실측-엔진 짝의 시각이 어긋난다 — 그늘이었던 지점이 양지로 계산된다.
+    # `when` (ISO 8601, 예: "2026-09-16T13:27:00+09:00") 을 주면 그 시각의 태양으로 푼다.
+    # ⚠️ 한계: 날씨(기온·습도·풍속)는 여전히 **지금** 관측이다. 과거 기상 재조회는
+    #    아직 없다. 그래서 같은 날 몇 시간 안의 복원에만 쓸 것. 실측 기상은 meas 로
+    #    따로 들어오므로 잔차 계산에는 영향이 없다.
+    _when = None
+    if body.get("when"):
+        try:
+            _when = datetime.fromisoformat(str(body["when"]))
+            if _when.tzinfo is None:
+                _when = _when.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="when 은 ISO 8601 이어야 합니다")
+
     orchestrator = getattr(request.app.state, "orchestrator", None)
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="엔진 미기동")
 
     result, telemetry = await orchestrator.compute_personalized(
-        lat, lon, bio=Biometrics(), archive_consent=False,
+        lat, lon, bio=Biometrics(), archive_consent=False, timestamp=_when,
     )
     base = result.comfort  # ComfortResult (PET/UTCI 입력 echo 포함)
     est = {
@@ -1413,6 +1429,9 @@ async def field_check(
         "rh": round(base.rh, 1),
         "u_p": round(base.v_input, 2),     # 보행자 풍속 (클램프 전)
         "weather_source": telemetry.weather_source,
+        # 어느 시각의 태양으로 푼 값인지 남긴다. 나중에 짝을 가릴 때 이게 없으면
+        # 복원분인지 현장분인지 구분할 수 없다.
+        "solar_at": _when.isoformat() if _when else None,
     }
 
     # 잔차 — 실측이 있는 항목만
