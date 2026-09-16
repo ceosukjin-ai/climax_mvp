@@ -6,8 +6,16 @@
 #    `docker compose run` 에는 --memory 옵션이 없어서 `docker run` 을 직접 쓴다(이미지: climax-backend:latest).
 #    DB 는 2026-09-11 부터 별도 서버(lbs-climax-db)라 compose 네트워크가 필요 없다.
 #
-#   타일:  nohup bash scripts/run_grid_kr.sh tiles > ~/tiles_kr.log 2>&1 &
-#   격자:  nohup bash scripts/run_grid_kr.sh grid  > ~/grid_kr.log  2>&1 &
+# ⚠️ 반드시 `setsid` + `< /dev/null` 로 띄울 것 (2026-09-16 에 두 번 날렸다).
+#    nohup 은 SIGHUP 만 무시한다. 배치가 ssh 의 프로세스 그룹 안에 있으면 세션이 끊기거나
+#    Ctrl-C 를 누를 때 **SIGINT 가 그룹 전체에 간다** — 로그에 남은 증거:
+#      grid_kr_35_15.log  got 3 SIGTERM/SIGINTs, forcefully exiting
+#    이렇게 도쿄 격자가 12시간(밤새) 안 돌았다. setsid 로 새 세션을 만들어 떼어내고,
+#    표준입력을 끊어 ssh 가 기다리지 않게 한다.
+#    (범인은 watch_health 도 deploy.sh 도 아니었다. 그쪽을 두 번 의심했다가 틀렸다.)
+#
+#   타일:  setsid nohup bash scripts/run_grid_kr.sh tiles < /dev/null > ~/tiles_kr.log 2>&1 &
+#   격자:  setsid nohup bash scripts/run_grid_kr.sh grid  < /dev/null > ~/grid_kr.log  2>&1 &
 #   부산만: S=35.05 N=35.30 W=128.95 E=129.25 nohup bash scripts/run_grid_kr.sh grid > ~/grid_busan.log 2>&1 &
 #   진행:  tail -n 2 ~/grid_kr_*.log      중단: pkill -f build_skyline_grid; docker ps -q --filter ancestor=climax-backend | xargs -r docker kill
 set -u
