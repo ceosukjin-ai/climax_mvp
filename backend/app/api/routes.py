@@ -11,6 +11,7 @@ VPTI REST API 라우트.
 """
 from __future__ import annotations
 
+import asyncio
 import math as _math
 import time as _time
 
@@ -1890,18 +1891,36 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
     from vpti_core.smti import MaterialFraction
     from vpti_core.vpti import WeatherContext, compute_vpti_thermal
 
-    svf_r = await svf_geometric(lat, lon)
+    # 동시 실행 (2026-09-16). 점 조회가 3.4초였다. 여섯 가지를 **순차로** 기다리고 있었는데
+    # 서로 의존하지 않는다: 기하(SVF·가로폭·그늘·벽재질)는 건물 링만 쓰고, 날씨는 Open-Meteo,
+    # 지표는 Sentinel Hub 다. 태양 위치만 먼저 있으면 되고 그건 계산이라 즉시 나온다.
+    # 합계가 아니라 **가장 느린 하나**만큼만 걸리게 한다. 순서를 바꾼 게 아니라 기다림을 겹쳤을 뿐이라
+    # 결과값은 달라지지 않는다.
+    now = datetime.now(timezone.utc)
+    sol = estimate_solar(lat, lon, now, config=DEFAULT_CONFIG.solar)
+
+    async def _safe(coro, dflt):
+        try:
+            return await coro
+        except Exception:  # noqa: BLE001
+            return dflt
+
+    _t0 = _time.perf_counter()
+    (svf_r, _sw, obs, _shade, surface, wall_mat) = await asyncio.gather(
+        svf_geometric(lat, lon),
+        street_width_geometric(lat, lon),
+        get_current_observation(lat, lon),
+        sun_blocked_outdoor(lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg),
+        _safe(_get_surface(lat, lon), None),
+        dominant_wall_material(lat, lon),
+    )
+    _par_ms = round((_time.perf_counter() - _t0) * 1000)
+
     if svf_r.get("svf") is None:
         return {"ok": False, "reason": svf_r.get("reason", "SVF 없음"),
                 "svf": None, "lat": lat, "lon": lon}
     svf = float(svf_r["svf"])
-    _sw = await street_width_geometric(lat, lon)   # 가로 폭·협곡비 (2026-09-09)
-
-    obs = await get_current_observation(lat, lon)
-    now = datetime.now(timezone.utc)
-    sol = estimate_solar(lat, lon, now, config=DEFAULT_CONFIG.solar)
-    blocked, shade_note = await sun_blocked_outdoor(
-        lat, lon, sol.solar_azimuth_deg, sol.solar_elevation_deg)
+    blocked, shade_note = _shade
     # 가로수 그늘 (2026-09-12): 건물이 안 막아도 태양 방향에 나무가 있으면 직사광이 줄어든다.
     # NDVI 로 뭉개지 않고 OSM 개별 나무 좌표로만 판정한다 — 공원 안 뙤약볕 길을 그늘이라 하지 않기 위해.
     # 한국은 OFF (2026-09-14 실측 근거는 config.geo_tree_shade 주석 참조), 일본은 ON.
@@ -1924,11 +1943,6 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
 
     gvi = 0.0
     gvi_src = "none"
-    surface = None
-    try:
-        surface = await _get_surface(lat, lon)
-    except Exception:  # noqa: BLE001
-        surface = None
     if surface is not None:
         gvi = _ndvi_to_gvi(surface["ndvi"]); gvi_src = "sentinel2-ndvi"
 
@@ -1955,8 +1969,7 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
                         wind_direction_deg=obs.wind_direction_deg)
     # 측면 벽 온도 — sunlit 벽 복사 반영(2026-09-09 v1). 낮 + 어느정도 둘러싸임(svf<0.92)일 때만.
     # ⚠️ v1: 벽 재질 콘크리트 기본(alb0.30), sunlit_frac 0.45 근사. 방위 정밀화·PLATEAU 재질은 다음 단계.
-    wall_temp = None
-    wall_mat = await dominant_wall_material(lat, lon)
+    wall_temp = None        # wall_mat 은 위 gather 에서 이미 받았다
     if get_settings().geo_wall_stage and svf < 0.92:   # 벽 스테이지(기본 OFF, 벽면센서 교정 후 ON)
         from vpti_core.mrt import (estimate_wall_temp, estimate_wall_temp_transient,
                                    sky_emissivity)
@@ -2026,6 +2039,8 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         # 대표값은 **AI 보정본**이다(분포 밖이면 물리값과 같다).
         "pet": round(_pet_ai, 1),
         "feels_like_c": round(_pet_ai, 1),
+        "parallel_ms": _par_ms,        # 동시 실행 구간(기하·날씨·위성) 소요 — 튜닝 근거
+
         "ai_applied": _ai_on, "ai_confidence": round(_ai_conf, 2),
         "mrt_c": round(float(r.mrt.tmrt), 1),
         # WBGT(暑さ指数) — 일본의 공용 지표. 환경성 값은 관측점(광역)이라 그늘/볕 구분이 없고,
