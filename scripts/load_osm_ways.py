@@ -15,7 +15,21 @@
   osmium export -f geojsonseq --add-unique-id=type_id -o ~/data/kr_walk.geojsonl ~/data/kr_walk.osm.pbf
   docker compose --env-file infra/ncp/.env.prod -f infra/ncp/docker-compose.prod.yml run --rm \
     -v $HOME/climax_mvp:/repo -v $HOME/data:/data api python3 /repo/scripts/load_osm_ways.py /data/kr_walk.geojsonl [--replace]
-일본: japan/kanto-latest.osm.pbf 로 동일(선택 --region jp 는 통계용 표시일 뿐, 테이블은 하나).
+일본 전국 (2026-09-16): 중간 geojsonl 을 만들면 WAS 디스크(여유 약 10 GB)가 먼저 찬다.
+  지방별 pbf 를 하나씩 받아 **osmium 출력을 바로 표준입력으로 흘려 넣고**, 끝나면 pbf 를 지운다.
+  그러면 피크 용량이 pbf 한 개(최대 약 1 GB)로 줄어 디스크를 늘리지 않고 전국이 된다.
+
+  for R in kanto kansai chubu kyushu tohoku chugoku shikoku hokkaido; do
+    wget -q -O ~/data/r.osm.pbf https://download.geofabrik.de/asia/japan/$R-latest.osm.pbf || continue
+    osmium tags-filter -o ~/data/rw.osm.pbf ~/data/r.osm.pbf w/highway=… w/leisure=… w/landuse=… w/natural=…
+    rm -f ~/data/r.osm.pbf
+    osmium export -f geojsonseq --add-unique-id=type_id -o - ~/data/rw.osm.pbf \
+      | docker compose --env-file infra/ncp/.env.prod -f infra/ncp/docker-compose.prod.yml run --rm -i \
+        -v $HOME/climax_mvp:/repo api python3 /repo/scripts/load_osm_ways.py -
+    rm -f ~/data/rw.osm.pbf
+  done
+
+  ⚠️ `--replace` 는 쓰지 말 것 — 테이블이 하나라 한국 도로가 지워진다. id 충돌은 UPSERT 로 처리된다.
 """
 from __future__ import annotations
 import argparse, asyncio, json, sys, time
@@ -54,7 +68,8 @@ def _wkt(geom: dict) -> str | None:
 
 async def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("geojsonl"); ap.add_argument("--replace", action="store_true", help="기존 osm_way 비우고 적재")
+    ap.add_argument("geojsonl", help="geojsonseq 파일 경로. '-' 면 표준입력(osmium export 에서 바로 받음)")
+    ap.add_argument("--replace", action="store_true", help="기존 osm_way 비우고 적재")
     ap.add_argument("--batch", type=int, default=5000)
     a = ap.parse_args()
     from app.services.skyline import _get_pool
@@ -78,33 +93,42 @@ async def main():
             await c.executemany(sql, buf)
         buf = []
 
-    with open(a.geojsonl, encoding="utf-8") as f:
+    # 표준입력 지원 (2026-09-16). 일본 전국을 하려면 중간 geojsonl 이 문제다 —
+    # 간토만 해도 수 GB 라 WAS 디스크(여유 10 GB)가 먼저 찬다. osmium 이 뱉는 대로
+    # 바로 읽어 넣으면 그 파일이 아예 생기지 않고, 피크 용량이 pbf 하나로 줄어든다.
+    #   osmium export -f geojsonseq --add-unique-id=type_id -o - r.osm.pbf \
+    #     | docker ... run --rm -i ... python3 /repo/scripts/load_osm_ways.py -
+    f = sys.stdin if a.geojsonl == "-" else open(a.geojsonl, encoding="utf-8")
+    try:
         for line in f:
-            line = line.strip().lstrip("\x1e")          # RS 구분자(geojsonseq)
-            if not line.startswith("{"):
-                continue
-            ft = json.loads(line)
-            p = ft.get("properties") or {}
-            # osmium export --add-unique-id=type_id 는 Feature 최상위 "id":"w123" (properties 아님)
-            oid = str(ft.get("id") or p.get("@id") or p.get("id") or "")
-            if not oid.startswith("w"):                  # way 만 (relation 다중폴리곤은 r… — 녹지 대형 공원용으로 음수 id로 넣는다)
-                if oid.startswith("r") and oid[1:].isdigit():
-                    wid = -int(oid[1:])
+                line = line.strip().lstrip("\x1e")          # RS 구분자(geojsonseq)
+                if not line.startswith("{"):
+                    continue
+                ft = json.loads(line)
+                p = ft.get("properties") or {}
+                # osmium export --add-unique-id=type_id 는 Feature 최상위 "id":"w123" (properties 아님)
+                oid = str(ft.get("id") or p.get("@id") or p.get("id") or "")
+                if not oid.startswith("w"):                  # way 만 (relation 다중폴리곤은 r… — 녹지 대형 공원용으로 음수 id로 넣는다)
+                    if oid.startswith("r") and oid[1:].isdigit():
+                        wid = -int(oid[1:])
+                    else:
+                        skip += 1; continue
                 else:
+                    wid = int(oid[1:])
+                tags = {k: p[k] for k in KEEP if k in p}
+                if not any(k in tags for k in ("highway", "leisure", "landuse", "natural")):
                     skip += 1; continue
-            else:
-                wid = int(oid[1:])
-            tags = {k: p[k] for k in KEEP if k in p}
-            if not any(k in tags for k in ("highway", "leisure", "landuse", "natural")):
-                skip += 1; continue
-            wkt = _wkt(ft.get("geometry") or {})
-            if not wkt:
-                skip += 1; continue
-            buf.append((wid, json.dumps(tags, ensure_ascii=False), wkt)); n += 1
-            if len(buf) >= a.batch:
-                await flush()
-                if n % 100000 == 0:
-                    print(f"  {n:,} ({time.time()-t0:.0f}s)", flush=True)
+                wkt = _wkt(ft.get("geometry") or {})
+                if not wkt:
+                    skip += 1; continue
+                buf.append((wid, json.dumps(tags, ensure_ascii=False), wkt)); n += 1
+                if len(buf) >= a.batch:
+                    await flush()
+                    if n % 100000 == 0:
+                        print(f"  {n:,} ({time.time()-t0:.0f}s)", flush=True)
+    finally:
+        if f is not sys.stdin:
+            f.close()
     await flush()
     async with pool.acquire() as c:
         tot = await c.fetchval("SELECT COUNT(*) FROM osm_way")
