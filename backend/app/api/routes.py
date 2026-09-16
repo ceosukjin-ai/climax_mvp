@@ -2060,6 +2060,11 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "street_axis_deg": _sw.get("axis_deg"), "snapped_m": _sw.get("snapped_m"),
         "svf": round(svf, 3), "n_buildings": svf_r.get("n_buildings"),
         "svf_source": svf_r.get("source"),
+        # 수관(위성 나무 높이)이 이 지점에서 실제로 잡혔는지 (2026-09-16).
+        # 없으면 화면에서 "나무 차폐 반영 안 됨"과 "나무가 없음"을 구분할 수 없다.
+        # 일본 타일 적재를 확인하려고 컨테이너에 들어가야 했던 것도 이 필드가 없어서였다.
+        "n_canopy": svf_r.get("n_canopy"),
+        "canopy_observed": svf_r.get("canopy_observed"),
         "gvi": round(gvi, 3), "gvi_src": gvi_src,
         # 위성 표면 지수 원값 — 논문·대시보드에서 '인공피복률' 로 바로 쓸 수 있게 노출 (2026-09-13).
         # 계산은 전부터 하고 있었는데 재질 분율로만 쪼개져 밖으로 안 나갔다.
