@@ -78,16 +78,38 @@ async def main():
                                    or t.get("gro_flo_co"))})
     print(f"캠퍼스 폴리곤 {len(poly)}개 (30 m² 이상)   그중 높이 있음 {sum(p['has_h'] for p in poly)}")
 
-    # 1) 이름
+    # 1) 이름 — V-World 태그의 한국어 건물명 (2026-09-16)
+    #    처음엔 OSM 의 `name` 만 봤는데 0동이 맞았다. 이 폴리곤은 V-World/건축물대장에서 온 것이라
+    #    이름이 `buld_nm_dc`(건물명 상세)와 `buld_nm` 에 들어 있다. 158동 중 105/125동이 갖고 있다.
+    #    면적 추측은 후보가 1,723개라 112동 중 110동이 애매했다 — 이름이 있으면 조인이 된다.
+    #    괄호 안 별칭·공백을 떼고 비교한다: "제2공학관(재료관)" vs "제2공학관".
+    import re as _re
+
+    def _norm(x: str) -> str:
+        x = _re.sub(r"\(.*?\)", "", str(x or ""))
+        return _re.sub(r"[\s·.]", "", x)
+
     pairs, used_p, used_r = [], set(), set()
     for i, r in enumerate(reg):
+        rn = _norm(r["name"])
+        if len(rn) < 2:
+            continue
+        best = None
         for p in poly:
             if p["id"] in used_p:
                 continue
-            nm = str(p["tags"].get("name") or "")
-            if nm and (nm == r["name"] or (len(nm) >= 3 and nm in r["name"])):
-                pairs.append((r, p, "이름", abs(p["a"] - r["area"]) / max(r["area"], 1)))
-                used_p.add(p["id"]); used_r.add(i); break
+            for key in ("buld_nm_dc", "buld_nm", "name"):
+                pn = _norm(p["tags"].get(key))
+                if len(pn) < 2 or pn == "부산대학교":     # 소유자명이라 변별력이 없다
+                    continue
+                if pn == rn or pn in rn or rn in pn:
+                    d = abs(p["a"] - r["area"]) / max(r["area"], 1)
+                    if best is None or d < best[1]:
+                        best = (p, d)
+                    break
+        if best is not None:
+            pairs.append((r, best[0], "이름", best[1]))
+            used_p.add(best[0]["id"]); used_r.add(i)
 
     # 2) 면적 — 상대오차가 작은 쌍부터 일대일
     cand = []
@@ -117,9 +139,11 @@ async def main():
     pairs.sort(key=lambda x: -x[0]["fl"])
     print(f"\n맞춘 {len(pairs)}동 (이름 {sum(1 for x in pairs if x[2]=='이름')} / "
           f"면적 {sum(1 for x in pairs if x[2]=='면적')})\n")
-    print(f"{'코드':<8}{'층':>3}{'대장면적':>9}{'폴리곤':>9}{'오차':>7} {'근거':<5} 이름")
+    print(f"{'코드':<8}{'층':>3}{'대장면적':>9}{'폴리곤':>9}{'오차':>7} {'근거':<5} 이름"
+          "   (이름 근거인데 면적 오차 30% 넘으면 * 표시 — 동이 여럿인 건물일 수 있다)")
     for r, p, how, d in pairs[:45]:
-        print(f"{r['code']:<8}{r['fl']:>3}{r['area']:>9.0f}{p['a']:>9.0f}{d:>6.0%} {how:<5} {r['name'][:26]}")
+        mark = "*" if (how == "이름" and d > 0.30) else " "
+        print(f"{r['code']:<8}{r['fl']:>3}{r['area']:>9.0f}{p['a']:>9.0f}{d:>6.0%}{mark}{how:<5} {r['name'][:26]}")
 
     miss = [reg[i] for i in range(len(reg)) if i not in used_r]
     miss.sort(key=lambda r: -r["fl"])
