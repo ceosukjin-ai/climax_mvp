@@ -670,6 +670,9 @@ async def route_shade(
                       description="walk=보행, bike=자전거(맞바람·대사량·계단제외 반영)"),
     speed_kmh: float | None = Query(None, ge=5.0, le=35.0,
                                     description="자전거 주행 속도. 생략하면 15 km/h"),
+    via_lat: float | None = Query(None, ge=-90.0, le=90.0,
+                                  description="경유지. 주면 출발→경유→도착을 한 번에 계산"),
+    via_lon: float | None = Query(None, ge=-180.0, le=180.0),
 ) -> JSONResponse:
     """출발→목적지 편도. **산책 코스와 같은 비용 함수**(그늘·노면온도·WBGT)를 쓰고 모양만 편도다.
 
@@ -678,8 +681,9 @@ async def route_shade(
       · **속도가 곧 바람**: 15 km/h = 4.2 m/s 맞바람. WBGT·PET·노면 대류가 같이 바뀐다.
       · **대사량**: 보행 2.0 MET → 자전거 4.5 MET. PET 입력값이라 고정하면 틀린다.
       · **계단 제외**: 남겨 두면 지도에 선은 그려지는데 실제로는 못 가는 거짓 경로가 된다.
-      · **자전거도로 소폭 우대**(×0.85) — 쾌적이 아니라 안전·합법성 때문. 그늘 판단을
-        뒤집지 않도록 폭을 좁게 뒀다.
+      · **자전거도로는 비용에 넣지 않는다** (2026-09-16 정정). 레인이 얼마나 더 쾌적한지에
+        대한 연구 근거가 없어 임의 배수를 넣었다가, 그게 물리(그늘)를 뒤집는 것을 확인하고
+        걷어냈다. 레인·보도 비율은 결과에 **표시만** 한다.
     눈높이는 보행과 같게 둔다 — 자전거 탄 사람 눈높이가 보행자와 비슷하다(약 1.4 m).
     개(`height_cm`)가 특별했던 건 달궈진 노면 복사와 발 화상 때문이다.
 
@@ -692,10 +696,22 @@ async def route_shade(
     from app.services.roadnet import RoadNetError, RoadNetService
 
     from app.services.dog_course import _haversine
-    span = abs(from_lat - to_lat) / 2 + 0.006
-    lon_span = abs(from_lon - to_lon) / 2 + 0.008
-    c_lat, c_lon = (from_lat + to_lat) / 2, (from_lon + to_lon) / 2
-    if _haversine(from_lat, from_lon, to_lat, to_lon) > 8000:
+    # 경유지가 있으면 **세 점을 모두 덮는** 범위여야 한다. 출발·도착만으로 잡으면
+    # 옆으로 벗어난 가게가 도로망 밖으로 떨어져 경로가 끊긴다.
+    _pts = [(from_lat, from_lon), (to_lat, to_lon)]
+    has_via = via_lat is not None and via_lon is not None
+    if has_via:
+        _pts.append((via_lat, via_lon))
+    _las = [p[0] for p in _pts]
+    _los = [p[1] for p in _pts]
+    span = (max(_las) - min(_las)) / 2 + 0.006
+    lon_span = (max(_los) - min(_los)) / 2 + 0.008
+    c_lat, c_lon = (max(_las) + min(_las)) / 2, (max(_los) + min(_los)) / 2
+    _far = _haversine(from_lat, from_lon, to_lat, to_lon)
+    if has_via:
+        _far = (_haversine(from_lat, from_lon, via_lat, via_lon)
+                + _haversine(via_lat, via_lon, to_lat, to_lon))
+    if _far > 8000:
         raise HTTPException(status_code=400, detail="출발지와 목적지가 너무 멉니다(8km 이내).")
 
     svc = getattr(request.app.state, "roadnet", None)
@@ -741,7 +757,10 @@ async def route_shade(
     b = dc.nearest(graph, to_lat, to_lon)
     if a is None or b is None or a[0] == b[0]:
         return JSONResponse({"ok": False, "reason": "주변에서 걸을 수 있는 길을 찾지 못했어요."})
-    res = dc.find_route(graph, a[0], b[0])
+    _via = dc.nearest(graph, via_lat, via_lon) if has_via else None
+    if has_via and _via is None:
+        return JSONResponse({"ok": False, "reason": "경유지 주변에서 길을 찾지 못했어요."})
+    res = dc.find_route(graph, a[0], b[0], via=(_via[0] if _via else None))
     if not res.get("comfort"):
         return JSONResponse({"ok": False, "reason": "두 지점을 잇는 보행 경로를 찾지 못했어요."})
     return JSONResponse({
@@ -749,6 +768,7 @@ async def route_shade(
         "weather": {"ta": round(air_c, 1), "rh": round(rh, 0),
                     "wind_ms": round(wind_ms, 1), "ghi": round(ghi or 0.0)},
         "meta": {"edges": graph.edge_count, "snap_from_m": round(a[1]), "snap_to_m": round(b[1]),
+                 **({"snap_via_m": round(_via[1])} if _via else {}),
                  "skyline_cells": len(_sky_cells),
                  "skyline_shaded_edges": graph.skyline_shaded_edges,
                  "elapsed_ms": round((_time.perf_counter() - t0) * 1000)},

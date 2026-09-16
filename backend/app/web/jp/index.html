@@ -559,24 +559,33 @@ async function poiVia(la,lo,name){
   clearPoi(); clearRoutes();
   sheet.classList.remove('hidden');
   setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+t.rCalc+'</div>');
-  const q=(a,b)=>'from_lat='+a.la.toFixed(5)+'&from_lon='+a.lo.toFixed(5)
-                +'&to_lat='+b.la.toFixed(5)+'&to_lon='+b.lo.toFixed(5)+'&mode='+travelMode;
+  // 호출 한 번으로 바꿨다 (2026-09-16). 예전엔 A→가게, 가게→B 를 따로 불렀는데
+  // 그러면 **도로망 조회·스카이라인 격자·그래프 구성**이 전부 두 번 돌았다(가장 무거운 셋).
+  // 서버가 같은 그래프 위에서 이어 붙이고 via_index 로 경유 지점을 알려준다.
+  const q='from_lat='+rOrigin.la.toFixed(5)+'&from_lon='+rOrigin.lo.toFixed(5)
+         +'&to_lat='+rDest.la.toFixed(5)+'&to_lon='+rDest.lo.toFixed(5)
+         +'&via_lat='+la.toFixed(5)+'&via_lon='+lo.toFixed(5)+'&mode='+travelMode;
   try{
-    const [r1,r2]=await Promise.all([
-      fetch(ROUTE_API+'?'+q(rOrigin,{la,lo})).then(r=>r.json()),
-      fetch(ROUTE_API+'?'+q({la,lo},rDest)).then(r=>r.json()),
-    ]);
-    const a=r1&&r1.comfort, b=r2&&r2.comfort;
-    if(!a||!b){ nocov(t.rFail); return; }
-    drawSegments(a); drawSegments(b);
-    const M=a.meters+b.meters, S=a.seconds+b.seconds;
-    const sh=(a.shade_ratio*a.meters + b.shade_ratio*b.meters)/Math.max(M,1);
-    const ts=Math.max(a.max_surface_temp_c, b.max_surface_temp_c);
+    const d=await fetch(ROUTE_API+'?'+q).then(r=>r.json());
+    const r=d&&d.comfort;
+    if(!r){ nocov(t.rFail); return; }
+    // 합친 경로를 그리고, via_index 로 앞/뒤 구간 통계만 나눈다.
+    drawSegments(r) || drawRoute(r,"#2e9e6b",null,6);
+    const vi = (r.via_index!=null) ? r.via_index : Math.floor((r.coords.length-1)/2);
+    const legStat=(i0,i1)=>{
+      let m=0, sm=0;
+      (r.segments||[]).forEach(sg=>{ if(sg.i>=i0 && sg.i<i1){ m+=sg.m; if(sg.shaded) sm+=sg.m; } });
+      return {meters:Math.round(m), shade_ratio:m>0?sm/m:0,
+              seconds:Math.round((r.seconds||0)*(r.meters?m/r.meters:0))};
+    };
+    const a=legStat(0,vi), b=legStat(vi,r.coords.length-1);
+    const M=r.meters, S=r.seconds;
+    const sh=r.shade_ratio, ts=r.max_surface_temp_c;
     // 표식: 출발 / 가게 / 도착
     rLayers.push(L.circleMarker([rOrigin.la,rOrigin.lo],{radius:7,color:"#fff",weight:2,fillColor:"#4d7fa8",fillOpacity:.95}).addTo(map));
     rLayers.push(L.marker([la,lo],{icon:L.divIcon({className:"",html:'<div class="poiPin">📍</div>',iconSize:[22,22],iconAnchor:[11,11]})}).addTo(map).bindTooltip(name,{direction:'top'}));
     rLayers.push(L.circleMarker([rDest.la,rDest.lo],{radius:7,color:"#fff",weight:2,fillColor:"#2e9e6b",fillOpacity:.95}).addTo(map));
-    map.fitBounds(L.latLngBounds(a.coords.concat(b.coords).map(p=>[p.lat,p.lon])),{padding:[40,150]});
+    map.fitBounds(L.latLngBounds(r.coords.map(p=>[p.lat,p.lon])),{padding:[40,150]});
     const mn=v=>Math.max(1,Math.round(v/60));
     const base=baseRoute;
     const extra = base ? (S-base.seconds) : null;
@@ -595,7 +604,7 @@ async function poiVia(la,lo,name){
       +'<div class="s">'+t.shadeW+' '+Math.round(b.shade_ratio*100)+'%</div></div></div>'
       +'<div class="foot"><span>'+t.shadeW+' '+Math.round(sh*100)+'% · '+t.paw+' '+Math.round(ts)+'°C</span>'
       +'<span>'+M+'m</span></div>');
-    lastRoute={coords:a.coords.concat(b.coords), segments:null};
+    lastRoute=r;                 // 내비게이션도 합친 경로 하나를 그대로 쓴다
   }catch(e){ nocov(T().rFail); }
 }
 async function loadPoi(){

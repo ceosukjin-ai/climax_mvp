@@ -165,41 +165,77 @@ def _svf_point(items, eye=EYE_M):
     return 1.0 - sum(math.sin(b) ** 2 for b in bins) / n
 
 
-def svf_section(matched):
+def _osm_all(la0, lo0):
+    """지점 주변 타일에서 **엔진이 실제로 보는 모든 건물**을 읽는다.
+
+    매칭된 건물만 쓰면 안 된다 (2026-09-16). 매칭은 두 자료의 교집합이라
+    PLATEAU 에만 있는 고층도, OSM 에만 있는 건물도 빠진다. 그러면 양쪽 다
+    실제보다 하늘이 열려 보여서 **차이가 0 에 가깝게 나온다** — 없는 일치다.
+    엔진 쪽은 타일을 그대로, 실측 쪽은 PLATEAU 를 그대로 놓고 재야 한다.
+    """
+    out = []
+    for dk in ((0, 0), (0, 1), (1, 0), (1, 1), (0, -1), (-1, 0), (-1, -1), (1, -1), (-1, 1)):
+        tk = f"{int(math.floor(la0*100))+dk[0]}_{int(math.floor(lo0*100))+dk[1]}"
+        path = os.path.join(TILE_DIR, tk + ".json")
+        if not os.path.isfile(path):
+            continue
+        try:
+            els = (json.load(open(path, encoding="utf-8")) or {}).get("elements") or []
+        except Exception:  # noqa: BLE001
+            continue
+        for e in els:
+            g = e.get("geometry") or []
+            if len(g) < 4:
+                continue
+            la = sum(p["lat"] for p in g) / len(g)
+            lo = sum(p["lon"] for p in g) / len(g)
+            out.append((la, lo, eng_height(e.get("tags") or {})[0]))
+    return out
+
+
+def svf_section(plateau):
     print("\n[5] SVF 로 비교 — 실제로 하늘이 얼마나 더 열려 보이나")
-    if not matched:
-        print("  매칭 자료 없음")
+    if not plateau:
+        print("  자료 없음")
         return
-    # 0.01도 격자 색인
     grid: dict = {}
-    for la, lo, hp, he in matched:
-        grid.setdefault((int(la * 100), int(lo * 100)), []).append((la, lo, hp, he))
-    print(f"  {'지점':<18}{'건물수':>7}{'실측SVF':>9}{'엔진SVF':>9}{'차이':>8}{'실측최고':>9}{'엔진최고':>9}")
+    for la, lo, hp in plateau:
+        grid.setdefault((int(la * 100), int(lo * 100)), []).append((la, lo, hp))
+    print(f"  {'지점':<18}{'실측동':>6}{'엔진동':>6}{'실측SVF':>9}{'엔진SVF':>9}{'차이':>8}"
+          f"{'실측최고':>9}{'엔진최고':>9}")
     rows = []
     for nm, la0, lo0 in SPOTS:
+        def _rel(src):
+            v = []
+            for la, lo, h in src:
+                dy = (la - la0) * 111320.0
+                dx = (lo - lo0) * 111320.0 * math.cos(math.radians(la0))
+                if math.hypot(dx, dy) <= SVF_RAD_M:
+                    v.append((dx, dy, h))
+            return v
         near = []
         for gi in range(int(la0 * 100) - 1, int(la0 * 100) + 2):
             for gj in range(int(lo0 * 100) - 1, int(lo0 * 100) + 2):
                 near.extend(grid.get((gi, gj), []))
-        P = []
-        E = []
-        for la, lo, hp, he in near:
-            dy = (la - la0) * 111320.0
-            dx = (lo - lo0) * 111320.0 * math.cos(math.radians(la0))
-            if math.hypot(dx, dy) > SVF_RAD_M:
-                continue
-            P.append((dx, dy, hp))
-            E.append((dx, dy, he))
-        if len(P) < 5:
-            print(f"  {nm:<18}{len(P):>7}   (건물 부족 — 타일 미적재)")
+        P = _rel(near)
+        E = _rel(_osm_all(la0, lo0))
+        if len(P) < 5 or len(E) < 5:
+            print(f"  {nm:<18}{len(P):>6}{len(E):>6}   (건물 부족 — 타일 미적재)")
+            continue
+        # 커버리지 가드 (2026-09-16). 지금 PLATEAU 는 **시부야구만** 있다. 신주쿠 쪽 지점은
+        # 구 경계 밖이라 PLATEAU 가 듬성듬성하다. 그 상태로 SVF 를 빼면 높이 차이가 아니라
+        # **자료 커버리지 차이**를 재게 된다(엔진 103동 vs 실측 48동 → 차이 -0.688 같은 값).
+        # 동수가 25% 넘게 어긋나면 비교하지 않는다.
+        if abs(len(P) - len(E)) / max(len(P), len(E)) > 0.25:
+            print(f"  {nm:<18}{len(P):>6}{len(E):>6}   (커버리지 불일치 — 비교 불가)")
             continue
         sp = _svf_point(P)
         se = _svf_point(E)
         rows.append(se - sp)
-        print(f"  {nm:<18}{len(P):>7}{sp:>9.3f}{se:>9.3f}{se-sp:>+8.3f}"
+        print(f"  {nm:<18}{len(P):>6}{len(E):>6}{sp:>9.3f}{se:>9.3f}{se-sp:>+8.3f}"
               f"{max(x[2] for x in P):>9.1f}{max(x[2] for x in E):>9.1f}")
     if rows:
-        print(f"  {'평균':<18}{'':>7}{'':>9}{'':>9}{st.mean(rows):>+8.3f}")
+        print(f"  {'평균':<18}{'':>6}{'':>6}{'':>9}{'':>9}{st.mean(rows):>+8.3f}")
 
 
 def main():
@@ -242,24 +278,32 @@ def main():
             els = (json.load(open(path, encoding="utf-8")) or {}).get("elements") or []
         except Exception:  # noqa: BLE001
             continue
-        osm = []
+        # 격자 색인 (2026-09-16). 타일 12개 제한을 풀자 전수 비교(수만 x 수천)가 30분을 넘겼다.
+        # 어차피 22 m 안쪽만 보므로 0.0005도(약 50 m) 칸에 넣고 이웃 9칸만 뒤진다.
+        GS = 0.0005
+        osm: dict = {}
+        _n_osm = 0
         for e in els:
             g = e.get("geometry") or []
             if len(g) < 4:
                 continue
             la = sum(p["lat"] for p in g) / len(g)
             lo = sum(p["lon"] for p in g) / len(g)
-            osm.append((la, lo, e.get("tags") or {}))
-        if not osm:
+            osm.setdefault((int(la / GS), int(lo / GS)), []).append((la, lo, e.get("tags") or {}))
+            _n_osm += 1
+        if not _n_osm:
             continue
         for la, lo, h in items:
             best, bd = None, 1e9
-            for ola, olo, tg in osm:
-                dy = (ola - la) * 111320.0
-                dx = (olo - lo) * 111320.0 * math.cos(math.radians(la))
-                dd = dy * dy + dx * dx
-                if dd < bd:
-                    bd, best = dd, tg
+            gi, gj = int(la / GS), int(lo / GS)
+            for ii in (gi - 1, gi, gi + 1):
+                for jj in (gj - 1, gj, gj + 1):
+                    for ola, olo, tg in osm.get((ii, jj), ()):
+                        dy = (ola - la) * 111320.0
+                        dx = (olo - lo) * 111320.0 * math.cos(math.radians(la))
+                        dd = dy * dy + dx * dx
+                        if dd < bd:
+                            bd, best = dd, tg
             if best is not None and math.sqrt(bd) <= MATCH_M:
                 eh, srcs = eng_height(best)
                 pairs.append((h, eh, srcs, area_of(la, lo)))
@@ -299,7 +343,7 @@ def main():
               f"{st.median(x[1] for x in v):>10.1f}"
               f"{st.mean(x[1]-x[0] for x in v):>+9.1f}{100*nd/len(v):>11.0f}%")
 
-    svf_section(matched)
+    svf_section(P)
 
     print("\n읽는 법:")
     print("  · [4] 에서 오피스가의 '평균차' 가 크게 음수면 -> 그 구역에서 하늘을 과대평가하고 있다.")

@@ -581,20 +581,34 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
     }
 
 
-def find_route(g: Graph, start: int, goal: int) -> dict[str, Any]:
+def find_route(g: Graph, start: int, goal: int, via: int | None = None) -> dict[str, Any]:
     """A→B 편도 — **그늘 우선 경로**와 **최단 경로**를 같이 돌려준다 (2026-09-12, 일본 통근용).
 
     산책 코스(find_courses)와 비용 함수는 완전히 같다. 다른 건 모양뿐 — 순환이 아니라 편도다.
     일본의 킬러 케이스가 "역까지 15분 걷기"라서 이 형태가 필요했다(日陰ルート).
     두 경로를 같이 주는 이유: "2분 더 걸으면 그늘이 3배" 같은 **선택의 근거**가 있어야 사람이 움직인다.
+
+    `via` (2026-09-16) — 가게를 들렀다 가는 경로. 앱이 A→V, V→B 를 **따로 두 번** 부르고
+    있었는데, 그러면 도로망 조회·스카이라인 격자·그래프 구성이 전부 두 번 돈다(가장 무거운 세 가지다).
+    같은 그래프 위에서 두 구간을 잇기만 하면 되므로 여기서 이어 붙인다. 요약은 **합친 경로 하나로**
+    한 번만 낸다 — 앱에서 평균을 다시 내면 가중치가 틀어지고 최고 노면온도가 어긋난다.
     """
     out: dict[str, Any] = {}
     for key, mode in (("comfort", "comfort"), ("shortest", "distance")):
-        path = _dijkstra(g, start, goal, {}, weight=mode)
+        if via is None:
+            path = _dijkstra(g, start, goal, {}, weight=mode)
+        else:
+            p1 = _dijkstra(g, start, via, {}, weight=mode)
+            p2 = _dijkstra(g, via, goal, {}, weight=mode)
+            path = (p1 + p2[1:]) if (p1 and p2 and len(p1) >= 2 and len(p2) >= 2) else None
         if not path or len(path) < 2:
             continue
         r = _summarize(g, path, 0.0)
         r.pop("bearing_deg", None)
+        if via is not None and p1:
+            # 앱이 "역까지 5분, 거기서 3분" 처럼 **구간을 나눠** 보여줄 수 있게 자리를 알려준다.
+            # 합친 요약만 주면 그 화면을 만들 수 없다. coords[via_index] 가 경유지다.
+            r["via_index"] = len(p1) - 1
         out[key] = r
     c, sh = out.get("comfort"), out.get("shortest")
     if c and sh:
