@@ -114,12 +114,20 @@ def compute_pet(
     rh: float,
     season: Season | None = None,
     config: ComfortConfig = DEFAULT_CONFIG.comfort,
+    met: float | None = None,
 ) -> ComfortResult:
-    """PET 산출 (pythermalcomfort.pet_steady, VDI 3787 / Höppe MEMI)."""
+    """PET 산출 (pythermalcomfort.pet_steady, VDI 3787 / Höppe MEMI).
+
+    `met` (2026-09-16): 대사량을 호출부가 바꿀 수 있게 열었다. 기본값은 `config.pet_met`(보행).
+    자전거는 보행보다 두세 배 높다 — 같은 환경에서도 체감이 다르게 나온다.
+        보행 약 2.0 MET / 자전거(평지 15 km/h) 약 4~5 MET
+    PET 정의상 대사량은 입력이므로, 이걸 고정해 두면 자전거 경로 값이 물리적으로 틀린다.
+    """
     clo = _clo_for_season(season, config)
+    met_v = config.pet_met if met is None else float(met)
     res = pet_steady(
         tdb=tdb, tr=tr, v=max(v, 0.1), rh=rh,
-        met=config.pet_met, clo=clo, position=config.pet_position,
+        met=met_v, clo=clo, position=config.pet_position,
     )
     pet_value = float(res.pet)
     return ComfortResult(
@@ -127,7 +135,7 @@ def compute_pet(
         value=pet_value,
         stress_category=_pet_category(pet_value),
         tdb=tdb, tr=tr, v=max(v, 0.1), v_input=v, rh=rh,
-        clo=clo, met=config.pet_met,
+        clo=clo, met=met_v,
     )
 
 

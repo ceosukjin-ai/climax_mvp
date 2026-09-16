@@ -666,8 +666,22 @@ async def route_shade(
     height_cm: float = Query(160.0, ge=20.0, le=200.0,
                              description="기준 높이(cm). 성인 160, 유모차·아이 60, 개는 체고"),
     vuln_offset_c: float = Query(0.0, ge=-5.0, le=10.0),
+    mode: str = Query("walk", pattern="^(walk|bike)$",
+                      description="walk=보행, bike=자전거(맞바람·대사량·계단제외 반영)"),
+    speed_kmh: float | None = Query(None, ge=5.0, le=35.0,
+                                    description="자전거 주행 속도. 생략하면 15 km/h"),
 ) -> JSONResponse:
     """출발→목적지 편도. **산책 코스와 같은 비용 함수**(그늘·노면온도·WBGT)를 쓰고 모양만 편도다.
+
+    `mode=bike` (2026-09-16) — 일본은 자전거 분담률이 높다(역까지 자전거 + 전철이 일상).
+    보행과 물리적으로 다른 점만 바꾼다.
+      · **속도가 곧 바람**: 15 km/h = 4.2 m/s 맞바람. WBGT·PET·노면 대류가 같이 바뀐다.
+      · **대사량**: 보행 2.0 MET → 자전거 4.5 MET. PET 입력값이라 고정하면 틀린다.
+      · **계단 제외**: 남겨 두면 지도에 선은 그려지는데 실제로는 못 가는 거짓 경로가 된다.
+      · **자전거도로 소폭 우대**(×0.85) — 쾌적이 아니라 안전·합법성 때문. 그늘 판단을
+        뒤집지 않도록 폭을 좁게 뒀다.
+    눈높이는 보행과 같게 둔다 — 자전거 탄 사람 눈높이가 보행자와 비슷하다(약 1.4 m).
+    개(`height_cm`)가 특별했던 건 달궈진 노면 복사와 발 화상 때문이다.
 
     왜 필요한가 (2026-09-12): 일본의 실제 위험 구간은 레저 산책이 아니라 **역까지 걷는 통근·통학**이다.
     그늘 경로만 주면 "얼마나 이득인지"를 모르니 **최단 경로를 같이** 돌려준다 —
@@ -708,7 +722,8 @@ async def route_shade(
         ghi = float(getattr(sol, "ghi", 0.0) or 0.0) if ghi is None else ghi
 
     cond = dc.Conditions(air_c=air_c, ghi=ghi or 0.0, wind_ms=wind_ms, rh=rh,
-                         withers_cm=height_cm, vuln_offset_c=vuln_offset_c)
+                         withers_cm=height_cm, vuln_offset_c=vuln_offset_c,
+                         mode=mode, speed_kmh=speed_kmh or 0.0)
     _sky_cells, _sun = {}, None
     try:
         from datetime import datetime as _dt, timezone as _tz

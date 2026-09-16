@@ -176,6 +176,39 @@ class Conditions:
     rain: bool = False
     withers_cm: float = 45.0
     vuln_offset_c: float = 0.0
+    # ── 자전거 (2026-09-16) ──────────────────────────────────────────────
+    # 일본은 자전거 분담률이 높다(도시 통행의 15% 안팎, 역까지 자전거 + 전철이 일상).
+    # 자전거가 보행과 물리적으로 다른 점은 둘이다.
+    #   ① **속도가 곧 바람이다.** 시속 15 km = 4.2 m/s 의 맞바람이 생긴다.
+    #      WBGT·PET·노면 대류가 전부 풍속을 쓰므로 여기만 고치면 세 곳이 같이 맞는다.
+    #   ② **대사량이 다르다.** 보행 2.0 MET, 평지 자전거 4~5 MET. PET 입력값이다.
+    # 눈높이는 따로 안 바꾼다 — 자전거 탄 사람 눈높이가 보행자와 비슷하다(약 1.4 m).
+    # 개(`withers_cm`)가 특별했던 건 달궈진 노면 복사와 발 화상 때문이고, 자전거는 아니다.
+    mode: str = "walk"              # "walk" | "bike"
+    speed_kmh: float = 0.0          # 0 이면 mode 기본값(BIKE_SPEED_KMH / WALK_SPEED_KMH)
+    met: float | None = None        # None 이면 mode 기본값
+
+    def rider_ms(self) -> float:
+        """주행으로 생기는 맞바람 [m/s]. 보행은 0.4 m/s 남짓이라 무시한다."""
+        if self.mode != "bike":
+            return 0.0
+        return (self.speed_kmh or BIKE_SPEED_KMH) * 1000.0 / 3600.0
+
+    def eff_wind_ms(self) -> float:
+        """체감에 실제로 작용하는 풍속. 주행 맞바람과 기상 풍속을 합친다.
+
+        방향을 모르므로 **제곱합 평균**으로 둔다 — 맞바람일 때와 뒷바람일 때의 중간이다.
+        단순 덧셈은 뒷바람 구간을 과대평가하고, 무시하면 자전거의 냉각을 통째로 놓친다.
+        """
+        r = self.rider_ms()
+        if r <= 0.0:
+            return self.wind_ms
+        return math.hypot(self.wind_ms, r)
+
+    def met_value(self) -> float:
+        if self.met is not None:
+            return float(self.met)
+        return BIKE_MET if self.mode == "bike" else 2.0
 
 
 def edge_cost(surface: str, shaded: bool, c: Conditions) -> tuple[float, float, float]:
@@ -187,11 +220,14 @@ def edge_cost(surface: str, shaded: bool, c: Conditions) -> tuple[float, float, 
     (건물 레이캐스트·재질·열관성·가로수)와 다르므로 절대값은 ±2~3℃ 어긋날 수 있다.
     구간 사이의 **상대 비교**가 목적이며, UI 에서도 개략치임을 밝힌다.
     """
-    ts = surface_temp_c(c.air_c, c.ghi, max(c.wind_ms, 0.3), surface, shaded, c.rain)
+    # 자전거면 주행 맞바람이 더해진다 (2026-09-16). 노면 대류·WBGT 가 함께 바뀐다.
+    _wind = max(c.eff_wind_ms(), 0.3)
+    ts = surface_temp_c(c.air_c, c.ghi, _wind, surface, shaded, c.rain)
     ghi_mrt = c.ghi * 0.15 if shaded else c.ghi
     mrt_h = c.air_c + ghi_mrt / 900.0 * 12.0
-    mrt_d = mrt_at_dog_height(mrt_h, ts, c.withers_cm)
-    w = wbgt_outdoor(c.air_c, c.rh, max(c.wind_ms, 0.3), mrt_d)
+    # 자전거는 사람 높이 그대로 — 개처럼 노면 쪽으로 내리지 않는다.
+    mrt_d = mrt_h if c.mode == "bike" else mrt_at_dog_height(mrt_h, ts, c.withers_cm)
+    w = wbgt_outdoor(c.air_c, c.rh, _wind, mrt_d)
     return w + c.vuln_offset_c + max(0.0, ts - DAMAGE_THRESHOLD_C), ts, mrt_h
 
 
@@ -229,6 +265,44 @@ def edge_midpoints(elements: Iterable[dict[str, Any]]) -> list[tuple[float, floa
             if "lat" in p and "lat" in q:
                 out.append(((p["lat"] + q["lat"]) / 2, (p["lon"] + q["lon"]) / 2))
     return out
+
+
+# ── 자전거 통행 가능 (2026-09-16) ──────────────────────────────────────────
+# 계단을 남겨 두면 경로가 **거짓**이 된다 — 지도에는 선이 그려지는데 실제로는 못 간다.
+# OSM 의 `bicycle=*` 를 우선 보고, 없으면 도로 유형으로 판정한다.
+#   · `steps` 는 `bicycle=yes` 가 명시된 경우만 통과(끌고 오르는 계단로는 드물게 표기된다)
+#   · `footway`/`pedestrian` 는 일본에서 보통 자전거 통행이 허용되지만(自転車通行可)
+#     태그가 없으면 알 수 없다 → **막지 않고 통과시키되 우대하지 않는다.**
+#     여기서 막으면 도심 경로가 통째로 끊긴다. 과소차단보다 과대차단이 더 나쁘다.
+#   · `motorway`/`trunk` 류는 애초에 WALKABLE 에 없다.
+_BIKE_NO = ("no", "dismount", "private")
+
+
+def _bike_ok(hw: str, tags: dict) -> bool:
+    b = str(tags.get("bicycle", "")).lower()
+    if b in _BIKE_NO:
+        return False
+    if b in ("yes", "designated", "permissive"):
+        return True
+    if hw == "steps":
+        return False                    # 태그 없는 계단은 못 간다
+    return True
+
+
+def _bike_pref(hw: str, tags: dict) -> float:
+    """자전거 경로 비용 배수. 1.0 이 기준, 낮을수록 선호.
+
+    자전거도로를 우대하는 이유는 쾌적이 아니라 **안전·합법성**이다. 그늘 비용과 곱해 쓰되
+    폭을 좁게 둔다(0.85~1.15) — 그늘 판단을 뒤집을 만큼 크면 안 된다.
+    """
+    b = str(tags.get("bicycle", "")).lower()
+    if hw == "cycleway" or b == "designated":
+        return 0.85
+    if hw in ("residential", "living_street", "path"):
+        return 0.95
+    if hw in ("footway", "pedestrian"):
+        return 1.15                     # 갈 수는 있지만 사람과 섞인다
+    return 1.0
 
 
 def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
@@ -277,7 +351,8 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
         g.adj.append([])
         return i
 
-    # ② 보행 가능한 way 를 간선으로
+    # ② 보행(또는 자전거) 가능한 way 를 간선으로
+    _bike = cond is not None and cond.mode == "bike"
     for el in els:
         tags = el.get("tags") or {}
         hw = tags.get("highway")
@@ -285,6 +360,8 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
         if hw not in WALKABLE or len(geom) < 2:
             continue
         if tags.get("area") == "yes" or tags.get("access") == "private" or tags.get("foot") == "no":
+            continue
+        if _bike and not _bike_ok(hw, tags):
             continue
 
         tagged = _SURFACE_TAG.get(str(tags.get("surface", "")).lower())
@@ -317,6 +394,8 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
                     why = "bldg"         # 스카이라인 격자 — 건물이 태양을 막았다
                     g.skyline_shaded_edges += 1
             cost, ts, mrt_h = edge_cost(surface, shaded, cond)
+            if _bike:
+                cost *= _bike_pref(hw, tags)
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
             g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
             g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
@@ -336,6 +415,8 @@ def nearest(g: Graph, lat: float, lon: float) -> tuple[int, float] | None:
 
 # ── 코스 탐색 ────────────────────────────────────────────────
 WALK_SPEED_KMH = 4.0        # 설계값 — 냄새 맡으며 걷는 반려견 산책 속도
+BIKE_SPEED_KMH = 15.0       # 평지 일상 자전거(ママチャリ 포함). 경주용이 아니다.
+BIKE_MET = 4.5              # 평지 15 km/h 의 대사량. 보행은 약 2.0.
 _RETRACE_PENALTY = 3.0      # 설계값 — 왔던 길로 돌아오는 데 매기는 벌점 배수
 
 
@@ -408,7 +489,8 @@ def _turn_node(g: Graph, src: int, bearing_deg: float, meters: float) -> int | N
 def _seg_pet(c: "Conditions", mrt_h: float) -> float | None:
     try:
         from vpti_core.comfort import compute_pet
-        r = compute_pet(tdb=c.air_c, tr=mrt_h, v=max(c.wind_ms, 0.3), rh=c.rh)
+        r = compute_pet(tdb=c.air_c, tr=mrt_h, v=max(c.eff_wind_ms(), 0.3), rh=c.rh,
+                        met=c.met_value())
         return float(r.value)
     except Exception:  # noqa: BLE001
         return None
@@ -458,7 +540,9 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
         "coords": [{"lat": g.coords[i][0], "lon": g.coords[i][1]} for i in nodes],
         "segments": segments,
         "meters": round(total_m),
-        "seconds": round(total_m / (WALK_SPEED_KMH * 1000 / 3600)),
+        "seconds": round(total_m / (
+            ((g.cond.speed_kmh or BIKE_SPEED_KMH) if g.cond is not None and g.cond.mode == "bike"
+             else WALK_SPEED_KMH) * 1000 / 3600)),
         "mean_cost": round(weighted_cost / total_m, 2),
         "max_surface_temp_c": round(max_ts, 1),
         "shade_ratio": round(shaded_m / total_m, 3),
