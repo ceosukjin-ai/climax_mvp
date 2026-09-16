@@ -33,7 +33,12 @@ try:
     d = json.load(sys.stdin)
 except Exception:
     print('  응답 파싱 실패'); raise SystemExit
-print('저장' if d.get('saved') else '저장안됨', ' 엔진PET', d.get('pet_engine') or d.get('pet'), ' MRT', d.get('mrt_c'), ' SVF', d.get('svf'))
+e = d.get('est') or {}
+r = d.get('residual') or {}
+print('저장' if d.get('saved') else '저장안됨',
+      ' 엔진 pVPTI', e.get('pvpti'), ' MRT', e.get('mrt'), ' Ta', e.get('ta'),
+      '| 잔차 MRT', r.get('mrt'), ' 풍속', r.get('u_p'),
+      '| 태양', e.get('solar_at') or '현재시각')
 "
 done < "$F"
 echo "보낸 줄 $n"
