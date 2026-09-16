@@ -289,20 +289,31 @@ def _bike_ok(hw: str, tags: dict) -> bool:
     return True
 
 
-def _bike_pref(hw: str, tags: dict) -> float:
-    """자전거 경로 비용 배수. 1.0 이 기준, 낮을수록 선호.
+def _bike_class(hw: str, tags: dict) -> str:
+    """자전거 관점의 길 종류. **경로 비용에는 쓰지 않는다** — 화면 표시용이다.
 
-    자전거도로를 우대하는 이유는 쾌적이 아니라 **안전·합법성**이다. 그늘 비용과 곱해 쓰되
-    폭을 좁게 둔다(0.85~1.15) — 그늘 판단을 뒤집을 만큼 크면 안 된다.
+    ⚠️ 2026-09-16 정정:
+      처음에는 이 함수가 비용 배수(자전거도로 ×0.85, 보도 ×1.15)를 돌려줬고, 그 값을
+      `edge_cost` 결과에 곱했다. **그 숫자들은 근거가 없었다 — 내가 감으로 정한 값이다.**
+
+      실제로 뒤집혔다. 도쿄 신주쿠→시부야 실측:
+          걷기   그늘 5.4%   자전거 3.4%   (최단 경로 3.5% 보다도 낮다)
+      맞바람이 WBGT 를 낮추면서 그늘 간 비용 차이가 줄었는데, 임의 배수는 그대로라
+      **근거 없는 값이 물리 계산을 눌러버렸다.**
+
+      -> 경로 결정에는 **물리만** 쓴다(맞바람·대사량·그늘·노면온도). 전부 설명 가능한 값이다.
+         자전거도로 여부는 여기서 분류해 `bike_lane_ratio` 로 **표시만** 한다.
+         안전을 얼마나 중시할지는 사용자가 정한다.
+
+      자전거 경로 선택 연구(route choice)에는 자전거도로·경사·교통량 가중치를 실측으로
+      추정한 값들이 있다. 그걸 가져올 수 있게 되면 그때 비용에 넣는다. 그 전까지는 넣지 않는다.
     """
     b = str(tags.get("bicycle", "")).lower()
     if hw == "cycleway" or b == "designated":
-        return 0.85
-    if hw in ("residential", "living_street", "path"):
-        return 0.95
+        return "lane"                   # 자전거 전용·지정
     if hw in ("footway", "pedestrian"):
-        return 1.15                     # 갈 수는 있지만 사람과 섞인다
-    return 1.0
+        return "sidewalk"               # 보도 — 갈 수는 있지만 사람과 섞인다
+    return "road"
 
 
 def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
@@ -394,8 +405,10 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
                     why = "bldg"         # 스카이라인 격자 — 건물이 태양을 막았다
                     g.skyline_shaded_edges += 1
             cost, ts, mrt_h = edge_cost(surface, shaded, cond)
+            # 자전거도로 우대는 **비용에 넣지 않는다**(위 _bike_class 주석 참조).
+            # 대신 구간 종류를 surface 문자열 뒤에 붙여 _summarize 가 비율만 세게 한다.
             if _bike:
-                cost *= _bike_pref(hw, tags)
+                surface = f"{surface}|{_bike_class(hw, tags)}"
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
             g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
             g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
@@ -502,6 +515,8 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
     max_ts = -999.0
     shaded_m = 0.0
     known_m = 0.0
+    lane_m = 0.0                 # 자전거 전용·지정 구간 (표시용)
+    side_m = 0.0                 # 보도 구간 (표시용)
     # 구간별 값도 함께 내보낸다 (2026-09-12). 여기서 이미 전부 계산돼 있는데 평균만 내고
     # 버리고 있었다 → 경로 위에서 "어느 골목이 더운지"를 보여주려면 이 값이 필요하다.
     # 추가 계산도, 추가 API 호출도 없다. 기존 클라이언트는 이 필드를 안 읽으면 그만이다.
@@ -512,6 +527,13 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
         if e is None:
             continue
         _v, meters, cost, ts, shaded, known, mrt_h, why, surf = e
+        bcls = None
+        if isinstance(surf, str) and "|" in surf:
+            surf, bcls = surf.split("|", 1)
+            if bcls == "lane":
+                lane_m += meters
+            elif bcls == "sidewalk":
+                side_m += meters
         total_m += meters
         weighted_cost += cost * meters
         max_ts = max(max_ts, ts)
@@ -529,6 +551,8 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
             "why": why,                   # 왜 그늘인가(또는 왜 양지인가)
             "surface": surf,              # 노면 재질 (known=False 면 도로유형에서 추정)
         }
+        if bcls is not None:
+            seg["bike"] = bcls            # lane | sidewalk | road (표시용, 비용 무관)
         if g.cond is not None:
             pet = _seg_pet(g.cond, mrt_h)
             if pet is not None:
@@ -548,6 +572,9 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
         "shade_ratio": round(shaded_m / total_m, 3),
         "surface_known_ratio": round(known_m / total_m, 3),
         "bearing_deg": bearing,
+        # 자전거 모드에서만 의미가 있다. **경로 선택에는 안 쓰였고 표시용이다.**
+        "bike_lane_ratio": round(lane_m / total_m, 3),
+        "bike_sidewalk_ratio": round(side_m / total_m, 3),
     }
 
 

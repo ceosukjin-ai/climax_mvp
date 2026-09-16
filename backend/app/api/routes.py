@@ -2000,6 +2000,12 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
         "comfort_index": r.comfort_index,
         "pet_physics": round(_pet_phys, 1),          # 물리 엔진 PET
         "pet_ai": round(_pet_ai, 1),                 # 잔차 AI 보정 PET(분포 밖이면 =물리)
+        # 관용 이름 (2026-09-16) — 앱이 `pet` / `feels_like_c` 를 읽는데 응답에 그 키가 없어서
+        # 화면에 계속 None 이 떴다. 값은 처음부터 계산되고 있었고 **이름만 달랐다.**
+        # 앱을 고치는 대신 여기서 같이 내보낸다 — 다른 클라이언트도 안 깨진다.
+        # 대표값은 **AI 보정본**이다(분포 밖이면 물리값과 같다).
+        "pet": round(_pet_ai, 1),
+        "feels_like_c": round(_pet_ai, 1),
         "ai_applied": _ai_on, "ai_confidence": round(_ai_conf, 2),
         "mrt_c": round(float(r.mrt.tmrt), 1),
         # WBGT(暑さ指数) — 일본의 공용 지표. 환경성 값은 관측점(광역)이라 그늘/볕 구분이 없고,
