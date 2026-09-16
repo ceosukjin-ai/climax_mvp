@@ -30,8 +30,12 @@ CREATE TABLE IF NOT EXISTS osm_way (
 );
 CREATE INDEX IF NOT EXISTS ix_osm_way_geom ON osm_way USING GIST (geom);
 """
+# `bicycle`/`cycleway` 추가 (2026-09-16). 자전거 모드가 이 두 태그로 통행 가능 여부
+# (`_bike_ok` — 계단 제외)와 길 종류 표시(`_bike_class`)를 정한다. 여기서 안 담으면
+# DB 경로로 오는 일본 도로는 자전거 태그가 통째로 비어, 계단이 경로에 섞인다.
 KEEP = ("highway", "leisure", "landuse", "natural", "surface", "covered", "tunnel", "tree_lined",
-        "area", "access", "foot", "name", "sidewalk", "lit", "width", "bridge", "steps", "incline")
+        "area", "access", "foot", "name", "sidewalk", "lit", "width", "bridge", "steps", "incline",
+        "bicycle", "cycleway")
 
 
 def _wkt(geom: dict) -> str | None:
