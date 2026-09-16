@@ -14,6 +14,9 @@ set -u
 cd "$(dirname "$0")/.."
 S=${S:-33.10}; N=${N:-38.65}; W=${W:-125.90}; E=${E:-129.60}; STEP=${STEP:-0.1}
 PAR=${PAR:-4}; MEM=${MEM:-1500m}; CPUS=${CPUS:-1.0}; IMG=${IMG:-climax-backend:latest}
+# 출처 표시 (2026-09-16). 한국은 V-World 타일 + 표제부라 vwtile+reg 가 맞지만,
+# 일본은 OSM 이다. 고정해 두면 DB 에 거짓 출처가 남는다.  SRC=osm 로 넘길 것.
+SRC=${SRC:-vwtile+reg}; RUN=${RUN:-kr}   # RUN 은 띠별 로그 이름 (grid_<RUN>_<위도>.log)
 ENVF=infra/ncp/.env.prod
 val() { grep -m1 "^$1=" "$ENVF" | cut -d= -f2-; }
 DBURL="postgresql+asyncpg://climax:$(val DB_PASSWORD)@$(val DB_HOST):5432/climax"
@@ -35,8 +38,8 @@ while x<n:
 " | xargs -P $PAR -L 1 bash -c '
       s=$0; n=$1; tag=${s/./_}
       '"$DC"' python3 /repo/scripts/build_skyline_grid.py --bbox $s '"$W"' $n '"$E"' \
-        --step 0.0002 --threads 2 --resume --near-roads 25 --tiles-only --src-hint vwtile+reg \
-        > ~/grid_kr_$tag.log 2>&1
-      echo "띠 $s~$n 끝: $(tail -n 1 ~/grid_kr_$tag.log)"' ;;
+        --step 0.0002 --threads 2 --resume --near-roads 25 --tiles-only --src-hint "'"$SRC"'" \
+        > ~/grid_'"$RUN"'_$tag.log 2>&1
+      echo "띠 $s~$n 끝: $(tail -n 1 ~/grid_'"$RUN"'_$tag.log)"' ;;
   *) echo "usage: $0 tiles|grid"; exit 1 ;;
 esac
