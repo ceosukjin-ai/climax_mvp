@@ -21,7 +21,14 @@
 set -u
 cd "$(dirname "$0")/.."
 S=${S:-33.10}; N=${N:-38.65}; W=${W:-125.90}; E=${E:-129.60}; STEP=${STEP:-0.1}
-PAR=${PAR:-4}; MEM=${MEM:-1500m}; CPUS=${CPUS:-1.0}; IMG=${IMG:-climax-backend:latest}
+# 메모리 한도 2500m (2026-09-17). 1500m 로는 **파이썬이 1,530 MB 에서 커널에 죽었다.**
+#   dmesg: "Memory cgroup out of memory: Killed process (python3) anon-rss:1530976kB"
+#   9/16 15:26, 16:45, 9/17 03:13/03:14/03:18 — 도쿄 격자가 세 번 죽은 원인이 전부 이것이다.
+#   (ssh 신호도, watch_health 도, 배포도 아니었다. 세 번 다 엉뚱한 곳을 의심했다.)
+#   호스트는 15 GB 다. 3 x 2500m = 7.5 GB 면 절반이 남는다. 그래도 9/11 사고를 생각해
+#   PAR 을 올릴 때는 MEM x PAR 이 8 GB 를 넘지 않게 할 것.
+PAR=${PAR:-4}; MEM=${MEM:-2500m}; CPUS=${CPUS:-1.0}; IMG=${IMG:-climax-backend:latest}
+TRIES=${TRIES:-5}       # 띠가 안 끝나면 --resume 으로 몇 번까지 다시 걸까
 # 출처 표시 (2026-09-16). 한국은 V-World 타일 + 표제부라 vwtile+reg 가 맞지만,
 # 일본은 OSM 이다. 고정해 두면 DB 에 거짓 출처가 남는다.  SRC=osm 로 넘길 것.
 SRC=${SRC:-vwtile+reg}; RUN=${RUN:-kr}   # RUN 은 띠별 로그 이름 (grid_<RUN>_<위도>.log)
@@ -30,7 +37,7 @@ val() { grep -m1 "^$1=" "$ENVF" | cut -d= -f2-; }
 DBURL="postgresql+asyncpg://climax:$(val DB_PASSWORD)@$(val DB_HOST):5432/climax"
 DC="nice -n 19 docker run --rm --memory $MEM --memory-swap $MEM --cpus $CPUS \
  -e DATABASE_URL=$DBURL -e VWORLD_API_KEY=$(val VWORLD_API_KEY) \
- -e LOCAL_TILE_CACHE_MAX=${TILE_CACHE:-24} -e RINGS_CACHE_MAX=${RING_CACHE:-3000} \
+ -e LOCAL_TILE_CACHE_MAX=${TILE_CACHE:-24} -e RINGS_CACHE_MAX=${RING_CACHE:-1500} \
  -e BUILDING_SOURCE=${BUILDING_SOURCE:-db} \
  -v $HOME/climax_mvp:/repo -v $HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro $IMG"
 
@@ -45,9 +52,16 @@ while x<n:
     print(f'{x:.2f} {min(x+st,n):.2f}'); x=round(x+st,2)
 " | xargs -P $PAR -L 1 bash -c '
       s=$0; n=$1; tag=${s/./_}
-      '"$DC"' python3 /repo/scripts/build_skyline_grid.py --bbox $s '"$W"' $n '"$E"' \
-        --step 0.0002 --threads 2 --resume --near-roads 25 --tiles-only --src-hint "'"$SRC"'" \
-        > ~/grid_'"$RUN"'_$tag.log 2>&1
+      # 죽으면 다시 건다 (2026-09-17). OOM 으로 한 띠가 죽으면 드라이버가 그걸 "끝"으로 보고
+      # 전체를 종료했다. --resume 이라 이어받으니, 끝났다는 표시가 나올 때까지 다시 건다.
+      for t in $(seq 1 '"$TRIES"'); do
+        '"$DC"' python3 /repo/scripts/build_skyline_grid.py --bbox $s '"$W"' $n '"$E"' \
+          --step 0.0002 --threads 2 --resume --near-roads 25 --tiles-only --src-hint "'"$SRC"'" \
+          >> ~/grid_'"$RUN"'_$tag.log 2>&1
+        if tail -n 3 ~/grid_'"$RUN"'_$tag.log | grep -q "완료:"; then break; fi
+        echo "띠 $s~$n $t회차 중단 — 다시 건다: $(tail -n 1 ~/grid_'"$RUN"'_$tag.log)"
+        sleep 10
+      done
       echo "띠 $s~$n 끝: $(tail -n 1 ~/grid_'"$RUN"'_$tag.log)"' ;;
   *) echo "usage: $0 tiles|grid"; exit 1 ;;
 esac
