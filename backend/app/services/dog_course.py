@@ -377,6 +377,12 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
 
         tagged = _SURFACE_TAG.get(str(tags.get("surface", "")).lower())
         surface = tagged or surface_guess(hw)
+        # 자전거 구간 종류는 **way 단위로 한 번만** 만든다 (2026-09-16 사고).
+        # 처음엔 안쪽 구간 반복문 안에서 `surface = f"{surface}|..."` 로 덧붙였는데,
+        # 한 way 에 구간이 10개면 `asphalt|road|road|road...` 로 계속 길어지고
+        # 다음 반복의 `edge_cost(surface, ...)` 가 알 수 없는 재질을 받아 터졌다.
+        # 비용 계산에는 **순수 재질**(`surface`)을, 간선에 싣는 값에는 종류를 붙인 문자열을 쓴다.
+        surf_out = f"{surface}|{_bike_class(hw, tags)}" if _bike else surface
         covered = tags.get("covered") == "yes" or (tags.get("tunnel") not in (None, "no"))
         tree_lined = tags.get("tree_lined") == "yes"
 
@@ -404,14 +410,11 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
                     shaded = True
                     why = "bldg"         # 스카이라인 격자 — 건물이 태양을 막았다
                     g.skyline_shaded_edges += 1
+            # 비용에는 **순수 재질**을 넘긴다. 자전거도로 우대는 비용에 안 넣는다(_bike_class 주석).
             cost, ts, mrt_h = edge_cost(surface, shaded, cond)
-            # 자전거도로 우대는 **비용에 넣지 않는다**(위 _bike_class 주석 참조).
-            # 대신 구간 종류를 surface 문자열 뒤에 붙여 _summarize 가 비율만 세게 한다.
-            if _bike:
-                surface = f"{surface}|{_bike_class(hw, tags)}"
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
-            g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
-            g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surface))
+            g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surf_out))
+            g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surf_out))
             g.edge_count += 1
     g.cond = cond
     return g
