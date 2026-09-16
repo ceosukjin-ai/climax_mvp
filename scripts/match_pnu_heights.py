@@ -28,8 +28,14 @@ import asyncio, json, math, os, sys
 sys.path.insert(0, "/app")
 
 TSV = os.environ.get("TSV", "/repo/data/pnu_buildings.tsv")
-# 캠퍼스 bbox — 넉넉히. 구외(총장공관·부설고)는 이 밖이라 자동으로 빠진다.
-S, W, N, E = 35.2250, 129.0740, 35.2420, 129.0900
+# 캠퍼스 bbox (2026-09-16 좁힘).
+# 처음에 1.9 x 1.4 km 로 잡았더니 후보가 3,597 폴리곤 — 캠퍼스에 그만한 건물이 있을 리 없다.
+# 장전동 주변이 통째로 들어와, 대장 471 m² 짜리 진리관이 같은 면적의 동네 원룸과
+# 0% 로 "완벽히" 맞을 수 있었다. **면적만으로 맞추면 후보가 많을수록 우연이 이긴다.**
+S, W, N, E = 35.2295, 129.0765, 35.2390, 129.0875
+# 매칭 결과가 캠퍼스 안에 모여 있는지 검사할 기준점·반경 (넉넉한터 부근)
+C_LA, C_LO, C_RAD_M = 35.2340, 129.0820, 700.0
+AMBIG = 0.03        # 차점이 이 안쪽이면 "애매" — 같은 면적 후보가 둘 이상이다
 TOL = float(os.environ.get("TOL", "0.25"))      # 면적 상대오차 허용
 APPLY = "--apply" in sys.argv
 
@@ -96,10 +102,16 @@ async def main():
                 cand.append((d, i, p["id"]))
     cand.sort()
     pid = {p["id"]: p for p in poly}
+    # 대장 한 줄마다 후보가 몇 개나 되는지 — 애매한 것을 표시하기 위해
+    per_reg: dict = {}
+    for d, i, p_id in cand:
+        per_reg.setdefault(i, []).append(d)
     for d, i, p_id in cand:
         if i in used_r or p_id in used_p:
             continue
-        pairs.append((reg[i], pid[p_id], "면적", d))
+        ds = sorted(per_reg.get(i, [d]))
+        ambig = len(ds) > 1 and (ds[1] - ds[0]) < AMBIG
+        pairs.append((reg[i], pid[p_id], "면적?" if ambig else "면적", d))
         used_r.add(i); used_p.add(p_id)
 
     pairs.sort(key=lambda x: -x[0]["fl"])
@@ -115,14 +127,44 @@ async def main():
     for r in miss[:10]:
         print(f"  {r['code']:<8}{r['fl']:>3}층{r['area']:>8.0f} m²  {r['name'][:26]}")
 
-    tall = [(r, p) for r, p, _h, _d in pairs if r["fl"] >= 4 and not p["has_h"]]
-    print(f"\n→ 4층 이상인데 엔진이 기본2층으로 보던 것: {len(tall)}동")
+    # 캠퍼스 안에 모여 있나 — 면적 우연 일치를 잡는 검사 (2026-09-16)
+    def dist_m(la, lo):
+        dy = (la - C_LA) * 111320.0
+        dx = (lo - C_LO) * 111320.0 * math.cos(math.radians(C_LA))
+        return math.hypot(dx, dy)
+    far = [(r, p, dist_m(p["la"], p["lo"])) for r, p, _h, _d in pairs
+           if dist_m(p["la"], p["lo"]) > C_RAD_M]
+    amb = [(r, p, d) for r, p, h, d in pairs if h == "면적?"]
+    print(f"\n검사")
+    print(f"  캠퍼스 중심에서 {C_RAD_M:.0f} m 밖으로 붙은 것: {len(far)}동"
+          + ("  ← 면적이 우연히 맞은 것일 수 있다" if far else "  (없음)"))
+    for r, p, d in sorted(far, key=lambda x: -x[2])[:10]:
+        print(f"    {r['code']:<8}{r['fl']:>3}층  {d:>5.0f} m  {r['name'][:24]}")
+    print(f"  같은 면적 후보가 둘 이상이라 애매한 것: {len(amb)}동"
+          + ("  ← 사람이 확인할 것" if amb else "  (없음)"))
+    for r, p, d in amb[:10]:
+        print(f"    {r['code']:<8}{r['fl']:>3}층  면적 {r['area']:.0f}  {r['name'][:24]}")
+
+    lv1 = sum(1 for _r, p, _h, _d in pairs
+              if str(p["tags"].get("building:levels") or "") == "1")
+    print(f"  지금 levels=1 로 들어가 있는 것: {lv1}동 / 맞춘 {len(pairs)}동")
+    tall = [(r, p) for r, p, _h, _d in pairs
+            if r["fl"] >= 4 and str(p["tags"].get("building:levels") or "") == "1"]
+    print(f"  → 실제 4층 이상인데 DB 에 1층으로 들어간 것: {len(tall)}동")
+
+    if far or amb:
+        print("\n⚠ 위 항목을 먼저 확인할 것. --apply 는 그다음이다.")
 
     if not APPLY:
         print("\n미리보기다. 실제로 넣으려면 --apply 를 붙여 다시 돌릴 것.")
         return
+    if far:
+        print("\n캠퍼스 밖으로 붙은 것이 있어 적용하지 않는다. bbox 나 매칭을 먼저 고칠 것.")
+        return
     n = 0
-    for r, p, _h, _d in pairs:
+    for r, p, h, _d in pairs:
+        if h == "면적?":          # 애매한 것은 건드리지 않는다. 틀린 9층을 박는 것보다 낫다.
+            continue
         t = dict(p["tags"]); t["building:levels"] = str(r["fl"])
         t["pnu_code"] = r["code"]; t["name"] = t.get("name") or r["name"]
         await pool.execute("UPDATE bldg_poly SET tags=$1::jsonb WHERE id=$2",
