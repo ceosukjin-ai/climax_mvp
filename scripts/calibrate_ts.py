@@ -14,7 +14,7 @@ def eng_ts(r, cfg):
     t=datetime.strptime(r["t"],"%Y-%m-%d %H:%M").replace(tzinfo=KST)
     cf=0.0 if r["expose"]=="sun" else 0.5
     sol=estimate_solar(r["lat"],r["lon"],t,cloud_fraction=cf)
-    eps_sky=sky_emissivity(r["ta"],r["rh"],cf=cf)
+    eps_sky=sky_emissivity(r["ta"],r["rh"],cf)
     ds=1.0 if r["expose"]=="sun" else 0.0
     return estimate_ground_temp(r["ta"],sol,ALB,EMIS,r["svf"],r["gvi"],r["wind"],eps_sky,config=cfg,direct_shade=ds)
 def score_cfg(cfg):
