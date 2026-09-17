@@ -39,15 +39,29 @@ DB_NAME="${CLIMAX_PG_DB:-climax}"
 # 반드시 들어 있어야 할 테이블 — 하나라도 0 이면 백업을 실패로 본다.
 # 재생성 불가능한 것들이다(그날 그 자리에서 잰 값, 학습 이력).
 MUST="${CLIMAX_MUST_TABLES:-field_check measurement engine_check}"
+
+# 두 갈래 백업 (2026-09-17). 전체 덤프가 4.2 GB 인데 디스크 여유가 8.4 GB 다.
+# 일 14개 + 월 12개 정책으로는 **이틀이면 꽉 찬다.**
+#   core(매일) — 다시 못 만드는 것만. 실측·학습 이력. 수십 MB 라 14일치를 둬도 1 GB 가 안 된다.
+#   full(주 1회) — 전체. 건물·도로·격자는 다시 만들 수 있지만 오래 걸리니 몇 개는 둔다.
+# MODE 는 인자로 준다:  backup_db.sh core   /   backup_db.sh full
+# 크론:  10 4 * * *  … backup_db.sh core      (매일)
+#        30 4 * * 0  … backup_db.sh full      (일요일)
+MODE="${1:-${CLIMAX_BACKUP_MODE:-core}}"
+CORE_TABLES="${CLIMAX_CORE_TABLES:-field_check measurement engine_check brain_version bldg_register}"
+case "$MODE" in
+  core) KEEP_DAILY="${CLIMAX_KEEP_DAILY:-14}"; KEEP_MONTHLY="${CLIMAX_KEEP_MONTHLY:-12}" ;;
+  full) KEEP_DAILY="${CLIMAX_KEEP_DAILY:-2}";  KEEP_MONTHLY="${CLIMAX_KEEP_MONTHLY:-1}" ;;
+  *) echo "사용: $0 core|full"; exit 1 ;;
+esac
 BACKUP_DIR="${CLIMAX_BACKUP_DIR:-$HOME/climax_backups}"
 RECIPIENT_FILE="${CLIMAX_AGE_RECIPIENT_FILE:-$HOME/.climax_backup_recipient}"
-KEEP_DAILY="${CLIMAX_KEEP_DAILY:-14}"     # 최근 일 백업 보관 개수
-KEEP_MONTHLY="${CLIMAX_KEEP_MONTHLY:-12}" # 매월 1일 백업 보관 개수
+# KEEP_* 는 위 MODE 분기에서 정한다 (core 14개 / full 2개)
 ALLOW_PLAINTEXT="${CLIMAX_ALLOW_PLAINTEXT:-0}"  # 1로 두면 암호화 없이 저장(권장 안 함)
 
 STAMP="$(date +%Y%m%d_%H%M)"
-TMP="$BACKUP_DIR/.climax_${STAMP}.dump.tmp"
-OUT="$BACKUP_DIR/climax_${STAMP}.dump.age"
+TMP="$BACKUP_DIR/.climax_${MODE}_${STAMP}.dump.tmp"
+OUT="$BACKUP_DIR/climax_${MODE}_${STAMP}.dump.age"
 LOG="$BACKUP_DIR/backup.log"
 
 mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
@@ -55,7 +69,7 @@ mkdir -p "$BACKUP_DIR"; chmod 700 "$BACKUP_DIR"
 log() { echo "$(date '+%F %T') $*" | tee -a "$LOG"; }
 fail() { log "❌ 실패: $*"; echo "$(date '+%F %T') $*" > "$BACKUP_DIR/LAST_FAILURE"; rm -f "$TMP"; exit 1; }
 
-log "── 백업 시작 ($CONTAINER → $(basename "$OUT"))"
+log "── 백업 시작 [$MODE] ($CONTAINER → $(basename "$OUT"))"
 
 # 0) 전제 확인 — 컨테이너와 암호화 열쇠
 docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null | grep -q true \
@@ -72,7 +86,7 @@ if [ "$ALLOW_PLAINTEXT" != "1" ]; then
   echo "test" | age -r "$RECIPIENT" -o /dev/null 2>/tmp/.age_check \
     || fail "공개키 형식 오류: $(tr -d '\n' < /tmp/.age_check) — 키=${RECIPIENT:0:16}…(${#RECIPIENT}자, 정상은 62자)"
 else
-  OUT="$BACKUP_DIR/climax_${STAMP}.dump"
+  OUT="$BACKUP_DIR/climax_${MODE}_${STAMP}.dump"
   log "⚠️  평문 저장 모드 (CLIMAX_ALLOW_PLAINTEXT=1) — 임시로만 쓸 것"
 fi
 
@@ -87,8 +101,13 @@ for t in $MUST; do
 done
 
 # 1) 덤프 (custom 포맷 = 압축 포함, 부분 복원 가능)
+PGARGS=()
+if [ "$MODE" = "core" ]; then
+  for t in $CORE_TABLES; do PGARGS+=(-t "$t"); done
+  log "core 테이블만: $CORE_TABLES"
+fi
 if ! docker exec -e PGPASSWORD="$DB_PASS" "$CONTAINER" \
-       pg_dump -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -Fc > "$TMP" 2>>"$LOG"; then
+       pg_dump -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -Fc "${PGARGS[@]}" > "$TMP" 2>>"$LOG"; then
   fail "pg_dump 오류 (로그: $LOG)"
 fi
 
@@ -132,12 +151,12 @@ prune_list() { # stdin: 오래된 순으로 지울 파일 목록
   done
 }
 # shellcheck disable=SC2012
-ls -1t "$BACKUP_DIR"/climax_??????01_*.dump* 2>/dev/null | grep -v '\.info$' \
+ls -1t "$BACKUP_DIR"/climax_${MODE}_??????01_*.dump* 2>/dev/null | grep -v '\.info$' \
   | tail -n "+$((KEEP_MONTHLY + 1))" | prune_list
 # shellcheck disable=SC2012
-ls -1t "$BACKUP_DIR"/climax_*.dump* 2>/dev/null | grep -v '\.info$' | grep -v '_[0-9]\{6\}01_' \
+ls -1t "$BACKUP_DIR"/climax_${MODE}_*.dump* 2>/dev/null | grep -v '\.info$' | grep -v '_[0-9]\{6\}01_' \
   | tail -n "+$((KEEP_DAILY + 1))" | prune_list
 
 USED=$(df -h "$BACKUP_DIR" | awk 'NR==2{print $5" 사용 / "$4" 남음"}')
-COUNT=$(ls -1 "$BACKUP_DIR"/climax_*.dump* 2>/dev/null | grep -vc '\.info$')
+COUNT=$(ls -1 "$BACKUP_DIR"/climax_${MODE}_*.dump* 2>/dev/null | grep -vc '\.info$')
 log "── 종료. 보관 ${COUNT}개, 디스크 $USED"
