@@ -114,6 +114,21 @@ async def main() -> None:
         print("\n  위 순서가 '매우 열림 → 열림 → 중간 → 닫힘 → 매우 닫힘' 과 대체로 맞으면")
         print("  격자가 도쿄 도시형태를 읽고 있다는 뜻이다. 뒤집혀 있으면 건물 데이터를 의심한다.")
 
+    # ── [3] 아는 장소 — 실시간 계산 ─────────────────────
+    # 격자는 예전 높이로 계산된 값이라, 높이를 고친 뒤에는 격자를 다시 돌리기 전엔 안 바뀐다.
+    # 실시간은 지금 DB 의 건물을 읽으므로 **높이 주입 직후 효과를 여기서 본다.**
+    print("\n[3] 아는 장소 — 실시간 계산 (지금 DB 건물 기준)")
+    print(f"  {'장소':<30}{'실시간SVF':>10}{'격자SVF':>9}{'차이':>8}   기대")
+    for nm, la, lo, expect in LANDMARKS:
+        d = await svf_geometric(la, lo)
+        live = d.get("svf")
+        g = await c.fetchval("SELECT svf FROM skyline_grid ORDER BY (lat-$1)^2+(lon-$2)^2 LIMIT 1", la, lo)
+        if live is None:
+            print(f"  {nm:<30}{'불가':>10}   {d.get('reason')}")
+            continue
+        diff = (live - float(g)) if g is not None else float("nan")
+        print(f"  {nm:<30}{live:>10.3f}{(float(g) if g is not None else float('nan')):>9.3f}{diff:>+8.3f}   {expect}")
+
     await c.close()
 
 

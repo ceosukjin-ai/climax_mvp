@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """도쿄 SVF 가 왜 이렇게 열려 있나 — 건물 높이 태그 보유율 (2026-09-17).
 
+⚠️ 첫 판 오류(고침): 태그 없는 건물에 default_floors 를 안 넘겨 None 이 나왔고 그걸 빼버려서
+   "기본값 7.3%" 라는 틀린 숫자가 찍혔다. 실제는 76.4% 였다. 엔진과 같은 기본 2층을 넘긴다.
+
 발견: 도쿄 23구 격자 224만점의 SVF 평균이 **0.749**, 43.5% 가 0.8 이상이다.
 도쿄는 세계에서 가장 조밀한 도시 축에 드는데 이 값은 너무 열려 있다.
 
@@ -64,7 +67,7 @@ async def main() -> None:
         for r in rows:
             import json
             t = r["tags"] if isinstance(r["tags"], dict) else json.loads(r["tags"])
-            v = _height_m_from_props(t)
+            v = _height_m_from_props(t, default_floors=2)   # 엔진과 같은 기본 2층
             if v:
                 hs.append(v)
         med = sorted(hs)[len(hs) // 2] if hs else 0.0
@@ -79,7 +82,7 @@ async def main() -> None:
     hs = []
     for r in rows:
         t = r["tags"] if isinstance(r["tags"], dict) else json.loads(r["tags"])
-        v = _height_m_from_props(t)
+        v = _height_m_from_props(t, default_floors=2)   # 엔진과 같은 기본 2층
         if v:
             hs.append(v)
     if hs:
