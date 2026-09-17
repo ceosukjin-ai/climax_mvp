@@ -20,9 +20,25 @@
 
 set -uo pipefail
 
-CONTAINER="${CLIMAX_PG_CONTAINER:-climax-postgres}"
+# ⚠️ 2026-09-17: 이 스크립트가 **빈 DB를 뜨고 있었다.**
+#    9/11 에 DB 를 별도 서버(lbs-climax-db)로 옮기고 WAS 의 옛 컨테이너는 폴백으로 남겼는데,
+#    여기서는 계속 그 옛 컨테이너를 덤프했다. 6일치 백업(390MB x 15)이 전부 껍데기다:
+#      field_check=0 (실제 104)  engine_check=3 (실제 2,851)  bldg_register=0  brain_version=0
+#    나머지는 PostGIS 이미지 기본 테이블(addr, county, edges…)뿐이었다.
+#    매일 "✅ 완료"가 찍혔다 — **성공 메시지가 성공을 뜻하지 않았다.**
+#    그래서 아래 [검사] 절을 넣는다: 반드시 있어야 할 테이블이 비면 실패로 처리한다.
+#
+# 접속 대상은 .env.prod 의 DB_HOST 를 따른다. 컨테이너는 pg_dump 를 실행할 껍데기일 뿐이다.
+ENV_PROD="${CLIMAX_ENV_FILE:-$(cd "$(dirname "$0")" && pwd)/.env.prod}"
+_env() { grep -m1 "^$1=" "$ENV_PROD" 2>/dev/null | cut -d= -f2-; }
+CONTAINER="${CLIMAX_PG_CONTAINER:-climax-postgres}"   # pg_dump 를 돌릴 컨테이너(껍데기)
+DB_HOST="${CLIMAX_PG_HOST:-$(_env DB_HOST)}"
+DB_PASS="${CLIMAX_PG_PASSWORD:-$(_env DB_PASSWORD)}"
 DB_USER="${CLIMAX_PG_USER:-climax}"
 DB_NAME="${CLIMAX_PG_DB:-climax}"
+# 반드시 들어 있어야 할 테이블 — 하나라도 0 이면 백업을 실패로 본다.
+# 재생성 불가능한 것들이다(그날 그 자리에서 잰 값, 학습 이력).
+MUST="${CLIMAX_MUST_TABLES:-field_check measurement engine_check}"
 BACKUP_DIR="${CLIMAX_BACKUP_DIR:-$HOME/climax_backups}"
 RECIPIENT_FILE="${CLIMAX_AGE_RECIPIENT_FILE:-$HOME/.climax_backup_recipient}"
 KEEP_DAILY="${CLIMAX_KEEP_DAILY:-14}"     # 최근 일 백업 보관 개수
@@ -60,8 +76,19 @@ else
   log "⚠️  평문 저장 모드 (CLIMAX_ALLOW_PLAINTEXT=1) — 임시로만 쓸 것"
 fi
 
+# 0-b) 접속 대상 확인 — 빈 DB 를 뜨는 사고를 다시 내지 않기 위해 **덤프 전에** 센다
+[ -n "$DB_HOST" ] || fail "DB_HOST 를 못 찾음 ($ENV_PROD). 옛 로컬 컨테이너를 뜨면 백업이 껍데기가 된다"
+PSQL=(docker exec -e PGPASSWORD="$DB_PASS" -i "$CONTAINER" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -At)
+log "대상 DB: $DB_HOST/$DB_NAME"
+for t in $MUST; do
+  N="$("${PSQL[@]}" -c "SELECT count(*) FROM $t" 2>>"$LOG")" || fail "$t 조회 실패 — DB_HOST=$DB_HOST 가 맞나"
+  [ "${N:-0}" -gt 0 ] || fail "$t 가 비어 있다($N) — 엉뚱한 DB 를 보고 있다. 덤프하지 않는다"
+  log "   $t=$N"
+done
+
 # 1) 덤프 (custom 포맷 = 압축 포함, 부분 복원 가능)
-if ! docker exec "$CONTAINER" pg_dump -U "$DB_USER" -d "$DB_NAME" -Fc > "$TMP" 2>>"$LOG"; then
+if ! docker exec -e PGPASSWORD="$DB_PASS" "$CONTAINER" \
+       pg_dump -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -Fc > "$TMP" 2>>"$LOG"; then
   fail "pg_dump 오류 (로그: $LOG)"
 fi
 
@@ -89,9 +116,9 @@ chmod 600 "$OUT"
 # 4) 행 수 기록 — 적재가 멈춘 날을 나중에 찾을 수 있게 (개인정보 없음: 테이블명·건수뿐)
 {
   echo "# ClimaX backup $STAMP  plain=${SIZE}B  file=$(basename "$OUT")"
-  docker exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -At -c "
+  "${PSQL[@]}" -c "
     SELECT relname || '=' || n_live_tup
-    FROM pg_stat_user_tables ORDER BY relname;" 2>/dev/null
+    FROM pg_stat_user_tables WHERE n_live_tup > 0 ORDER BY relname;" 2>/dev/null
 } > "${OUT}.info"
 
 rm -f "$BACKUP_DIR/LAST_FAILURE"
