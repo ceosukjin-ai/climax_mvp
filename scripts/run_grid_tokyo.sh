@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 도쿄 23구 스카이라인 격자 — 2띠씩 병렬, 띠마다 5회 재시도 (2026-09-17, v2)
+# 도쿄 23구 스카이라인 격자 — 4띠 병렬, 띠마다 5회 재시도 (2026-09-18, v3: PLATEAU 직접)
 #
 # 왜 v2 인가: 첫 격자(9/16~17, 14시간)는 OSM 건물 76.4% 가 높이 없이 기본 2층(6.94 m)으로
 #   깔린 위에 계산됐다 (긴자 90.7%, 신주쿠 86.6%). 23구 SVF 평균 0.749 — 도쿄가 부산보다
@@ -36,7 +36,7 @@ band() {   # $1=남위도 $2=북위도
       -v "$HOME/climax_mvp:/repo" -v "$HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro" \
       climax-backend:latest python3 /repo/scripts/build_skyline_grid.py \
       --bbox "$s" "$W" "$n" "$E" --step 0.0002 --threads 2 --resume --near-roads 25 --tiles-only \
-      --src-hint "osm+plateau" >> "$log" 2>&1
+      --src-hint "plateau" >> "$log" 2>&1
     if tail -n 3 "$log" | grep -q "완료:"; then break; fi
     echo "띠 $s~$n $t회차 중단 — 다시 건다: $(tail -n 1 "$log")"; sleep 10
   done
@@ -44,7 +44,8 @@ band() {   # $1=남위도 $2=북위도
 }
 
 echo "시작 $(date)"
-band 35.50 35.60 & band 35.80 35.90 & wait
-band 35.60 35.70 & band 35.70 35.80 & wait
+# 4띠 동시 (2026-09-18). 병목이 DB 라 컨테이너 수를 늘려도 합산 29/s 는 그대로지만,
+# 큰 띠(35.60·35.70)가 마지막에 둘만 남아 꼬리가 길어지는 건 막는다. 메모리 4×2.5 = 10 GB.
+band 35.50 35.60 & band 35.60 35.70 & band 35.70 35.80 & band 35.80 35.90 & wait
 rm -f /tmp/grid.env
 echo "도쿄 전체 끝 $(date)"
