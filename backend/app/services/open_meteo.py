@@ -72,6 +72,64 @@ async def get_current_observation(lat: float, lon: float) -> KMAObservation:
     return obs
 
 
+async def get_observation_at(lat: float, lon: float, when: datetime) -> KMAObservation:
+    """**과거 특정 시각**의 기상 (2026-09-17).
+
+    왜 필요한가: /field/check 는 `when` 으로 과거 실측 시각의 **태양**은 복원했지만
+    날씨는 여전히 "지금" 것을 썼다. 캡처 복원분(현장에서 저장 못 하고 몇 시간 뒤 업로드)은
+    측정 시각 기온이 아니라 업로드 시각 기온으로 엔진이 풀렸다.
+    2026-09-16 네 지점이 실측 29.8~30.2 °C 인데 엔진은 넷 다 26.7 °C 였다 — 3.5도 차이가
+    통째로 MRT 잔차로 넘어갔다. Tmrt 는 기온 위에 얹히므로 이건 엔진 오차가 아니다.
+
+    Open-Meteo hourly(past_days 최대 92)에서 `when` 에 **가장 가까운 정시**를 고른다.
+    2시간 넘게 떨어져 있으면 ValueError — 조용히 엉뚱한 시각을 쓰지 않는다.
+    캐시하지 않는다(시각마다 다르고, 검증 경로라 호출이 드물다).
+    """
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    age_days = (datetime.now(timezone.utc) - when).total_seconds() / 86400.0
+    if age_days < -0.5:
+        raise ValueError(f"open-meteo: 미래 시각은 조회하지 않는다 ({when.isoformat()})")
+    past = max(1, min(92, int(age_days) + 2))
+    params = {
+        "latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}",
+        "hourly": "temperature_2m,relative_humidity_2m,"
+                  "wind_speed_10m,wind_direction_10m,precipitation",
+        "past_days": str(past), "forecast_days": "1",
+        "wind_speed_unit": "ms", "timeformat": "unixtime",
+    }
+    r = await _get_client().get(OPEN_METEO_URL, params=params)
+    r.raise_for_status()
+    h = (r.json() or {}).get("hourly") or {}
+    times = h.get("time") or []
+    if not times:
+        raise ValueError("open-meteo: hourly 없음")
+    target = when.timestamp()
+    i = min(range(len(times)), key=lambda k: abs(float(times[k]) - target))
+    gap = abs(float(times[i]) - target)
+    if gap > 7200.0:
+        raise ValueError(f"open-meteo: {when.isoformat()} 근처 자료 없음 (최근접 {gap / 3600:.1f}h)")
+
+    def _f(name, d=0.0):
+        try:
+            return float((h.get(name) or [])[i])
+        except (TypeError, ValueError, IndexError):
+            return d
+
+    obs = KMAObservation(
+        temperature_c=_f("temperature_2m"),
+        humidity_pct=_f("relative_humidity_2m", 60.0),
+        wind_speed_ms=_f("wind_speed_10m"),
+        wind_direction_deg=_f("wind_direction_10m") % 360.0,
+        precipitation_mm=_f("precipitation"),
+        observed_at=datetime.fromtimestamp(float(times[i]), tz=timezone.utc),
+    )
+    logger.info("[open-meteo] 과거기상 ({:.4f},{:.4f}) {} T{:.1f} RH{:.0f} W{:.1f} (요청 {}, 차이 {:.0f}분)",
+                lat, lon, obs.observed_at.isoformat(), obs.temperature_c,
+                obs.humidity_pct, obs.wind_speed_ms, when.isoformat(), gap / 60)
+    return obs
+
+
 async def get_hourly_air_series(lat: float, lon: float, hours_back: int = 12) -> list:
     """과거 hours_back 시간의 시간별 기온 → [(age_s, temp_c)] **과거→현재** 순.
 

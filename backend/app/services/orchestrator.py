@@ -1012,6 +1012,7 @@ class VPTIOrchestrator:
         profile: PhysiologyProfile | None = None,
         timestamp: datetime | None = None,
         archive_consent: bool = False,
+        weather_override: object | None = None,
     ) -> tuple[PersonalizedVPTIResult, PipelineTelemetry]:
         """좌표 + 애플워치 생체신호만으로 pVPTI 자동 산출.
 
@@ -1032,13 +1033,21 @@ class VPTIOrchestrator:
         resolve_ms = (time.perf_counter() - t_resolve) * 1000
 
         pano_task = self._get_or_compute_pano_analysis(pano_id, clat, clon)
-        weather_task = self._get_weather(clat, clon)
-        (pano_analysis, pano_hit, sv_ms, seg_ms), (
-            weather,
-            weather_hit,
-            weather_ms,
-            weather_source,
-        ) = await asyncio.gather(pano_task, weather_task)
+        if weather_override is not None:
+            # 과거 실측 시각의 기상을 밖에서 주입한다 (2026-09-17, /field/check 복원분).
+            # 캐시를 건드리지 않는다 — 이 경로는 검증 전용이고, 과거 시각 값이 현재값
+            # 캐시에 섞이면 일반 조회가 오염된다.
+            pano_analysis, pano_hit, sv_ms, seg_ms = await pano_task
+            weather, weather_hit, weather_ms, weather_source = (
+                weather_override, False, 0.0, "실측시각(Open-Meteo)")
+        else:
+            weather_task = self._get_weather(clat, clon)
+            (pano_analysis, pano_hit, sv_ms, seg_ms), (
+                weather,
+                weather_hit,
+                weather_ms,
+                weather_source,
+            ) = await asyncio.gather(pano_task, weather_task)
 
         # 운량 — ① ASOS 실측(일사 역산>전운량) ② SKY 예보 ③ 청천 가정 (2026-08-11)
         cloud_fraction, sky_code, cloud_source = await self._get_cloud_fraction(

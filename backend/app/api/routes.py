@@ -1416,8 +1416,23 @@ async def field_check(
     if orchestrator is None:
         raise HTTPException(status_code=503, detail="엔진 미기동")
 
+    # 과거 실측 시각의 기상 (2026-09-17). `when` 만 주면 태양만 복원되고 날씨는 "지금"
+    # 것이 쓰였다 — 2026-09-16 네 지점이 실측 29.8~30.2 °C 인데 엔진은 넷 다 26.7 °C 였고,
+    # 그 3.5도가 통째로 MRT 잔차로 넘어갔다. 이제 기상도 그 시각 것으로 가져온다.
+    # 실패하면 현재 기상으로 조용히 넘어가되, 무엇을 썼는지 est.weather_at 에 남긴다.
+    _wx = None
+    _wx_note = None
+    if _when is not None and abs((datetime.now(timezone.utc) - _when).total_seconds()) > 1800.0:
+        try:
+            from app.services.open_meteo import get_observation_at
+            _wx = await get_observation_at(lat, lon, _when)
+            _wx_note = _wx.observed_at.isoformat()
+        except Exception as e:  # noqa: BLE001
+            _wx_note = f"실패({type(e).__name__}) — 현재 기상 사용"
+
     result, telemetry = await orchestrator.compute_personalized(
         lat, lon, bio=Biometrics(), archive_consent=False, timestamp=_when,
+        weather_override=_wx,
     )
     base = result.comfort  # ComfortResult (PET/UTCI 입력 echo 포함)
     est = {
@@ -1437,6 +1452,8 @@ async def field_check(
         # 어느 시각의 태양으로 푼 값인지 남긴다. 나중에 짝을 가릴 때 이게 없으면
         # 복원분인지 현장분인지 구분할 수 없다.
         "solar_at": _when.isoformat() if _when else None,
+        # 어느 시각의 **날씨**로 푼 값인지. None 이면 현재 기상이다.
+        "weather_at": _wx_note,
     }
 
     # 잔차 — 실측이 있는 항목만
@@ -1462,6 +1479,25 @@ async def field_check(
             resid["mrt_globe"] = round(est["mrt_globe"] - _obs, 2)
             est["mrt_globe_obs"] = round(_obs, 2)
             est["globe_d_m"] = _D
+
+            # 흑구온도 공간 잔차 (2026-09-17). 위 mrt_globe 잔차는 **서로 다른 바람**으로
+            # 만든 두 값을 뺀 것이다 — 엔진은 u_p(≈2.3 m/s)로 흑구를 예측하고, 환산은
+            # 실측 풍속(0.7)으로 되돌렸다. 풍속 민감도가 ±20도라 비교가 성립하지 않는다.
+            # 2026-09-16 네 지점에서 MAE 7.36 → 2.36, point30 −10.84 → −3.55 로 줄었다.
+            # 여기서는 엔진 Tmrt 를 **실측 기온·실측 풍속**으로 흑구온도까지 내려서
+            # 실측 흑구온도와 직접 뺀다. 남는 것은 복사항이다.
+            _k = 1.1e8 * _v ** 0.6 / (_eps * _D ** 0.4)
+            _rhs = (float(est["mrt_globe"]) + 273.15) ** 4
+            _lo = min(_ta, float(est["mrt_globe"])) - 30.0
+            _hi = max(_ta, float(est["mrt_globe"])) + 30.0
+            for _ in range(200):          # 좌변은 Tg 에 단조증가 → 이분법
+                _m = (_lo + _hi) / 2.0
+                if (_m + 273.15) ** 4 + _k * (_m - _ta) - _rhs > 0:
+                    _hi = _m
+                else:
+                    _lo = _m
+            est["tg_pred"] = round((_lo + _hi) / 2.0, 2)
+            resid["tg"] = round(est["tg_pred"] - _tg, 2)
         except (TypeError, ValueError, ZeroDivisionError):
             pass
 
