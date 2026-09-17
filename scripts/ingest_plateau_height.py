@@ -39,7 +39,11 @@ def _ln(t: str) -> str:
 
 def parse_gml(path: str) -> list[tuple[float, float, float]]:
     """GML 하나 → [(lat, lon, height_m)]. lod0 footprint 중심 + measuredHeight."""
-    from lxml import etree
+    # lxml 은 API 이미지에 없다. 표준 라이브러리로 간다 — 느리지만 밤새 돌리는 일이라 괜찮다.
+    try:
+        from lxml import etree
+    except ImportError:
+        import xml.etree.ElementTree as etree
     out = []
     try:
         ctx = etree.iterparse(path, events=("end",))
