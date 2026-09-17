@@ -27,9 +27,12 @@ import asyncio
 import math
 import statistics as st
 import sys
+from datetime import datetime
 
 sys.path.insert(0, "/app")
 
+from datetime import timedelta, timezone
+KST = timezone(timedelta(hours=9))
 MIN_N = 3          # 이보다 적은 칸은 숫자를 믿지 않는다
 
 
@@ -82,8 +85,18 @@ async def main() -> None:
         except (TypeError, ValueError):
             skipped += 1
             continue
+        # 태양을 풀 시각. observed_at 은 **적재 시각**이다 — 캡처 복원분은 몇 시간 뒤에
+        # 올라왔고, 그 시각으로 풀면 볕/그늘과 일사가 통째로 틀린다.
+        # /field/check 가 when 으로 받은 실제 측정 시각이 est.solar_at 에 있다.
+        t_sun = r["observed_at"]
+        if est.get("solar_at"):
+            try:
+                t_sun = datetime.fromisoformat(str(est["solar_at"]))
+            except ValueError:
+                pass
         recs.append({
-            "t": r["observed_at"], "lat": float(r["lat"]), "lon": float(r["lon"]),
+            "t": r["observed_at"], "t_sun": t_sun,
+            "lat": float(r["lat"]), "lon": float(r["lon"]),
             "err": float(est["mrt_globe"]) - obs,
             "note": r["note"] or "",
         })
@@ -114,7 +127,7 @@ async def main() -> None:
             cache[key] = {"svf": svf, "gvi": gvi, "asphalt": asph}
         rec.update(cache[key])
 
-        sol = estimate_solar(rec["lat"], rec["lon"], rec["t"], config=DEFAULT_CONFIG.solar)
+        sol = estimate_solar(rec["lat"], rec["lon"], rec["t_sun"], config=DEFAULT_CONFIG.solar)
         blocked, _ = await sun_blocked_outdoor(
             rec["lat"], rec["lon"], sol.solar_azimuth_deg, sol.solar_elevation_deg)
         rec["night"] = sol.solar_elevation_deg <= 0.0
@@ -153,9 +166,9 @@ async def main() -> None:
         print(cell(f"GHI {lo}–{hi} W/m²",
                    [r["err"] for r in ok if lo <= r["ghi"] < hi]))
 
-    print(f"\n{'시각':<18}{'SVF':>6}{'asph':>6}{'볕':>4}{'GHI':>6}{'오차':>8}  note")
+    print(f"\n{'측정시각(KST)':<18}{'SVF':>6}{'asph':>6}{'볕':>4}{'GHI':>6}{'오차':>8}  note")
     for r in sorted(ok, key=lambda x: x["err"]):
-        print(f"{r['t'].strftime('%m-%d %H:%M'):<18}{r['svf']:>6.2f}{r['asphalt']:>6.2f}"
+        print(f"{r['t_sun'].astimezone(KST).strftime('%m-%d %H:%M'):<18}{r['svf']:>6.2f}{r['asphalt']:>6.2f}"
               f"{('그늘' if r['blocked'] else '양지'):>4}{r['ghi']:>6.0f}{r['err']:>+8.2f}  "
               f"{r['note'][:30]}")
 
