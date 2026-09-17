@@ -2129,7 +2129,27 @@ async def _geo_vpti_compute(lat: float, lon: float) -> dict:
                     "wind_ms": round(obs.wind_speed_ms, 1),
                     "src": "Open-Meteo"},
         "solar": {"elev": round(sol.solar_elevation_deg, 1),
-                  "az": round(sol.solar_azimuth_deg, 1)},
+                  "az": round(sol.solar_azimuth_deg, 1),
+                  # 일사를 노출한다 (2026-09-17). 엔진은 ghi/dni/dhi 를 이미 계산해
+                  # MRT 의 sw_direct(직달x차폐)·sw_diffuse(산란xSVF)·sw_reflected(지면반사)에
+                  # 넣고 있는데, 응답에 없어서 **밖에서 검증할 수가 없었다.**
+                  #   · 9/16 현장에서 개방 아스팔트 두 곳의 엔진 오차가 -10.8 / +8.7 로
+                  #     방향이 반대였다. 일사가 문제인지 SVF 가 문제인지 응답만으로는 못 갈랐다.
+                  #   · clearsky_ratio = ghi / ghi_clearsky. 1 에 가까우면 맑음, 0.4 면 구름이
+                  #     해를 가린 것이다. "그때 해가 구름에 있었나"를 사진으로 추측하지 않아도 된다.
+                  "ghi": round(float(getattr(sol, "ghi", 0.0) or 0.0), 1),
+                  "dni": round(float(getattr(sol, "dni", 0.0) or 0.0), 1),
+                  "dhi": round(float(getattr(sol, "dhi", 0.0) or 0.0), 1),
+                  "ghi_clearsky": round(float(getattr(sol, "ghi_clearsky", 0.0) or 0.0), 1),
+                  "clearsky_ratio": (
+                      round(float(sol.ghi) / float(sol.ghi_clearsky), 2)
+                      if getattr(sol, "ghi_clearsky", 0) else None),
+                  # MRT 를 이루는 네 갈래 — 어느 항이 모자라거나 넘치는지 바로 보인다
+                  "sw_direct": round(float(getattr(r.mrt, "sw_direct", 0.0) or 0.0), 1),
+                  "sw_diffuse": round(float(getattr(r.mrt, "sw_diffuse", 0.0) or 0.0), 1),
+                  "sw_reflected": round(float(getattr(r.mrt, "sw_reflected", 0.0) or 0.0), 1),
+                  "lw_surface": round(float(getattr(r.mrt, "lw_surface", 0.0) or 0.0), 1),
+                  "fp": round(float(getattr(r.mrt, "fp", 0.0) or 0.0), 3)},
         "note": "GSV 미사용",
     }
 
