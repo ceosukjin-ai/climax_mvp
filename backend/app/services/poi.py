@@ -34,6 +34,20 @@ KINDS: dict[str, tuple[str, str]] = {
     "convenience": ('shop~"^(convenience|supermarket|department_store)$"', "shop"),
     "toilets":     ('amenity="toilets"', "util"),
     "water":       ('amenity="drinking_water"', "util"),
+    # 자판기 (2026-09-18, 일본). 여름 보행에서 수분 보급 지점이다. 일본은 OSM 매핑이 촘촘하다.
+    # 음료 자판기만 — 담배·잡화 자판기가 섞이면 목록이 쓸모없어진다.
+    # ⚠️ 필터 문자열에 `][` 가 들어간다. _query 가 node[{필터}] 로 감싸므로 태그 두 개를 이렇게 잇는다.
+    "vending":     ('amenity="vending_machine"][vending~"drink|water|beverage"', "util"),
+}
+
+# 이름이 없어도 쓸모 있는 종류 (2026-09-18).
+# 지금까지 이름 없는 점을 전부 버렸는데, 화장실·식수대·자판기는 **이름이 없는 게 정상**이다.
+# 일본 공원 식수대·자판기에 이름이 붙은 경우는 거의 없어서 사실상 하나도 안 나오고 있었다.
+# 목적지로 고르는 가게와 달리 이들은 "가는 길의 지점"이라 이름이 필요 없다.
+NONAME: dict[str, dict[str, str]] = {
+    "toilets":        {"ja": "トイレ", "en": "Toilet", "ko": "화장실"},
+    "drinking_water": {"ja": "水飲み場", "en": "Drinking water", "ko": "식수대"},
+    "vending_machine": {"ja": "自販機", "en": "Vending machine", "ko": "자판기"},
 }
 DEFAULT_KINDS = ("restaurant", "cafe", "attraction")
 MAX_RADIUS_M = 1500
@@ -109,12 +123,16 @@ async def near(lat: float, lon: float, radius: int = 600,
         name = (t.get(f"name:{lang}") or t.get("name")
                 or t.get("name:en") or t.get("name:ja") or "").strip()
         if not name:
-            continue                       # 이름 없는 점은 목적지로 고를 수 없다
+            # 화장실·식수대·자판기는 이름이 없는 게 정상 — 기본 이름을 준다 (2026-09-18).
+            name = (NONAME.get(t.get("amenity") or "", {}) or {}).get(lang, "")
+            if not name:
+                continue                   # 그 밖의 이름 없는 점은 목적지로 고를 수 없다
         k = ("food" if t.get("amenity") in ("restaurant", "fast_food", "bbq")
              else "cafe" if t.get("amenity") in ("cafe", "ice_cream")
              else "bar" if t.get("amenity") in ("bar", "pub")
              else "shop" if t.get("shop") else
-             "util" if t.get("amenity") in ("toilets", "drinking_water") else "see")
+             "util" if t.get("amenity") in ("toilets", "drinking_water", "vending_machine")
+             else "see")
         d = _haversine(lat, lon, float(la), float(lo))
         if d > radius:
             continue

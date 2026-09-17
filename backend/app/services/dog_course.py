@@ -211,7 +211,30 @@ class Conditions:
         return BIKE_MET if self.mode == "bike" else 2.0
 
 
-def edge_cost(surface: str, shaded: bool, c: Conditions) -> tuple[float, float, float]:
+def _underground(tags: dict) -> bool:
+    """지하 통로인가 (2026-09-18) — 지하가·역 구내 자유통로·지하도.
+
+    판정: layer/level 이 음수이거나 indoor=yes. 도쿄·오사카 지하가는 OSM 에 이렇게 들어 있다.
+    지하는 **그늘보다 시원하다** — 그늘은 확산일사 15% 가 남지만 지하는 0 이다.
+    냉방은 가정하지 않는다(지하가는 보통 냉방되지만 근거가 없다). 기온은 지상과 같게 둔다.
+    """
+    if tags.get("indoor") in ("yes", "corridor", "room"):
+        return True
+    for k in ("layer", "level"):
+        v = tags.get(k)
+        if v is None:
+            continue
+        # "-1", "-2", "-1;0"(복층) 등. 첫 값만 보고 음수면 지하로 본다.
+        try:
+            if float(str(v).split(";")[0].strip()) < 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def edge_cost(surface: str, shaded: bool, c: Conditions,
+              underground: bool = False) -> tuple[float, float, float]:
     """한 구간의 비용. **WalkWindow 와 같은 식**이다.
 
     사람 기준 MRT(`mrt_h`)도 함께 돌려준다 (2026-09-12). 지금까지 여기서 계산해 놓고
@@ -222,8 +245,10 @@ def edge_cost(surface: str, shaded: bool, c: Conditions) -> tuple[float, float, 
     """
     # 자전거면 주행 맞바람이 더해진다 (2026-09-16). 노면 대류·WBGT 가 함께 바뀐다.
     _wind = max(c.eff_wind_ms(), 0.3)
-    ts = surface_temp_c(c.air_c, c.ghi, _wind, surface, shaded, c.rain)
-    ghi_mrt = c.ghi * 0.15 if shaded else c.ghi
+    # 지하는 일사가 아예 없다 (2026-09-18). 그늘(15%)과 구분한다.
+    _ghi = 0.0 if underground else c.ghi
+    ts = surface_temp_c(c.air_c, _ghi, _wind, surface, shaded or underground, c.rain)
+    ghi_mrt = 0.0 if underground else (c.ghi * 0.15 if shaded else c.ghi)
     mrt_h = c.air_c + ghi_mrt / 900.0 * 12.0
     # 자전거는 사람 높이 그대로 — 개처럼 노면 쪽으로 내리지 않는다.
     mrt_d = mrt_h if c.mode == "bike" else mrt_at_dog_height(mrt_h, ts, c.withers_cm)
@@ -246,7 +271,7 @@ class Graph:
     coords: list[tuple[float, float]] = field(default_factory=list)
     adj: list[list[tuple[int, float, float, float, bool, bool, float, str, str]]] = field(default_factory=list)
     # adj[i] = [(to, meters, cost, surface_temp, shaded, surface_known, mrt_human, why, surface), ...]
-    #   why = sun | bldg(건물그늘) | tree(가로수길) | green(공원·녹지) | covered(터널·지붕)
+    #   why = sun | bldg(건물그늘) | tree(가로수길) | green(공원·녹지) | covered(터널·지붕) | under(지하)
     cond: Any = None          # 구간 PET 산출에 쓴다 (2026-09-12)
     edge_count: int = 0
     skyline_shaded_edges: int = 0   # 스카이라인 격자로 그늘 판정된 간선 수 (2026-09-11)
@@ -384,6 +409,7 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
         # 비용 계산에는 **순수 재질**(`surface`)을, 간선에 싣는 값에는 종류를 붙인 문자열을 쓴다.
         surf_out = f"{surface}|{_bike_class(hw, tags)}" if _bike else surface
         covered = tags.get("covered") == "yes" or (tags.get("tunnel") not in (None, "no"))
+        under = _underground(tags)
         tree_lined = tags.get("tree_lined") == "yes"
 
         for i in range(1, len(geom)):
@@ -397,7 +423,9 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
             # 왜 그늘인지를 함께 남긴다 (2026-09-13). 사용자가 "왜 여기가 초록이냐"고 물었을 때
             # 답할 수 있어야 한다 — 판정하면서 이미 알고 있는 정보인데 버리고 있었다.
             why = "sun"
-            if covered:
+            if under:
+                why = "under"            # 지하가·역 구내 통로 — 일사 0
+            elif covered:
                 why = "covered"          # 터널·지붕·아케이드
             elif tree_lined:
                 why = "tree"             # OSM tree_lined=yes (가로수길로 태그된 길)
@@ -411,7 +439,7 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
                     why = "bldg"         # 스카이라인 격자 — 건물이 태양을 막았다
                     g.skyline_shaded_edges += 1
             # 비용에는 **순수 재질**을 넘긴다. 자전거도로 우대는 비용에 안 넣는다(_bike_class 주석).
-            cost, ts, mrt_h = edge_cost(surface, shaded, cond)
+            cost, ts, mrt_h = edge_cost(surface, shaded, cond, underground=under)
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
             g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surf_out))
             g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surf_out))
