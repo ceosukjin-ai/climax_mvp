@@ -94,7 +94,7 @@ async def main() -> None:
 
     t0 = time.time()
     n_pl = n_match = n_skip_has = 0
-    updates: dict[int, float] = {}         # osm id -> max height
+    updates: dict[str, float] = {}         # bldg_poly.id(문자열, '타일키/osm id') -> max height
     tmpdir = tempfile.mkdtemp()
 
     for i, name in enumerate(names, 1):
@@ -138,7 +138,7 @@ async def main() -> None:
             if tg.get("height") or tg.get("building:levels") or tg.get("gro_flo_co"):
                 n_skip_has += 1          # OSM 이 이미 안다 — 건드리지 않는다
                 continue
-            oid = int(best["id"])
+            oid = str(best["id"])
             if h > updates.get(oid, 0.0):
                 updates[oid] = h
             m_here += 1
