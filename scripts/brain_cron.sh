@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# ⚠️ crontab 에 등록할 때는 반드시 `bash` 로 부를 것 (2026-09-17).
+#    이 파일이 git 에 100644(실행 불가)로 들어가 있었고, 서버가 pull 받은 뒤
+#    9/15·9/16·9/17 새벽 학습이 전부 'Permission denied' 로 조용히 죽었다.
+#    마지막으로 제대로 돈 것은 2026-09-14 04:08 이다. 사흘을 날렸다.
+#    crontab 예:  0 4 * * * bash /home/ubuntu/climax_mvp/scripts/brain_cron.sh >> ~/brain.log 2>&1
+#    (watch_health 는 `bash <경로>` 로 불러서 멀쩡했다 — 그 방식을 따른다)
 # 야간 학습 루프 실행기 (2026-09-13 개정)
 #
 # 왜 고쳤나:
