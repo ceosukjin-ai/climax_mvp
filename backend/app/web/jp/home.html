@@ -3,168 +3,230 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<meta name="theme-color" content="#0f1720"/>
+<meta name="theme-color" content="#F2F2F7"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
 <title>カラダ天気</title>
 <style>
-  /* 지도 화면(index.html)과 같은 팔레트를 쓴다 — 두 화면을 오가므로 톤이 어긋나면 안 된다. */
-  :root{--bg:#0f1720;--panel:#182430;--line:#2a3a49;--txt:#eaf1f7;--muted:#9fb3c4;
-        --safe:#2e9e6b;--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+  /* 몸씨(한국) 대시보드와 **같은 시각 언어**. 지도 화면(index.html)은 어두운 톤이지만
+     대시보드는 밝은 톤이다 — 몸씨가 그렇게 생겼고, 두 나라 앱이 한 제품으로 읽혀야 한다.
+     색은 RiskStyle(안드로이드)에서 그대로 가져왔다: 단일 출처를 둘로 나누지 않는다. */
+  :root{
+    --bg:#F2F2F7; --card:#FFFFFF; --txt:#15171C; --muted:#8A8F98; --line:#E8E8ED;
+    --teal:#17B5A6; --amber:#F5A624; --coral:#FF6B4A; --red:#E6474D; --deepRed:#B02630;
+    --sat:env(safe-area-inset-top,0px); --sab:env(safe-area-inset-bottom,0px);
+  }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;min-height:100%;background:var(--bg);color:var(--txt);
-    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Apple SD Gothic Neo",sans-serif}
-  body{padding:calc(12px + var(--sat)) 14px calc(20px + var(--sab))}
-  .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-  .hdr b{font-size:20px;letter-spacing:.2px}
-  .hdr small{display:block;font-size:11.5px;color:var(--muted);font-weight:400;margin-top:1px}
-  .lang{display:flex;gap:4px}
-  .lang button{font:inherit;font-size:11px;padding:4px 7px;border-radius:8px;border:1px solid var(--line);
-    background:rgba(24,36,48,.9);color:var(--muted);cursor:pointer}
-  .lang button.on{color:var(--txt);border-color:#4d7fa8;background:#1d3346}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin-bottom:10px}
-  .place{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:10px}
-  .ttl{font-size:13px;color:var(--muted);margin-bottom:6px}
-  .feel{display:flex;align-items:baseline;gap:8px}
-  .feel .n{font-size:56px;font-weight:700;line-height:1;letter-spacing:-.03em}
-  .feel .u{font-size:13px;color:var(--muted)}
-  .badge{display:inline-block;margin-top:8px;padding:5px 12px;border-radius:999px;font-size:13px;font-weight:700}
-  .rows{display:grid;grid-template-columns:1fr auto;gap:5px 12px;font-size:13px;margin-top:4px}
-  .rows .k{color:var(--muted)} .rows .v{font-weight:600;text-align:right}
-  .wline{display:flex;align-items:baseline;justify-content:space-between;padding:7px 0;border-top:1px solid var(--line)}
-  .wline:first-of-type{border-top:none}
-  .wline .l{font-size:13px;color:var(--muted)} .wline .r{font-size:19px;font-weight:700}
-  .wline .r small{font-size:12px;font-weight:400;color:var(--muted);margin-left:5px}
-  .act{border-radius:12px;padding:11px 13px;font-size:14px;line-height:1.55;font-weight:600}
-  .act small{display:block;font-weight:400;font-size:12.5px;opacity:.85;margin-top:4px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:2px}
-  .tile{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 14px;
-    text-align:center;cursor:pointer;color:var(--txt);font:inherit}
-  .tile .i{font-size:26px;line-height:1} .tile .t{font-size:13px;margin-top:7px;font-weight:600}
-  .foot{margin-top:14px;font-size:10.5px;color:var(--muted);line-height:1.6;text-align:center}
-  .btn{width:100%;padding:12px;border-radius:12px;border:1px solid #4d7fa8;background:#1d3346;
-    color:var(--txt);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
-  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--muted);border-top-color:transparent;
-    border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Apple SD Gothic Neo",sans-serif;
+    -webkit-text-size-adjust:100%}
+  body{padding:calc(10px + var(--sat)) 16px calc(24px + var(--sab))}
+
+  .top{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+  .top b{font-size:23px;font-weight:800;letter-spacing:-.2px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--teal);display:inline-block}
+  .navi{margin-left:auto;display:flex;gap:2px}
+  .navi button{border:none;background:transparent;font:inherit;font-size:19px;padding:6px 5px;cursor:pointer;
+    line-height:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted)}
+  .navi button span{font-size:9px;letter-spacing:-.2px}
+
+  .place{display:flex;align-items:center;gap:5px;font-size:15px;font-weight:600;margin-bottom:2px}
+  .coord{font-size:11.5px;color:var(--muted);margin-bottom:12px}
+
+  .note{background:rgba(245,166,36,.12);border-radius:14px;padding:11px 14px;font-size:13px;
+    line-height:1.5;margin-bottom:14px;display:flex;gap:8px;align-items:flex-start}
+
+  .sect{font-size:17px;font-weight:700;margin:6px 0 10px}
+
+  .gauge{position:relative;width:100%;max-width:340px;margin:0 auto}
+  .gauge svg{display:block;width:100%;height:auto}
+  .gnum{position:absolute;left:0;right:0;bottom:26px;text-align:center}
+  .gnum .n{font-size:52px;font-weight:700;line-height:1;letter-spacing:-.02em}
+  .gnum .u{font-size:12.5px;color:var(--muted);margin-top:4px}
+  .glab{position:absolute;bottom:4px;font-size:11px;color:var(--muted)}
+  .glab.l{left:6%} .glab.r{right:6%}
+
+  .pill{display:block;margin:6px auto 16px;padding:10px 30px;border-radius:999px;
+    font-size:16px;font-weight:700;color:#fff;border:none;width:max-content}
+
+  .card{background:var(--card);border-radius:18px;padding:15px 17px;margin-bottom:11px;
+    font-size:13.5px;line-height:1.6}
+  .card .h{font-size:12.5px;color:var(--muted);margin-bottom:9px}
+  .kv{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-top:1px solid var(--line)}
+  .kv:first-of-type{border-top:none;padding-top:0}
+  .kv .k{font-size:13px;color:var(--muted)} .kv .k small{display:block;font-size:11px;opacity:.75;margin-top:2px}
+  .kv .v{font-size:21px;font-weight:700} .kv .v small{font-size:12px;font-weight:600;margin-left:6px}
+  .chips3{display:flex;gap:16px;margin-top:2px}
+  .chips3 div{flex:1;text-align:center}
+  .chips3 .cv{font-size:17px;font-weight:700} .chips3 .ck{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .foot{margin-top:16px;font-size:10.5px;color:var(--muted);line-height:1.6;text-align:center}
+  .btn{width:100%;padding:13px;border-radius:14px;border:none;background:var(--teal);
+    color:#fff;font:inherit;font-size:15px;font-weight:700;cursor:pointer}
+  .btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--muted);border-top-color:transparent;
+    border-radius:50%;animation:s .7s linear infinite;vertical-align:-1px;margin-right:5px}
   @keyframes s{to{transform:rotate(360deg)}}
-  /* 온보딩 */
-  .ov{position:fixed;inset:0;background:rgba(9,14,20,.96);z-index:10;overflow-y:auto;
-      padding:calc(28px + var(--sat)) 18px calc(28px + var(--sab));display:none}
+
+  .ov{position:fixed;inset:0;background:var(--bg);z-index:10;overflow-y:auto;
+      padding:calc(34px + var(--sat)) 20px calc(28px + var(--sab));display:none}
   .ov.on{display:block}
-  .ov h2{font-size:19px;margin:0 0 6px} .ov p{font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 18px}
-  .ov label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
-  .chips{display:flex;flex-wrap:wrap;gap:7px}
-  .chips button{font:inherit;font-size:13px;padding:8px 13px;border-radius:999px;border:1px solid var(--line);
-    background:transparent;color:var(--muted);cursor:pointer}
-  .chips button.on{border-color:#4d7fa8;color:#7fb6e6;background:#1d3346}
-  .ov input[type=number]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);
-    background:#101a24;color:var(--txt);font:inherit;font-size:16px}
-  .note{font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:16px}
+  .ov h2{font-size:22px;font-weight:800;margin:0 0 8px}
+  .ov p{font-size:14px;color:var(--muted);line-height:1.65;margin:0 0 22px}
+  .ov label{display:block;font-size:13px;color:var(--muted);margin:18px 0 8px;font-weight:600}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chips button{font:inherit;font-size:13.5px;padding:10px 15px;border-radius:999px;border:1px solid var(--line);
+    background:var(--card);color:var(--muted);cursor:pointer}
+  .chips button.on{border-color:var(--teal);color:var(--teal);background:rgba(23,181,166,.10);font-weight:600}
+  .ov input[type=number]{width:100%;padding:13px 15px;border-radius:14px;border:1px solid var(--line);
+    background:var(--card);color:var(--txt);font:inherit;font-size:17px}
+  .onote{font-size:11.5px;color:var(--muted);line-height:1.65;margin-top:18px}
 </style>
 </head>
 <body>
 
-<div class="hdr">
-  <div><b id="t_title">カラダ天気</b><small id="t_sub">あなたの体が感じる、本当の暑さ</small></div>
-  <div class="lang"><button data-l="ja" class="on">日本語</button><button data-l="en">EN</button><button data-l="ko">한국어</button></div>
+<div class="top">
+  <b id="t_title">カラダ天気</b><span class="dot"></span>
+  <div class="navi">
+    <button onclick="go('')">🗺<span id="n_map">地図</span></button>
+    <button onclick="go('route')">🚶<span id="n_route">日陰</span></button>
+    <button onclick="go('poi')">🍜<span id="n_poi">周辺</span></button>
+    <button onclick="go('dog')">🐕<span id="n_dog">散歩</span></button>
+    <button onclick="openOnb()">⚙<span id="n_set">設定</span></button>
+  </div>
 </div>
 
-<div class="place" id="place"><span class="spin"></span><span id="placeTxt">現在地を確認しています…</span></div>
+<div class="place">📍 <span id="placeTxt">—</span></div>
+<div class="coord" id="coordTxt"><span class="spin"></span><span id="coordMsg">現在地を確認しています…</span></div>
 
-<div class="card" id="feelCard">
-  <div class="ttl" id="t_now">今この場所</div>
-  <div class="feel"><span class="n" id="feelN">–</span><span class="u" id="t_feel">°C 体感</span></div>
-  <div id="badge"></div>
-  <div class="rows" id="envRows"></div>
+<div id="noteBox"></div>
+
+<div class="sect" id="t_now">今この場所</div>
+
+<div class="gauge" id="gauge">
+  <svg viewBox="0 0 320 190" aria-hidden="true">
+    <g id="zones"></g>
+    <path id="track" d="M 26 166 A 134 134 0 0 1 294 166" fill="none" stroke="#E8E8ED" stroke-width="17" stroke-linecap="butt"/>
+    <path id="fill"  d="M 26 166 A 134 134 0 0 1 294 166" fill="none" stroke="#17B5A6" stroke-width="17"
+          stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
+    <circle id="knob" cx="26" cy="166" r="7" fill="#fff" stroke="#17B5A6" stroke-width="4"/>
+  </svg>
+  <div class="gnum"><div class="n" id="feelN">–</div><div class="u" id="t_feel">°C · 体感気候</div></div>
+  <div class="glab l" id="t_lo">低い</div><div class="glab r" id="t_hi">高い</div>
+</div>
+
+<button class="pill" id="badge" style="background:#8A8F98">—</button>
+
+<div class="card" id="envCard">
+  <div class="chips3" id="envBody"></div>
 </div>
 
 <div class="card" id="wbgtCard" style="display:none">
-  <div class="ttl" id="t_wbgt">暑さ指数（WBGT）</div>
+  <div class="h" id="t_wbgt">暑さ指数（WBGT）</div>
   <div id="wbgtBody"></div>
 </div>
 
-<div class="card" id="actCard" style="display:none"><div class="act" id="actBody"></div></div>
-
-<div class="grid">
-  <button class="tile" onclick="go('')"><div class="i">🗺</div><div class="t" id="t_map">地図</div></button>
-  <button class="tile" onclick="go('route')"><div class="i">🚶</div><div class="t" id="t_route">日陰ルート</div></button>
-  <button class="tile" onclick="go('poi')"><div class="i">🍜</div><div class="t" id="t_poi">周辺</div></button>
-  <button class="tile" onclick="go('dog')"><div class="i">🐕</div><div class="t" id="t_dog">犬の散歩</div></button>
-</div>
+<div class="card" id="actCard" style="display:none"><div id="actBody"></div></div>
 
 <div class="foot" id="foot"></div>
 
 <div class="ov" id="onb">
   <h2 id="o_h">はじめに</h2>
-  <p id="o_p">年齢と体の状態によって、同じ暑さでも危険度は変わります。<br>入力するとあなたに合わせて判定します。</p>
+  <p id="o_p"></p>
   <label id="o_age">年齢</label>
   <input type="number" id="inAge" min="1" max="120" placeholder="40" inputmode="numeric"/>
   <label id="o_cond">あてはまるものをすべて</label>
   <div class="chips" id="condChips"></div>
-  <button class="btn" style="margin-top:22px" id="o_ok" onclick="saveProfile()">はじめる</button>
-  <button class="btn" style="margin-top:8px;border-color:var(--line);background:transparent;color:var(--muted)"
-          id="o_skip" onclick="saveProfile(true)">あとで</button>
-  <div class="note" id="o_note"></div>
+  <button class="btn" style="margin-top:26px" id="o_ok" onclick="saveProfile()">はじめる</button>
+  <button class="btn ghost" style="margin-top:9px" id="o_skip" onclick="saveProfile(true)">あとで</button>
+  <div class="onote" id="o_note"></div>
 </div>
 
 <script>
 // ─── 다국어 ──────────────────────────────────────────
 const I18N = {
- ja:{sub:"あなたの体が感じる、本当の暑さ",now:"今この場所",feel:"°C 体感",wbgt:"暑さ指数（WBGT）",
-     map:"地図",route:"日陰ルート",poi:"周辺",dog:"犬の散歩",
+ ja:{now:"今この場所",feel:"°C · 体感気候",wbgt:"暑さ指数（WBGT）",lo:"低い",hi:"高い",
+     map:"地図",route:"日陰",poi:"周辺",dog:"散歩",set:"設定",
      locating:"現在地を確認しています…",locFail:"現在地を取得できません",pickOnMap:"地図で場所を選ぶ",
-     outside:"この地域はまだ対象外です",calc:"計算中…",
-     sky:"空の広さ",green:"緑",width:"道幅",sun:"日なた",shade:"日かげ",
-     official:"環境省（予測）",here:"ここ",alertOn:"熱中症警戒情報 発表中",
+     outside:"この地域はまだ対象外です",outside2:"東京・大阪・名古屋・京都・福岡などが対象です。",
+     calc:"計算中…",here:"この場所",
+     sky:"空の広さ",green:"緑",width:"道幅",
+     official:"環境省（予測）",alertOn:"熱中症警戒情報 発表中",
      risk:{safe:"安全",caution:"注意",warning:"警戒",danger:"危険",severe:"厳重警戒"},
-     oh:"はじめに",op:"年齢と体の状態によって、同じ暑さでも危険度は変わります。入力するとあなたに合わせて判定します。",
+     oh:"はじめに",op:"年齢と体の状態によって、同じ暑さでも危険度は変わります。入力すると、あなたに合わせて判定します。",
      oage:"年齢",ocond:"あてはまるものをすべて",ook:"はじめる",oskip:"あとで",
-     onote:"入力はこの端末の中だけに保存されます。サーバーには送りません。設定からいつでも変えられます。",
+     onote:"入力はこの端末の中だけに保存されます。サーバーには送りません。⚙ からいつでも変えられます。",
      cond:{cardio:"心臓・血管の病気",resp:"呼吸器の病気",diabetes:"糖尿病",kidney:"腎臓の病気",pregnant:"妊娠中"}},
- en:{sub:"The real heat your body feels",now:"Right here, now",feel:"°C felt",wbgt:"Heat index (WBGT)",
-     map:"Map",route:"Shade route",poi:"Nearby",dog:"Dog walk",
+ en:{now:"Right here, now",feel:"°C · felt climate",wbgt:"Heat index (WBGT)",lo:"Low",hi:"High",
+     map:"Map",route:"Shade",poi:"Nearby",dog:"Walk",set:"Settings",
      locating:"Finding your location…",locFail:"Can't get your location",pickOnMap:"Pick a place on the map",
-     outside:"Not covered here yet",calc:"Calculating…",
-     sky:"Sky",green:"Green",width:"Street",sun:"in the sun",shade:"in shade",
-     official:"Ministry of the Env. (forecast)",here:"Here",alertOn:"Heat alert in effect",
+     outside:"Not covered here yet",outside2:"Tokyo, Osaka, Nagoya, Kyoto, Fukuoka and more are covered.",
+     calc:"Calculating…",here:"Here",
+     sky:"Sky",green:"Green",width:"Street",
+     official:"Ministry of the Env. (forecast)",alertOn:"Heat alert in effect",
      risk:{safe:"Safe",caution:"Caution",warning:"Warning",danger:"Danger",severe:"Severe"},
-     oh:"First, about you",op:"Age and health change how dangerous the same heat is. Tell us and we'll judge for you.",
+     oh:"First, about you",op:"Age and health change how dangerous the same heat is. Tell us and we'll judge it for you.",
      oage:"Age",ocond:"Select all that apply",ook:"Start",oskip:"Later",
-     onote:"Kept on this phone only. Never sent to our server. You can change it any time.",
+     onote:"Kept on this phone only — never sent to our server. Change it any time from ⚙.",
      cond:{cardio:"Heart / vascular",resp:"Respiratory",diabetes:"Diabetes",kidney:"Kidney",pregnant:"Pregnant"}},
- ko:{sub:"내 몸이 실제로 느끼는 더위",now:"지금 이 자리",feel:"°C 체감",wbgt:"더위지수(WBGT)",
-     map:"지도",route:"그늘 경로",poi:"주변",dog:"강아지 산책",
+ ko:{now:"지금 이 자리",feel:"°C · 체감 기후",wbgt:"더위지수(WBGT)",lo:"낮음",hi:"높음",
+     map:"지도",route:"그늘",poi:"주변",dog:"산책",set:"설정",
      locating:"현재 위치를 확인하는 중…",locFail:"현재 위치를 가져올 수 없습니다",pickOnMap:"지도에서 장소 고르기",
-     outside:"이 지역은 아직 대상이 아닙니다",calc:"계산 중…",
-     sky:"하늘",green:"녹지",width:"도로폭",sun:"볕",shade:"그늘",
-     official:"환경성(예측)",here:"여기",alertOn:"열사병 경계정보 발령 중",
+     outside:"이 지역은 아직 대상이 아닙니다",outside2:"도쿄·오사카·나고야·교토·후쿠오카 등이 대상입니다.",
+     calc:"계산 중…",here:"이 자리",
+     sky:"하늘",green:"녹지",width:"도로폭",
+     official:"환경성(예측)",alertOn:"열사병 경계정보 발령 중",
      risk:{safe:"안전",caution:"주의",warning:"경계",danger:"위험",severe:"엄중경계"},
      oh:"먼저 알려주세요",op:"나이와 몸 상태에 따라 같은 더위도 위험도가 달라집니다. 입력하면 맞춰서 판정합니다.",
      oage:"나이",ocond:"해당하는 것을 모두",ook:"시작하기",oskip:"나중에",
-     onote:"입력한 내용은 이 기기에만 저장됩니다. 서버로 보내지 않습니다. 설정에서 언제든 바꿀 수 있습니다.",
+     onote:"입력한 내용은 이 기기에만 저장됩니다. 서버로 보내지 않습니다. ⚙ 에서 언제든 바꿀 수 있습니다.",
      cond:{cardio:"심장·혈관 질환",resp:"호흡기 질환",diabetes:"당뇨",kidney:"신장 질환",pregnant:"임신 중"}}
 };
 let L_ = localStorage.getItem("jp_lang") || (navigator.language||"ja").slice(0,2);
 if(!I18N[L_]) L_ = "ja";
 function T(){ return I18N[L_]; }
 
-// 지도 화면과 같은 위험색
-const HEAT = {caution:"#e8c14a",warning:"#e07b39",danger:"#d9483b",severe:"#a01f14"};
-const COLD = {caution:"#6db8e0",warning:"#4a86c9",danger:"#3b56c9",severe:"#5a3bc9"};
-function colorFor(d){
-  if(d.risk==="safe" || d.stress_direction==="neutral") return "#2e9e6b";
-  return (d.stress_direction==="cold"?COLD:HEAT)[d.risk] || "#8899a6";
+// RiskStyle(몸씨) 그대로 — 색은 단일 출처다.
+const RISK_COLOR = {safe:"#17B5A6",caution:"#F5A624",warning:"#FF6B4A",danger:"#E6474D",severe:"#B02630"};
+const MINV = 20, MAXV = 45;
+const ZONES = [[20,23,"#17B5A6"],[23,29,"#F5A624"],[29,35,"#FF6B4A"],[35,41,"#E6474D"],[41,45,"#B02630"]];
+const frac = v => Math.min(1, Math.max(0, (v - MINV) / (MAXV - MINV)));
+
+/** 반원 게이지 — 몸씨 Canvas 와 같은 척도(20~45℃, PET 경계 23/29/35/41). */
+function drawGauge(v, color){
+  const R = 134, CX = 160, CY = 166;
+  const pt = f => {
+    const a = Math.PI + f * Math.PI;
+    return [CX + R * Math.cos(a), CY + R * Math.sin(a)];
+  };
+  document.getElementById("zones").innerHTML = ZONES.map(([lo, hi, c]) => {
+    const [x1, y1] = pt(frac(lo)), [x2, y2] = pt(frac(hi));
+    return `<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${R} ${R} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}"
+            fill="none" stroke="${c}" stroke-opacity=".22" stroke-width="17"/>`;
+  }).join("");
+  const f = (v == null) ? 0 : frac(v);
+  const fill = document.getElementById("fill");
+  fill.setAttribute("stroke", color);
+  fill.setAttribute("stroke-dasharray", `${(f * 100).toFixed(1)} 100`);
+  const [kx, ky] = pt(f);
+  const knob = document.getElementById("knob");
+  knob.setAttribute("cx", kx.toFixed(1)); knob.setAttribute("cy", ky.toFixed(1));
+  knob.setAttribute("stroke", color);
+  knob.style.display = (v == null) ? "none" : "";
 }
 
-// ─── 프로필 — **이 기기 안에만** 둔다 ─────────────────
-// 질환은 민감정보다. 서버에 저장하지 않고, 질의할 때 파라미터로만 보낸다(몸씨와 같은 방침).
-// 일본 개인정보보호법(APPI) 대응에도 이 편이 맞다.
+// ─── 프로필 — 이 기기 안에만 ──────────────────────────
+// 질환은 민감정보다. 서버에 저장하지 않고 질의 파라미터로만 보낸다(몸씨와 같은 방침).
 const CONDS = ["cardio","resp","diabetes","kidney","pregnant"];
-function profile(){
-  try { return JSON.parse(localStorage.getItem("jp_profile") || "null"); } catch(e){ return null; }
-}
+function profile(){ try{ return JSON.parse(localStorage.getItem("jp_profile")||"null"); }catch(e){ return null; } }
 let draft = {age:null, conditions:[]};
 
+function openOnb(){
+  const p = profile() || {};
+  draft = {age: p.age || null, conditions: (p.conditions || []).slice()};
+  document.getElementById("inAge").value = p.age || "";
+  renderOnb();
+  document.getElementById("onb").classList.add("on");
+}
 function renderOnb(){
   const t = T();
   document.getElementById("o_h").textContent = t.oh;
@@ -185,32 +247,24 @@ function renderOnb(){
 }
 function saveProfile(skip){
   const v = parseInt(document.getElementById("inAge").value, 10);
-  const p = {age: (skip || !v || v < 1 || v > 120) ? null : v,
-             conditions: skip ? [] : draft.conditions, at: Date.now()};
-  localStorage.setItem("jp_profile", JSON.stringify(p));
+  localStorage.setItem("jp_profile", JSON.stringify({
+    age: (!v || v < 1 || v > 120) ? null : v,
+    conditions: skip ? [] : draft.conditions, at: Date.now()}));
   document.getElementById("onb").classList.remove("on");
-  start();
+  if(here) load(here.lat, here.lon); else start();
 }
 
 // ─── 화면 ───────────────────────────────────────────
 function applyLang(){
   const t = T();
   document.documentElement.lang = L_;
-  document.getElementById("t_sub").textContent = t.sub;
-  document.getElementById("t_now").textContent = t.now;
-  document.getElementById("t_feel").textContent = t.feel;
-  document.getElementById("t_wbgt").textContent = t.wbgt;
-  document.getElementById("t_map").textContent = t.map;
-  document.getElementById("t_route").textContent = t.route;
-  document.getElementById("t_poi").textContent = t.poi;
-  document.getElementById("t_dog").textContent = t.dog;
-  document.querySelectorAll(".lang button").forEach(b =>
-    b.classList.toggle("on", b.dataset.l === L_));
+  const set = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+  set("t_now", t.now); set("t_feel", t.feel); set("t_wbgt", t.wbgt);
+  set("t_lo", t.lo); set("t_hi", t.hi);
+  set("n_map", t.map); set("n_route", t.route); set("n_poi", t.poi);
+  set("n_dog", t.dog); set("n_set", t.set);
   renderOnb();
 }
-document.querySelectorAll(".lang button").forEach(b => b.onclick = () => {
-  L_ = b.dataset.l; localStorage.setItem("jp_lang", L_); applyLang(); if(last) render(last);
-});
 
 /** 카드 → 지도 화면. 기능은 그쪽에 이미 다 있다 — 다시 만들지 않는다. */
 function go(mode){
@@ -221,93 +275,109 @@ function go(mode){
 }
 
 let here = null, last = null;
-
-function setPlace(txt, spinning){
-  document.getElementById("placeTxt").textContent = txt;
-  document.querySelector("#place .spin").style.display = spinning ? "" : "none";
+function setCoord(txt, spinning){
+  document.getElementById("coordMsg").textContent = txt;
+  document.querySelector("#coordTxt .spin").style.display = spinning ? "" : "none";
 }
 
 function render(d){
-  const t = T(), c = colorFor(d);
+  const t = T();
   const feel = (d.pet_ai != null && d.ai_applied) ? d.pet_ai : d.vpti;
+  const c = RISK_COLOR[d.risk] || "#8A8F98";
   document.getElementById("feelN").textContent = (feel == null) ? "–" : feel.toFixed(1);
   document.getElementById("feelN").style.color = c;
-  document.getElementById("badge").innerHTML =
-    `<span class="badge" style="background:${c}22;color:${c};border:1px solid ${c}55">${t.risk[d.risk] || d.risk}</span>`;
-  const rows = [
-    [t.sky, Math.round((d.svf || 0) * 100) + "%"],
-    [t.green, Math.round((d.gvi || 0) * 100) + "%"],
-  ];
-  if(d.street_width_m) rows.push([t.width, d.street_width_m + " m"]);
-  document.getElementById("envRows").innerHTML = rows.map(
-    r => `<div class="k">${r[0]}</div><div class="v">${r[1]}</div>`).join("");
+  drawGauge(feel, c);
+  const b = document.getElementById("badge");
+  b.textContent = t.risk[d.risk] || d.risk; b.style.background = c;
+
+  const cells = [[t.sky, Math.round((d.svf||0)*100) + "%"], [t.green, Math.round((d.gvi||0)*100) + "%"]];
+  if(d.street_width_m) cells.push([t.width, d.street_width_m + " m"]);
+  document.getElementById("envBody").innerHTML = cells.map(
+    x => `<div><div class="cv">${x[1]}</div><div class="ck">${x[0]}</div></div>`).join("");
+
+  document.getElementById("placeTxt").textContent = d.exposure ? `${t.here} · ${d.exposure}` : t.here;
 }
 
 function renderWbgt(w){
   const t = T(), card = document.getElementById("wbgtCard");
   if(!w || !w.ok){ card.style.display = "none"; return; }
   card.style.display = "";
-  const lv = w.level || {};
-  const name = lv[L_] || lv.ja || "";
+  const lv = w.level || {}, name = lv[L_] || lv.ja || "";
   const adv = (lv.advice || {})[L_] || (lv.advice || {}).ja || "";
-  const shift = lv.vuln_shift ? ` <small>(${lv.vuln_shift > 0 ? "−" + lv.vuln_shift + "℃" : ""})</small>` : "";
-  let html = `<div class="wline"><span class="l">${t.official}<br><small style="opacity:.7">${w.official.name} · ${w.official.distance_m} m</small></span>`
-           + `<span class="r">${w.official.wbgt.toFixed(1)}<small>${name}</small></span></div>`;
+  const col = {danger:"#E6474D",severe:"#FF6B4A",warning:"#F5A624",caution:"#17B5A6",safe:"#17B5A6"}[lv.code] || "#8A8F98";
+  let html = `<div class="kv"><span class="k">${t.official}<small>${w.official.name} · ${w.official.distance_m} m</small></span>`
+           + `<span class="v" style="color:${col}">${w.official.wbgt.toFixed(1)}<small>${name}</small></span></div>`;
   if(w.alert)
-    html += `<div class="wline"><span class="l" style="color:#e07b39;font-weight:700">⚠ ${t.alertOn}</span><span class="r"></span></div>`;
-  if(adv) html += `<div style="font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.55">${adv}${shift}</div>`;
+    html += `<div class="kv"><span class="k" style="color:#FF6B4A;font-weight:700">⚠ ${t.alertOn}</span><span class="v"></span></div>`;
   document.getElementById("wbgtBody").innerHTML = html;
+  const act = document.getElementById("actCard");
+  if(adv){
+    act.style.display = "";
+    document.getElementById("actBody").innerHTML =
+      `<b style="color:${col}">${adv}</b>`
+      + (lv.vuln_shift ? `<div style="font-size:11.5px;color:var(--muted);margin-top:6px">
+           ${L_==="ja"?"あなたの条件で基準を":"" }${L_==="ko"?"입력하신 조건으로 기준을":""}${L_==="en"?"Thresholds lowered by":""} ${lv.vuln_shift}℃ ${L_==="en"?"":"引き下げています"}</div>` : "");
+  } else act.style.display = "none";
 }
 
 async function load(lat, lon){
   here = {lat, lon};
-  setPlace(T().calc, true);
+  setCoord(`${lat.toFixed(5)}, ${lon.toFixed(5)}  ·  ${T().calc}`, true);
   const p = profile() || {};
   const q = `lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}`;
-  try {
+  try{
     const r = await fetch(`/api/v1/vpti/geo/at?${q}`);
-    if(!r.ok){ setPlace(T().outside, false); return; }
-    last = await r.json();
-    render(last);
-    setPlace(last.exposure ? `${lat.toFixed(4)}, ${lon.toFixed(4)} · ${last.exposure}` : `${lat.toFixed(4)}, ${lon.toFixed(4)}`, false);
-  } catch(e){ setPlace(T().locFail, false); }
+    if(!r.ok){ outside(lat, lon); return; }
+    last = await r.json(); render(last);
+    setCoord(`${lat.toFixed(5)}, ${lon.toFixed(5)}`, false);
+  }catch(e){ outside(lat, lon); return; }
 
-  // 공식 WBGT — 나이·질환은 **보내기만** 하고 서버에 남기지 않는다.
   let wq = q;
   if(p.age) wq += `&age=${p.age}`;
   if(p.conditions && p.conditions.length) wq += `&conditions=${p.conditions.join(",")}`;
-  try {
-    const rw = await fetch(`/api/v1/jp/wbgt?${wq}`);
-    const w = await rw.json();
+  try{
+    const w = await (await fetch(`/api/v1/jp/wbgt?${wq}`)).json();
     renderWbgt(w);
     document.getElementById("foot").textContent = (w && w.attribution) ? (w.attribution[L_] || w.attribution.ja) : "";
-  } catch(e){ /* 공식값이 없어도 우리 값은 보여준다 */ }
+  }catch(e){ /* 공식값이 없어도 우리 값은 보여준다 */ }
+}
+
+function outside(lat, lon){
+  const t = T();
+  setCoord(`${lat.toFixed(5)}, ${lon.toFixed(5)}`, false);
+  document.getElementById("placeTxt").textContent = t.outside;
+  document.getElementById("noteBox").innerHTML =
+    `<div class="note">ℹ️ <div>${t.outside2}</div></div>`;
+  drawGauge(null, "#8A8F98");
+  document.getElementById("badge").style.display = "none";
+  document.getElementById("envCard").innerHTML =
+    `<button class="btn" onclick="go('')">${t.pickOnMap}</button>`;
 }
 
 function start(){
   const u = new URL(location.href);
   const qlat = parseFloat(u.searchParams.get("lat")), qlon = parseFloat(u.searchParams.get("lon"));
-  if(!isNaN(qlat) && !isNaN(qlon)){ load(qlat, qlon); return; }   // 지도에서 돌아온 경우
+  if(!isNaN(qlat) && !isNaN(qlon)){ load(qlat, qlon); return; }
   if(!navigator.geolocation){ locFail(); return; }
-  setPlace(T().locating, true);
+  setCoord(T().locating, true);
   navigator.geolocation.getCurrentPosition(
     pos => load(pos.coords.latitude, pos.coords.longitude),
     () => locFail(), {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
 }
 function locFail(){
-  setPlace(T().locFail, false);
-  document.getElementById("feelCard").innerHTML =
-    `<div class="ttl">${T().locFail}</div>
-     <button class="btn" style="margin-top:12px" onclick="go('')">${T().pickOnMap}</button>`;
+  const t = T();
+  setCoord(t.locFail, false);
+  document.getElementById("placeTxt").textContent = t.locFail;
+  drawGauge(null, "#8A8F98");
+  document.getElementById("badge").style.display = "none";
+  document.getElementById("envCard").innerHTML = `<button class="btn" onclick="go('')">${t.pickOnMap}</button>`;
 }
 
 /** 네이티브(iOS 껍데기)에서 위치가 오면 갱신한다. 앱이 아니면 아무 일도 없다. */
-window.Native = { on(msg){
-  if(msg && msg.fn === "location" && msg.lat) load(msg.lat, msg.lon);
-}};
+window.Native = { on(msg){ if(msg && msg.fn === "location" && msg.lat) load(msg.lat, msg.lon); } };
 
-applyLang();
-if(profile()){ start(); } else { document.getElementById("onb").classList.add("on"); }
+applyLang(); drawGauge(null, "#8A8F98");
+if(profile()){ start(); } else { openOnb(); }
 </script>
 </body>
 </html>
