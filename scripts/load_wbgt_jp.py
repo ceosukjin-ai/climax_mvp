@@ -140,14 +140,20 @@ async def cmd_probe() -> None:
     print("   https://www.wbgt.env.go.jp/data_service.php 의 이용안내를 다시 볼 것.")
 
 
-async def cmd_probe_alert() -> None:
-    """경보 파일 주소 찾기. 오늘·어제의 05시·17시를 훑는다."""
+async def cmd_probe_alert(days: list[str] | None = None) -> None:
+    """경보 파일 주소 찾기.
+
+    ⚠️ 오늘 날짜만 보면 **주소가 틀린 것**과 **그날 경보가 없던 것**을 구분할 수 없다.
+    그래서 한여름 날짜도 같이 찌른다 — 8월에는 일본 어딘가에 거의 매일 경보가 있다.
+    한여름에도 안 나오면 주소가 틀린 것이다.
+    """
     now = datetime.now(JST)
-    print("\n경보 파일 주소 찾기")
+    days = days or [(now - timedelta(days=d)).strftime("%Y%m%d") for d in (0, 1)] + \
+        ["20260805", "20260812", "20260728"]          # 한여름 대조
+    print("\n경보 파일 주소 찾기 (오늘·어제 + 한여름 대조)")
     found = False
     for base in ALERT_CANDIDATES:
-        for d in (0, 1):
-            day = (now - timedelta(days=d)).strftime("%Y%m%d")
+        for day in days:
             for hh in ("05", "17"):
                 url = f"{base}alert_{day}_{hh}.csv"
                 b = await _get(url)
@@ -158,8 +164,8 @@ async def cmd_probe_alert() -> None:
                     for ln in head:
                         print(f"       {ln[:110]}")
     if not found:
-        print("  하나도 없다 — 시즌(4/22~10/21) 밖이거나 주소가 다르다.")
-        print("  9월 하순이면 경보가 없을 수 있다. 파일 자체가 없는 것과 구분할 것.")
+        print("  한여름 날짜에도 하나도 없다 → **주소가 틀렸다.**")
+        print("  https://www.wbgt.env.go.jp/alert_record.php (발표 이력)에서 실제 경로를 확인할 것.")
 
 
 async def cmd_alert(conn, base: str) -> None:
