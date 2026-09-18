@@ -40,8 +40,8 @@
 
   .gauge{position:relative;width:100%;max-width:340px;margin:0 auto}
   .gauge svg{display:block;width:100%;height:auto}
-  .gnum{position:absolute;left:0;right:0;bottom:26px;text-align:center}
-  .gnum .n{font-size:52px;font-weight:700;line-height:1;letter-spacing:-.02em}
+  .gnum{position:absolute;left:0;right:0;top:36%;text-align:center}
+  .gnum .n{font-size:62px;font-weight:700;line-height:1;letter-spacing:-.02em;font-feature-settings:"tnum"}
   .gnum .u{font-size:12.5px;color:var(--muted);margin-top:4px}
   .glab{position:absolute;bottom:4px;font-size:11px;color:var(--muted)}
   .glab.l{left:6%} .glab.r{right:6%}
@@ -59,6 +59,11 @@
   .chips3{display:flex;gap:16px;margin-top:2px}
   .chips3 div{flex:1;text-align:center}
   .chips3 .cv{font-size:17px;font-weight:700} .chips3 .ck{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .mets{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .met{background:var(--bg);border-radius:14px;padding:11px 13px}
+  .met .mk{font-size:11.5px;color:var(--muted)}
+  .met .mv{font-size:20px;font-weight:700;margin-top:3px}
+  .met .mv small{font-size:11.5px;font-weight:600;color:var(--muted);margin-left:4px}
   .foot{margin-top:16px;font-size:10.5px;color:var(--muted);line-height:1.6;text-align:center}
   .btn{width:100%;padding:13px;border-radius:14px;border:none;background:var(--teal);
     color:#fff;font:inherit;font-size:15px;font-weight:700;cursor:pointer}
@@ -105,8 +110,8 @@
 <div class="gauge" id="gauge">
   <svg viewBox="0 0 320 190" aria-hidden="true">
     <g id="zones"></g>
-    <path id="track" d="M 26 166 A 134 134 0 0 1 294 166" fill="none" stroke="#E8E8ED" stroke-width="17" stroke-linecap="butt"/>
-    <path id="fill"  d="M 26 166 A 134 134 0 0 1 294 166" fill="none" stroke="#17B5A6" stroke-width="17"
+    <path id="track" d="M 26 166 A 134 134 0 0 1 294 166" fill="none" stroke="#E8E8ED" stroke-width="16" stroke-linecap="butt"/>
+    <path id="fill"  d="M 26 166 A 134 134 0 0 1 294 166" fill="none" stroke="#17B5A6" stroke-width="16"
           stroke-linecap="round" pathLength="100" stroke-dasharray="0 100"/>
     <circle id="knob" cx="26" cy="166" r="7" fill="#fff" stroke="#17B5A6" stroke-width="4"/>
   </svg>
@@ -123,6 +128,16 @@
 <div class="card" id="wbgtCard" style="display:none">
   <div class="h" id="t_wbgt">暑さ指数（WBGT）</div>
   <div id="wbgtBody"></div>
+</div>
+
+<div class="card" id="interpCard" style="display:none">
+  <div id="interpLine" style="font-size:15.5px;font-weight:700;line-height:1.5"></div>
+  <div id="interpAdv" style="font-size:13.5px;color:var(--muted);margin-top:6px;line-height:1.6"></div>
+</div>
+
+<div class="card" id="metCard" style="display:none">
+  <div class="h" id="t_metrics">くわしく</div>
+  <div class="mets" id="metBody"></div>
 </div>
 
 <div class="card" id="actCard" style="display:none"><div id="actBody"></div></div>
@@ -144,7 +159,7 @@
 <script>
 // ─── 다국어 ──────────────────────────────────────────
 const I18N = {
- ja:{now:"今この場所",feel:"°C · 体感気候",wbgt:"暑さ指数（WBGT）",lo:"低い",hi:"高い",
+ ja:{"hereW":"この場所（カラダ天気）","metrics":"くわしく","ta":"気温","rh":"湿度","wind":"風","exposure":"日射","hotter":"実際の気温より{n}度 暑く感じます","cooler":"実際の気温より{n}度 涼しく感じます","same":"実際の気温とほぼ同じです",now:"今この場所",feel:"°C · 体感気候",wbgt:"暑さ指数（WBGT）",lo:"低い",hi:"高い",
      map:"地図",route:"日陰",poi:"周辺",dog:"散歩",set:"設定",
      locating:"現在地を確認しています…",locFail:"現在地を取得できません",pickOnMap:"地図で場所を選ぶ",
      outside:"この地域はまだ対象外です",outside2:"東京・大阪・名古屋・京都・福岡などが対象です。",
@@ -156,7 +171,7 @@ const I18N = {
      oage:"年齢",ocond:"あてはまるものをすべて",ook:"はじめる",oskip:"あとで",
      onote:"入力はこの端末の中だけに保存されます。サーバーには送りません。⚙ からいつでも変えられます。",
      cond:{cardio:"心臓・血管の病気",resp:"呼吸器の病気",diabetes:"糖尿病",kidney:"腎臓の病気",pregnant:"妊娠中"}},
- en:{now:"Right here, now",feel:"°C · felt climate",wbgt:"Heat index (WBGT)",lo:"Low",hi:"High",
+ en:{"hereW":"Here (CaraDa Tenki)","metrics":"Details","ta":"Air temp","rh":"Humidity","wind":"Wind","exposure":"Sun","hotter":"Feels {n}° hotter than the air","cooler":"Feels {n}° cooler than the air","same":"Feels about the same as the air",now:"Right here, now",feel:"°C · felt climate",wbgt:"Heat index (WBGT)",lo:"Low",hi:"High",
      map:"Map",route:"Shade",poi:"Nearby",dog:"Walk",set:"Settings",
      locating:"Finding your location…",locFail:"Can't get your location",pickOnMap:"Pick a place on the map",
      outside:"Not covered here yet",outside2:"Tokyo, Osaka, Nagoya, Kyoto, Fukuoka and more are covered.",
@@ -168,7 +183,7 @@ const I18N = {
      oage:"Age",ocond:"Select all that apply",ook:"Start",oskip:"Later",
      onote:"Kept on this phone only — never sent to our server. Change it any time from ⚙.",
      cond:{cardio:"Heart / vascular",resp:"Respiratory",diabetes:"Diabetes",kidney:"Kidney",pregnant:"Pregnant"}},
- ko:{now:"지금 이 자리",feel:"°C · 체감 기후",wbgt:"더위지수(WBGT)",lo:"낮음",hi:"높음",
+ ko:{"hereW":"이 자리(카라다 텐키)","metrics":"자세히","ta":"기온","rh":"습도","wind":"바람","exposure":"일사","hotter":"실제 기온보다 {n}도 더 덥게 느껴져요","cooler":"실제 기온보다 {n}도 더 시원하게 느껴져요","same":"실제 기온과 비슷하게 느껴져요",now:"지금 이 자리",feel:"°C · 체감 기후",wbgt:"더위지수(WBGT)",lo:"낮음",hi:"높음",
      map:"지도",route:"그늘",poi:"주변",dog:"산책",set:"설정",
      locating:"현재 위치를 확인하는 중…",locFail:"현재 위치를 가져올 수 없습니다",pickOnMap:"지도에서 장소 고르기",
      outside:"이 지역은 아직 대상이 아닙니다",outside2:"도쿄·오사카·나고야·교토·후쿠오카 등이 대상입니다.",
@@ -184,6 +199,22 @@ const I18N = {
 let L_ = localStorage.getItem("jp_lang") || (navigator.language||"ja").slice(0,2);
 if(!I18N[L_]) L_ = "ja";
 function T(){ return I18N[L_]; }
+
+// 행동지침 — 몸씨 RiskStyle.advice 를 그대로 옮긴다(등급마다 한 줄).
+const ADVICE = {
+ ja:{safe:"快適です。とくに注意はいりません。",caution:"少し暑く感じます。水分をこまめに。",
+     warning:"暑さに注意。日陰や屋内を使い、無理な活動は避けて。",
+     danger:"危険な水準です。日中の外出を減らし、こまめに休憩を。",
+     severe:"非常に危険です。外での活動をやめ、屋内へ移動してください。"},
+ en:{safe:"Comfortable. No special care needed.",caution:"A bit warm. Drink water regularly.",
+     warning:"Take care. Use shade or go indoors; avoid hard activity.",
+     danger:"Dangerous. Cut midday outdoor time and rest often.",
+     severe:"Very dangerous. Stop outdoor activity and go inside."},
+ ko:{safe:"쾌적해요. 특별한 주의 없이 활동해도 좋아요.",caution:"다소 덥게 느껴져요. 수분을 자주 섭취하세요.",
+     warning:"더위 주의. 그늘·실내를 활용하고 무리한 활동은 피하세요.",
+     danger:"위험 수준. 한낮 야외활동을 줄이고 자주 휴식하세요.",
+     severe:"매우 위험. 야외활동을 중단하고 실내로 이동하세요."}
+};
 
 // RiskStyle(몸씨) 그대로 — 색은 단일 출처다.
 const RISK_COLOR = {safe:"#17B5A6",caution:"#F5A624",warning:"#FF6B4A",danger:"#E6474D",severe:"#B02630"};
@@ -201,7 +232,7 @@ function drawGauge(v, color){
   document.getElementById("zones").innerHTML = ZONES.map(([lo, hi, c]) => {
     const [x1, y1] = pt(frac(lo)), [x2, y2] = pt(frac(hi));
     return `<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${R} ${R} 0 0 1 ${x2.toFixed(1)} ${y2.toFixed(1)}"
-            fill="none" stroke="${c}" stroke-opacity=".22" stroke-width="17"/>`;
+            fill="none" stroke="${c}" stroke-opacity=".22" stroke-width="16"/>`;
   }).join("");
   const f = (v == null) ? 0 : frac(v);
   const fill = document.getElementById("fill");
@@ -296,6 +327,35 @@ function render(d){
     x => `<div><div class="cv">${x[1]}</div><div class="ck">${x[0]}</div></div>`).join("");
 
   document.getElementById("placeTxt").textContent = d.exposure ? `${t.here} · ${d.exposure}` : t.here;
+
+  // 해석 한 줄 — 몸씨 interpretation(). 숫자만 주면 "그래서 뭔데"로 끝난다.
+  const W = d.weather || {};
+  const ta = (W.ta != null) ? W.ta : null;
+  const ip = document.getElementById("interpCard");
+  if(feel != null && ta != null){
+    const diff = feel - ta;
+    const line = diff >= 0.5 ? t.hotter.replace("{n}", diff.toFixed(1))
+               : diff <= -0.5 ? t.cooler.replace("{n}", Math.abs(diff).toFixed(1))
+               : t.same;
+    ip.style.display = "";
+    document.getElementById("interpLine").textContent = line;
+    document.getElementById("interpLine").style.color = c;
+    document.getElementById("interpAdv").textContent = (ADVICE[L_] || ADVICE.ja)[d.risk] || "";
+  } else ip.style.display = "none";
+
+  // 측정값 — 왜 그런지. 몸씨 metricsGrid 와 같은 자리.
+  const mets = [];
+  if(ta != null) mets.push([t.ta, ta.toFixed(1), "°C"]);
+  if(W.rh != null) mets.push([t.rh, Math.round(W.rh), "%"]);
+  if(W.wind_ms != null) mets.push([t.wind, W.wind_ms.toFixed(1), "m/s"]);
+  if(d.exposure) mets.push([t.exposure, d.exposure, ""]);
+  const mc = document.getElementById("metCard");
+  if(mets.length){
+    mc.style.display = "";
+    document.getElementById("t_metrics").textContent = t.metrics;
+    document.getElementById("metBody").innerHTML = mets.map(
+      m => `<div class="met"><div class="mk">${m[0]}</div><div class="mv">${m[1]}<small>${m[2]}</small></div></div>`).join("");
+  } else mc.style.display = "none";
 }
 
 function renderWbgt(w){
@@ -307,6 +367,15 @@ function renderWbgt(w){
   const col = {danger:"#E6474D",severe:"#FF6B4A",warning:"#F5A624",caution:"#17B5A6",safe:"#17B5A6"}[lv.code] || "#8A8F98";
   let html = `<div class="kv"><span class="k">${t.official}<small>${w.official.name} · ${w.official.distance_m} m</small></span>`
            + `<span class="v" style="color:${col}">${w.official.wbgt.toFixed(1)}<small>${name}</small></span></div>`;
+  // 이 자리 — 우리 엔진이 이 좌표의 MRT(건물 그늘·노면 포함)에서 낸 WBGT.
+  // 환경성 값은 관측점(광역)이라 볕/그늘 구분이 없다. **이 두 줄의 차이가 일본판의 존재 이유다.**
+  if(last && last.wbgt != null){
+    const mine = last.wbgt, dv = mine - w.official.wbgt;
+    const dtxt = (Math.abs(dv) < 0.05) ? "" :
+      `<small style="color:${dv < 0 ? "#17B5A6" : "#E6474D"}">${dv > 0 ? "+" : ""}${dv.toFixed(1)}</small>`;
+    html += `<div class="kv"><span class="k">${t.hereW}<small>${last.exposure || ""}</small></span>`
+          + `<span class="v">${mine.toFixed(1)}${dtxt}</span></div>`;
+  }
   if(w.alert)
     html += `<div class="kv"><span class="k" style="color:#FF6B4A;font-weight:700">⚠ ${t.alertOn}</span><span class="v"></span></div>`;
   document.getElementById("wbgtBody").innerHTML = html;
