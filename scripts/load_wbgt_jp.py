@@ -127,7 +127,17 @@ async def cmd_points(conn) -> None:
     b = await _get(MASTER)
     if not b:
         print("지점 마스터를 못 받았다"); return
-    rows = list(csv.reader(io.StringIO(b.decode("cp932", "replace"))))
+    # 인코딩 (2026-09-18 고침): 처음에 cp932 로 읽어 지점 이름이 전부 깨졌다(縺輔＞…).
+    # 실제로는 UTF-8 이다. 관공서 CSV 라 cp932 로 넘겨짚었던 것 — 확인하고 쓴다.
+    txt = None
+    for enc in ("utf-8-sig", "utf-8", "cp932"):
+        try:
+            txt = b.decode(enc)
+            if "\ufffd" not in txt and "縺" not in txt:
+                break
+        except UnicodeDecodeError:
+            continue
+    rows = list(csv.reader(io.StringIO(txt or b.decode("utf-8", "replace"))))
     out = []
     for r in rows[1:]:
         if len(r) < 11:
@@ -155,10 +165,11 @@ async def cmd_forecast(conn, base: str, bbox: tuple | None) -> None:
         args = [bbox[0], bbox[2], bbox[1], bbox[3]]
     pids = [r["point_id"] for r in await conn.fetch(q, *args)]
     print(f"예측 내려받기 — 지점 {len(pids)}개")
-    n_ok = n_val = 0
+    n_ok = n_val = n_noforecast = 0
     for i, pid in enumerate(pids, 1):
         b = await _get(f"{base}yohou_{pid}.csv")
         if not b:
+            n_noforecast += 1      # 실측 전용 지점(전국 47곳)은 예측을 안 준다 — 실패가 아니다
             continue
         _p, issued, vals = parse_yohou(b)
         if not vals:
@@ -172,7 +183,8 @@ async def cmd_forecast(conn, base: str, bbox: tuple | None) -> None:
             print(f"  {i}/{len(pids)}  성공 {n_ok}", flush=True)
         await asyncio.sleep(0.1)          # 공공 서버다 — 몰아치지 않는다
     await conn.execute("DELETE FROM wbgt_forecast WHERE target_at < NOW() - INTERVAL '2 days'")
-    print(f"✅ 지점 {n_ok}개, 예측값 {n_val}건 적재")
+    print(f"✅ 지점 {n_ok}개, 예측값 {n_val}건 적재"
+          + (f"  (예측 미제공 {n_noforecast}개 — 실측 전용 지점)" if n_noforecast else ""))
 
 
 async def main() -> None:
