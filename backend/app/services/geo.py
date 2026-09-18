@@ -593,7 +593,20 @@ async def svf_geometric(
                 "snapped_m": 0.0, "centered_m": _cell.centered_m, "street_axis_deg": _cell.axis_deg}
     rings, src = await _rings_cached(lat, lon)
     if not rings:
-        return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 폴리곤 없음"}
+        # 건물이 60 m 안에 하나도 없다 (2026-09-18). 지금까지 여기서 **답을 포기했다.**
+        # 그런데 광장·강변·큰 공원 한가운데가 바로 그런 곳이다 — 황거 앞 광장에서 앱을 누르면
+        # "건물 폴리곤 없음" 으로 아무 답도 안 나왔다. 격자 배치(build_skyline_grid)는 같은 경우를
+        # **개방(SVF 1)** 으로 저장하고 있었다. 즉 같은 자리가 격자로는 1.0, 실시간으로는 무응답이었다.
+        #
+        # ⚠️ 다만 **자료가 없는 곳과 반드시 구분한다.** 건물 타일이 적재된 구역에서만 개방으로 본다.
+        #    커버리지 밖에서 "하늘이 다 열렸다"고 답하는 것은 모르는 것을 아는 척하는 것이다.
+        if not await _tile_covered(lat, lon):
+            return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 자료 없음"}
+        canopy = canopy_items(lat, lon)          # 건물은 없어도 나무는 있을 수 있다(공원 한가운데)
+        svf, _nb = _svf_from_rings([], eye_height_m, az_step_deg, default_floors, canopy=canopy)
+        return {"svf": svf, "source": src or "open", "n_buildings": 0,
+                "snapped_m": 0.0, "centered_m": 0.0, "n_canopy": len(canopy),
+                "canopy_observed": canopy_observed(lat, lon), "reason": "건물 없음(개방)"}
     # 수관(2026-09-15) — **스냅을 따라가야 한다.** 엔진은 좌표를 두 번 옮긴다:
     #   ① 실측 좌표 → _snap_outside(건물 안이면 밖으로) → ② → _snap_to_street_center(가로 중심선) → ③
     # 건물은 ③ 기준으로 다시 계산되는데 수관을 ① 에서 읽으면 최대 30 m 어긋난다
@@ -1235,6 +1248,18 @@ async def _db_tile_loaded(tkey: str) -> bool:
         _DB_TILE_LOADED.clear()
     _DB_TILE_LOADED[tkey] = v
     return v
+
+
+async def _tile_covered(lat: float, lon: float) -> bool:
+    """그 자리에 건물 **자료가 적재돼 있는가** (건물이 서 있는가가 아니다).
+
+    "건물이 없다" 와 "자료가 없다" 를 가르는 데 쓴다 (2026-09-18).
+    앞의 것은 개방(SVF 1), 뒤의 것은 무응답이어야 한다.
+    """
+    tkey = f"{int(math.floor(lat * 100))}_{int(math.floor(lon * 100))}"
+    if BUILDING_SOURCE == "db" and await _db_tile_loaded(tkey):
+        return True
+    return _local_tile_exists(lat, lon)
 
 
 async def _load_db_tile(tkey: str) -> list:
