@@ -205,6 +205,15 @@ let L_ = localStorage.getItem("jp_lang") || "ja";   // 일본 앱 — 폰 언어
 if(!I18N[L_]) L_ = "ja";
 function T(){ return I18N[L_]; }
 
+// 엔진 exposure 는 한국어 고정값이다(routes.py: 야간/그늘/나무그늘/양지).
+// 응답을 건드리지 않고 화면에서만 옮긴다 — 몸씨가 같은 응답을 쓰고 있다.
+const EXPO = {
+ ja:{"양지":"日向","그늘":"日陰","나무그늘":"樹陰","야간":"夜間"},
+ en:{"양지":"Sunlit","그늘":"Shaded","나무그늘":"Tree shade","야간":"Night"},
+ ko:{}
+};
+function X(v){ return v ? ((EXPO[L_] || {})[v] || v) : v; }
+
 // 행동지침 — 몸씨 RiskStyle.advice 를 그대로 옮긴다(등급마다 한 줄).
 const ADVICE = {
  ja:{safe:"快適です。とくに注意はいりません。",caution:"少し暑く感じます。水分をこまめに。",
@@ -344,7 +353,7 @@ function render(d){
   document.getElementById("envBody").innerHTML = cells.map(
     x => `<div><div class="cv">${x[1]}</div><div class="ck">${x[0]}</div></div>`).join("");
 
-  document.getElementById("placeTxt").textContent = d.exposure ? `${t.here} · ${d.exposure}` : t.here;
+  document.getElementById("placeTxt").textContent = d.exposure ? `${t.here} · ${X(d.exposure)}` : t.here;
 
   // 해석 한 줄 — 몸씨 interpretation(). 숫자만 주면 "그래서 뭔데"로 끝난다.
   const W = d.weather || {};
@@ -366,7 +375,7 @@ function render(d){
   if(ta != null) mets.push([t.ta, ta.toFixed(1), "°C"]);
   if(W.rh != null) mets.push([t.rh, Math.round(W.rh), "%"]);
   if(W.wind_ms != null) mets.push([t.wind, W.wind_ms.toFixed(1), "m/s"]);
-  if(d.exposure) mets.push([t.exposure, d.exposure, ""]);
+  if(d.exposure) mets.push([t.exposure, X(d.exposure), ""]);
   const mc = document.getElementById("metCard");
   if(mets.length){
     mc.style.display = "";
@@ -391,7 +400,7 @@ function renderWbgt(w){
     const mine = last.wbgt, dv = mine - w.official.wbgt;
     const dtxt = (Math.abs(dv) < 0.05) ? "" :
       `<small style="color:${dv < 0 ? "#17B5A6" : "#E6474D"}">${dv > 0 ? "+" : ""}${dv.toFixed(1)}</small>`;
-    html += `<div class="kv"><span class="k">${t.hereW}<small>${last.exposure || ""}</small></span>`
+    html += `<div class="kv"><span class="k">${t.hereW}<small>${X(last.exposure) || ""}</small></span>`
           + `<span class="v">${mine.toFixed(1)}${dtxt}</span></div>`;
   }
   if(w.alert)
