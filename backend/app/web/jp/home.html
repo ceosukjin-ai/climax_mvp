@@ -326,7 +326,7 @@ function applyLang(){
 
 /** 카드 → 지도 화면. 기능은 그쪽에 이미 다 있다 — 다시 만들지 않는다. */
 function go(mode){
-  const q = [];
+  const q = ["from=home"];   // 지도 화면이 「ホーム」 버튼을 보이게
   if(mode) q.push("mode=" + mode);
   if(here) q.push("lat=" + here.lat.toFixed(6), "lon=" + here.lon.toFixed(6));
   location.href = "./index.html" + (q.length ? "?" + q.join("&") : "");

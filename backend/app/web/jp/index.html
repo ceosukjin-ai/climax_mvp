@@ -38,6 +38,11 @@
   .fab2{bottom:calc(70px + var(--sab));font-size:20px}
   .fab3{bottom:calc(124px + var(--sab));font-size:20px}
   .fab4{bottom:calc(178px + var(--sab));font-size:20px}
+  /* 대시보드(home.html)에서 넘어온 경우에만 보인다 — 돌아갈 길 (2026-09-18) */
+  .homeBtn{position:absolute;z-index:1000;left:14px;top:calc(14px + var(--sat));height:38px;padding:0 14px;
+    border-radius:19px;border:0;background:rgba(255,255,255,.94);color:#1c1c1e;font:inherit;font-size:14px;
+    font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.18);display:none;align-items:center;gap:6px;cursor:pointer}
+  .homeBtn.on{display:flex}
   .navstart{width:100%;margin:9px 0 2px;padding:10px;border-radius:10px;border:1px solid #2e9e6b66;
        background:#2e9e6b1a;color:#2e9e6b;font-size:13.5px;font-weight:600;cursor:pointer}
   .navbar{position:absolute;z-index:1200;left:10px;right:10px;top:calc(8px + var(--sat));
@@ -117,6 +122,7 @@
   <div class="lang"><button data-l="ja" class="on">日本語</button><button data-l="en">EN</button><button data-l="ko">한국어</button></div>
 </div>
 <div class="hint" id="hint">地図をタップ、または ◎ で現在地</div>
+<button class="homeBtn" id="homeBtn" onclick="location.href='./home.html'">&#8592; <span id="homeTxt">ホーム</span></button>
 <button class="fab fab4" id="dogBtn" title="犬の散歩">🐕</button>
 <button class="fab fab3" id="poiBtn" title="周辺">🍜</button>
 <button class="fab fab2" id="routeBtn" title="日陰ルート">🚶</button>
@@ -908,6 +914,13 @@ applyLang();
   const u = new URL(location.href);
   const la = parseFloat(u.searchParams.get('lat')), lo = parseFloat(u.searchParams.get('lon'));
   if(!isNaN(la) && !isNaN(lo)) map.setView([la, lo], 17);
+  // 대시보드에서 왔다는 표시 — 뒤로 갈 버튼을 보인다
+  if(u.searchParams.get('from') === 'home'){
+    const hb = document.getElementById('homeBtn');
+    const L = localStorage.getItem('jp_lang') || 'ja';
+    document.getElementById('homeTxt').textContent = ({ja:'ホーム', en:'Home', ko:'홈'})[L] || 'ホーム';
+    hb.classList.add('on');
+  }
   const mode = u.searchParams.get('mode');
   if(!mode) return;
   // 지도·타일이 자리를 잡은 뒤에 켠다. 바로 부르면 시트가 지도보다 먼저 떠 레이아웃이 어긋난다.
