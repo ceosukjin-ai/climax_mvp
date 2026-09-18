@@ -2230,6 +2230,74 @@ async def vpti_geo_at(
     return out
 
 
+@router.get("/jp/wbgt", include_in_schema=False)
+async def jp_wbgt(
+    request: Request,
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    age: int | None = Query(None, ge=0, le=120),
+    conditions: str | None = Query(None, description="취약군 콤마 구분: cardio,resp,diabetes,kidney,pregnant"),
+) -> dict:
+    """일본판 — 이 자리의 공식 暑さ指数(WBGT)와 등급 (2026-09-18).
+
+    일본인은 「暑さ指数 33」으로 말한다. PET·VPTI 는 모른다. 그래서 일본판은 이 숫자로 말한다.
+
+    **무엇을 돌려주나**
+      · `official` : 가장 가까운 환경성 지점의 **예측**(그대로 전재). 지점명·거리를 함께 준다.
+      · `level`    : 환경성·일본생기상학회 지침 등급. 나이·질환을 주면 경계를 낮춰 더 일찍 경고한다.
+      · `alert`    : 환경성 발표 경보(있으면). **우리가 판정하지 않는다.**
+
+    ⚠️ 기상업무법: 자체 예보를 일반에 공표하려면 기상청 허가가 필요하다(제17조).
+       그래서 미래값은 환경성 것을 **그대로** 전하고, 우리 엔진 값은 `/vpti/geo/at`(실황)으로 낸다.
+    ⚠️ 이용 조건상 출처를 반드시 표기한다 — 응답의 `attribution` 을 화면에 띄울 것.
+    """
+    from app.services import wbgt_jp as W
+    cond = [c.strip() for c in (conditions or "").split(",") if c.strip()] or None
+
+    pool = None
+    try:
+        from app.services.skyline import _get_pool
+        pool = await _get_pool()
+    except Exception:  # noqa: BLE001
+        pool = None
+    if pool is None:
+        return {"ok": False, "reason": "DB 없음", "attribution": W.ATTRIBUTION}
+
+    async with pool.acquire() as c:
+        # 가장 가까운 지점 — 거리는 대략(도 단위 제곱)으로 고른 뒤 m 로 환산해 알려준다.
+        row = await c.fetchrow(
+            "SELECT p.point_id, p.name, p.lat, p.lon, f.wbgt, f.target_at, f.issued_at "
+            "FROM wbgt_point p JOIN wbgt_forecast f ON f.point_id = p.point_id "
+            "WHERE f.target_at >= NOW() - INTERVAL '90 minutes' "
+            "ORDER BY (p.lat-$1)^2 + (p.lon-$2)^2, f.target_at LIMIT 1", lat, lon)
+        alert = await c.fetchrow(
+            "SELECT area, level, issued_at FROM wbgt_alert "
+            "WHERE target_date >= CURRENT_DATE ORDER BY target_date LIMIT 1")
+
+    if row is None:
+        return {"ok": False, "reason": "가까운 지점의 예측이 없다(시즌 밖이거나 미적재)",
+                "attribution": W.ATTRIBUTION}
+
+    import math as _m
+    _dy = (float(row["lat"]) - lat) * 111320.0
+    _dx = (float(row["lon"]) - lon) * 111320.0 * _m.cos(_m.radians(lat))
+    return {
+        "ok": True,
+        "official": {
+            "point_id": row["point_id"], "name": row["name"],
+            "wbgt": round(float(row["wbgt"]), 1),
+            "target_at": row["target_at"].isoformat(),
+            "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
+            "distance_m": round(_m.hypot(_dx, _dy)),
+        },
+        "level": W.level_of(float(row["wbgt"]), age, cond),
+        "alert": ({"area": alert["area"], "level": alert["level"],
+                   "issued_at": alert["issued_at"].isoformat() if alert["issued_at"] else None}
+                  if alert else None),
+        "attribution": W.ATTRIBUTION,
+    }
+
+
 @router.post("/archive/backfill_sv_status", include_in_schema=False)
 async def archive_backfill_sv_status(
     request: Request,

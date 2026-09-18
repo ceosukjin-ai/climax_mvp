@@ -40,6 +40,13 @@ CANDIDATES = [
     "https://www.wbgt.env.go.jp/data_service_sample/",
 ]
 PROBE_POINT = "44132"          # 東京(気象庁)
+# 경보(熱中症警戒情報) 파일 후보. 05시·17시(JST)에 발표된다.
+ALERT_CANDIDATES = [
+    "https://www.wbgt.env.go.jp/alert/dl/",
+    "https://www.wbgt.env.go.jp/prev15WG/dl/",
+    "https://www.wbgt.env.go.jp/est15WG/dl/",
+    "https://www.wbgt.env.go.jp/data_service_sample/",
+]
 
 DDL = """
 CREATE TABLE IF NOT EXISTS wbgt_point (
@@ -49,6 +56,16 @@ CREATE TABLE IF NOT EXISTS wbgt_point (
 );
 CREATE INDEX IF NOT EXISTS ix_wbgt_point_ll ON wbgt_point (lat, lon);
 -- 환경성 예측을 **그대로** 보관한다. 우리가 가공하지 않는다(전재).
+-- 熱中症警戒情報 — 부현(府県予報区) 단위. 예측 WBGT 33 이상이면 발표.
+-- ⚠️ 우리가 판정하지 않는다. 환경성 발표를 **그대로** 보관한다(기상업무법).
+CREATE TABLE IF NOT EXISTS wbgt_alert (
+    area      TEXT NOT NULL,          -- 府県予報区 코드 또는 이름(파일 그대로)
+    target_date DATE NOT NULL,
+    level     TEXT NOT NULL,          -- alert | special | none
+    issued_at TIMESTAMPTZ,
+    raw       TEXT,
+    PRIMARY KEY (area, target_date)
+);
 CREATE TABLE IF NOT EXISTS wbgt_forecast (
     point_id  TEXT NOT NULL,
     target_at TIMESTAMPTZ NOT NULL,
@@ -123,6 +140,58 @@ async def cmd_probe() -> None:
     print("   https://www.wbgt.env.go.jp/data_service.php 의 이용안내를 다시 볼 것.")
 
 
+async def cmd_probe_alert() -> None:
+    """경보 파일 주소 찾기. 오늘·어제의 05시·17시를 훑는다."""
+    now = datetime.now(JST)
+    print("\n경보 파일 주소 찾기")
+    found = False
+    for base in ALERT_CANDIDATES:
+        for d in (0, 1):
+            day = (now - timedelta(days=d)).strftime("%Y%m%d")
+            for hh in ("05", "17"):
+                url = f"{base}alert_{day}_{hh}.csv"
+                b = await _get(url)
+                if b:
+                    found = True
+                    print(f"  ✅ {url}   ({len(b)}바이트)")
+                    head = b.decode("utf-8", "replace").splitlines()[:3]
+                    for ln in head:
+                        print(f"       {ln[:110]}")
+    if not found:
+        print("  하나도 없다 — 시즌(4/22~10/21) 밖이거나 주소가 다르다.")
+        print("  9월 하순이면 경보가 없을 수 있다. 파일 자체가 없는 것과 구분할 것.")
+
+
+async def cmd_alert(conn, base: str) -> None:
+    """경보 적재. 파일 형식을 모르므로 **원문도 함께 저장**한다 — 나중에 확인할 수 있게."""
+    now = datetime.now(JST)
+    n = 0
+    for d in (0, 1):
+        day = now - timedelta(days=d)
+        for hh in ("17", "05"):
+            b = await _get(f"{base}alert_{day:%Y%m%d}_{hh}.csv")
+            if not b:
+                continue
+            txt = b.decode("utf-8", "replace")
+            for row in csv.reader(io.StringIO(txt)):
+                if len(row) < 2 or not row[0].strip() or row[0].strip().startswith("#"):
+                    continue
+                area = row[0].strip()
+                if not area or area in ("府県予報区", "area"):
+                    continue
+                # 등급: 파일에 '特別' 이 있으면 특별경계, 아니면 경계.
+                lv = "special" if any("特別" in c for c in row) else "alert"
+                await conn.execute(
+                    "INSERT INTO wbgt_alert (area,target_date,level,issued_at,raw) "
+                    "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (area,target_date) DO UPDATE SET "
+                    "level=EXCLUDED.level, issued_at=EXCLUDED.issued_at, raw=EXCLUDED.raw",
+                    area, day.date(), lv,
+                    day.replace(hour=int(hh), minute=0, second=0, microsecond=0),
+                    ",".join(row)[:500])
+                n += 1
+    print(f"✅ 경보 {n}건 적재" if n else "경보 없음 (발표가 없는 날이거나 시즌 밖)")
+
+
 async def cmd_points(conn) -> None:
     b = await _get(MASTER)
     if not b:
@@ -190,6 +259,8 @@ async def cmd_forecast(conn, base: str, bbox: tuple | None) -> None:
 async def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--probe", action="store_true")
+    ap.add_argument("--probe-alert", action="store_true")
+    ap.add_argument("--alert", action="store_true")
     ap.add_argument("--points", action="store_true")
     ap.add_argument("--forecast", action="store_true")
     ap.add_argument("--base", default="")
@@ -198,6 +269,8 @@ async def main() -> None:
 
     if a.probe:
         await cmd_probe(); return
+    if a.probe_alert:
+        await cmd_probe_alert(); return
 
     import asyncpg
     from app.config import get_settings
@@ -210,6 +283,11 @@ async def main() -> None:
         if not a.base:
             print("--base 가 필요하다 (--probe 로 찾은 접두사)"); await conn.close(); return
         await cmd_forecast(conn, a.base, (35.5, 139.55, 35.9, 139.92) if a.tokyo else None)
+    if a.alert:
+        if not a.base:
+            print("--base 가 필요하다 (--probe-alert 로 찾은 접두사)")
+        else:
+            await cmd_alert(conn, a.base)
     await conn.close()
 
 
