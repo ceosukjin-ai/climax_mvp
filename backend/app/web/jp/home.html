@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#0f1720"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<title>カラダ天気</title>
+<style>
+  /* 지도 화면(index.html)과 같은 팔레트를 쓴다 — 두 화면을 오가므로 톤이 어긋나면 안 된다. */
+  :root{--bg:#0f1720;--panel:#182430;--line:#2a3a49;--txt:#eaf1f7;--muted:#9fb3c4;
+        --safe:#2e9e6b;--sat:env(safe-area-inset-top,0px);--sab:env(safe-area-inset-bottom,0px)}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;min-height:100%;background:var(--bg);color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Apple SD Gothic Neo",sans-serif}
+  body{padding:calc(12px + var(--sat)) 14px calc(20px + var(--sab))}
+  .hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+  .hdr b{font-size:20px;letter-spacing:.2px}
+  .hdr small{display:block;font-size:11.5px;color:var(--muted);font-weight:400;margin-top:1px}
+  .lang{display:flex;gap:4px}
+  .lang button{font:inherit;font-size:11px;padding:4px 7px;border-radius:8px;border:1px solid var(--line);
+    background:rgba(24,36,48,.9);color:var(--muted);cursor:pointer}
+  .lang button.on{color:var(--txt);border-color:#4d7fa8;background:#1d3346}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px 16px;margin-bottom:10px}
+  .place{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);margin-bottom:10px}
+  .ttl{font-size:13px;color:var(--muted);margin-bottom:6px}
+  .feel{display:flex;align-items:baseline;gap:8px}
+  .feel .n{font-size:56px;font-weight:700;line-height:1;letter-spacing:-.03em}
+  .feel .u{font-size:13px;color:var(--muted)}
+  .badge{display:inline-block;margin-top:8px;padding:5px 12px;border-radius:999px;font-size:13px;font-weight:700}
+  .rows{display:grid;grid-template-columns:1fr auto;gap:5px 12px;font-size:13px;margin-top:4px}
+  .rows .k{color:var(--muted)} .rows .v{font-weight:600;text-align:right}
+  .wline{display:flex;align-items:baseline;justify-content:space-between;padding:7px 0;border-top:1px solid var(--line)}
+  .wline:first-of-type{border-top:none}
+  .wline .l{font-size:13px;color:var(--muted)} .wline .r{font-size:19px;font-weight:700}
+  .wline .r small{font-size:12px;font-weight:400;color:var(--muted);margin-left:5px}
+  .act{border-radius:12px;padding:11px 13px;font-size:14px;line-height:1.55;font-weight:600}
+  .act small{display:block;font-weight:400;font-size:12.5px;opacity:.85;margin-top:4px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:2px}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px 14px;
+    text-align:center;cursor:pointer;color:var(--txt);font:inherit}
+  .tile .i{font-size:26px;line-height:1} .tile .t{font-size:13px;margin-top:7px;font-weight:600}
+  .foot{margin-top:14px;font-size:10.5px;color:var(--muted);line-height:1.6;text-align:center}
+  .btn{width:100%;padding:12px;border-radius:12px;border:1px solid #4d7fa8;background:#1d3346;
+    color:var(--txt);font:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--muted);border-top-color:transparent;
+    border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  /* 온보딩 */
+  .ov{position:fixed;inset:0;background:rgba(9,14,20,.96);z-index:10;overflow-y:auto;
+      padding:calc(28px + var(--sat)) 18px calc(28px + var(--sab));display:none}
+  .ov.on{display:block}
+  .ov h2{font-size:19px;margin:0 0 6px} .ov p{font-size:13px;color:var(--muted);line-height:1.6;margin:0 0 18px}
+  .ov label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chips button{font:inherit;font-size:13px;padding:8px 13px;border-radius:999px;border:1px solid var(--line);
+    background:transparent;color:var(--muted);cursor:pointer}
+  .chips button.on{border-color:#4d7fa8;color:#7fb6e6;background:#1d3346}
+  .ov input[type=number]{width:100%;padding:11px 13px;border-radius:10px;border:1px solid var(--line);
+    background:#101a24;color:var(--txt);font:inherit;font-size:16px}
+  .note{font-size:11.5px;color:var(--muted);line-height:1.6;margin-top:16px}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <div><b id="t_title">カラダ天気</b><small id="t_sub">あなたの体が感じる、本当の暑さ</small></div>
+  <div class="lang"><button data-l="ja" class="on">日本語</button><button data-l="en">EN</button><button data-l="ko">한국어</button></div>
+</div>
+
+<div class="place" id="place"><span class="spin"></span><span id="placeTxt">現在地を確認しています…</span></div>
+
+<div class="card" id="feelCard">
+  <div class="ttl" id="t_now">今この場所</div>
+  <div class="feel"><span class="n" id="feelN">–</span><span class="u" id="t_feel">°C 体感</span></div>
+  <div id="badge"></div>
+  <div class="rows" id="envRows"></div>
+</div>
+
+<div class="card" id="wbgtCard" style="display:none">
+  <div class="ttl" id="t_wbgt">暑さ指数（WBGT）</div>
+  <div id="wbgtBody"></div>
+</div>
+
+<div class="card" id="actCard" style="display:none"><div class="act" id="actBody"></div></div>
+
+<div class="grid">
+  <button class="tile" onclick="go('')"><div class="i">🗺</div><div class="t" id="t_map">地図</div></button>
+  <button class="tile" onclick="go('route')"><div class="i">🚶</div><div class="t" id="t_route">日陰ルート</div></button>
+  <button class="tile" onclick="go('poi')"><div class="i">🍜</div><div class="t" id="t_poi">周辺</div></button>
+  <button class="tile" onclick="go('dog')"><div class="i">🐕</div><div class="t" id="t_dog">犬の散歩</div></button>
+</div>
+
+<div class="foot" id="foot"></div>
+
+<div class="ov" id="onb">
+  <h2 id="o_h">はじめに</h2>
+  <p id="o_p">年齢と体の状態によって、同じ暑さでも危険度は変わります。<br>入力するとあなたに合わせて判定します。</p>
+  <label id="o_age">年齢</label>
+  <input type="number" id="inAge" min="1" max="120" placeholder="40" inputmode="numeric"/>
+  <label id="o_cond">あてはまるものをすべて</label>
+  <div class="chips" id="condChips"></div>
+  <button class="btn" style="margin-top:22px" id="o_ok" onclick="saveProfile()">はじめる</button>
+  <button class="btn" style="margin-top:8px;border-color:var(--line);background:transparent;color:var(--muted)"
+          id="o_skip" onclick="saveProfile(true)">あとで</button>
+  <div class="note" id="o_note"></div>
+</div>
+
+<script>
+// ─── 다국어 ──────────────────────────────────────────
+const I18N = {
+ ja:{sub:"あなたの体が感じる、本当の暑さ",now:"今この場所",feel:"°C 体感",wbgt:"暑さ指数（WBGT）",
+     map:"地図",route:"日陰ルート",poi:"周辺",dog:"犬の散歩",
+     locating:"現在地を確認しています…",locFail:"現在地を取得できません",pickOnMap:"地図で場所を選ぶ",
+     outside:"この地域はまだ対象外です",calc:"計算中…",
+     sky:"空の広さ",green:"緑",width:"道幅",sun:"日なた",shade:"日かげ",
+     official:"環境省（予測）",here:"ここ",alertOn:"熱中症警戒情報 発表中",
+     risk:{safe:"安全",caution:"注意",warning:"警戒",danger:"危険",severe:"厳重警戒"},
+     oh:"はじめに",op:"年齢と体の状態によって、同じ暑さでも危険度は変わります。入力するとあなたに合わせて判定します。",
+     oage:"年齢",ocond:"あてはまるものをすべて",ook:"はじめる",oskip:"あとで",
+     onote:"入力はこの端末の中だけに保存されます。サーバーには送りません。設定からいつでも変えられます。",
+     cond:{cardio:"心臓・血管の病気",resp:"呼吸器の病気",diabetes:"糖尿病",kidney:"腎臓の病気",pregnant:"妊娠中"}},
+ en:{sub:"The real heat your body feels",now:"Right here, now",feel:"°C felt",wbgt:"Heat index (WBGT)",
+     map:"Map",route:"Shade route",poi:"Nearby",dog:"Dog walk",
+     locating:"Finding your location…",locFail:"Can't get your location",pickOnMap:"Pick a place on the map",
+     outside:"Not covered here yet",calc:"Calculating…",
+     sky:"Sky",green:"Green",width:"Street",sun:"in the sun",shade:"in shade",
+     official:"Ministry of the Env. (forecast)",here:"Here",alertOn:"Heat alert in effect",
+     risk:{safe:"Safe",caution:"Caution",warning:"Warning",danger:"Danger",severe:"Severe"},
+     oh:"First, about you",op:"Age and health change how dangerous the same heat is. Tell us and we'll judge for you.",
+     oage:"Age",ocond:"Select all that apply",ook:"Start",oskip:"Later",
+     onote:"Kept on this phone only. Never sent to our server. You can change it any time.",
+     cond:{cardio:"Heart / vascular",resp:"Respiratory",diabetes:"Diabetes",kidney:"Kidney",pregnant:"Pregnant"}},
+ ko:{sub:"내 몸이 실제로 느끼는 더위",now:"지금 이 자리",feel:"°C 체감",wbgt:"더위지수(WBGT)",
+     map:"지도",route:"그늘 경로",poi:"주변",dog:"강아지 산책",
+     locating:"현재 위치를 확인하는 중…",locFail:"현재 위치를 가져올 수 없습니다",pickOnMap:"지도에서 장소 고르기",
+     outside:"이 지역은 아직 대상이 아닙니다",calc:"계산 중…",
+     sky:"하늘",green:"녹지",width:"도로폭",sun:"볕",shade:"그늘",
+     official:"환경성(예측)",here:"여기",alertOn:"열사병 경계정보 발령 중",
+     risk:{safe:"안전",caution:"주의",warning:"경계",danger:"위험",severe:"엄중경계"},
+     oh:"먼저 알려주세요",op:"나이와 몸 상태에 따라 같은 더위도 위험도가 달라집니다. 입력하면 맞춰서 판정합니다.",
+     oage:"나이",ocond:"해당하는 것을 모두",ook:"시작하기",oskip:"나중에",
+     onote:"입력한 내용은 이 기기에만 저장됩니다. 서버로 보내지 않습니다. 설정에서 언제든 바꿀 수 있습니다.",
+     cond:{cardio:"심장·혈관 질환",resp:"호흡기 질환",diabetes:"당뇨",kidney:"신장 질환",pregnant:"임신 중"}}
+};
+let L_ = localStorage.getItem("jp_lang") || (navigator.language||"ja").slice(0,2);
+if(!I18N[L_]) L_ = "ja";
+function T(){ return I18N[L_]; }
+
+// 지도 화면과 같은 위험색
+const HEAT = {caution:"#e8c14a",warning:"#e07b39",danger:"#d9483b",severe:"#a01f14"};
+const COLD = {caution:"#6db8e0",warning:"#4a86c9",danger:"#3b56c9",severe:"#5a3bc9"};
+function colorFor(d){
+  if(d.risk==="safe" || d.stress_direction==="neutral") return "#2e9e6b";
+  return (d.stress_direction==="cold"?COLD:HEAT)[d.risk] || "#8899a6";
+}
+
+// ─── 프로필 — **이 기기 안에만** 둔다 ─────────────────
+// 질환은 민감정보다. 서버에 저장하지 않고, 질의할 때 파라미터로만 보낸다(몸씨와 같은 방침).
+// 일본 개인정보보호법(APPI) 대응에도 이 편이 맞다.
+const CONDS = ["cardio","resp","diabetes","kidney","pregnant"];
+function profile(){
+  try { return JSON.parse(localStorage.getItem("jp_profile") || "null"); } catch(e){ return null; }
+}
+let draft = {age:null, conditions:[]};
+
+function renderOnb(){
+  const t = T();
+  document.getElementById("o_h").textContent = t.oh;
+  document.getElementById("o_p").textContent = t.op;
+  document.getElementById("o_age").textContent = t.oage;
+  document.getElementById("o_cond").textContent = t.ocond;
+  document.getElementById("o_ok").textContent = t.ook;
+  document.getElementById("o_skip").textContent = t.oskip;
+  document.getElementById("o_note").textContent = t.onote;
+  document.getElementById("condChips").innerHTML = CONDS.map(k =>
+    `<button data-k="${k}" class="${draft.conditions.includes(k)?"on":""}">${t.cond[k]}</button>`).join("");
+  document.querySelectorAll("#condChips button").forEach(b => b.onclick = () => {
+    const k = b.dataset.k;
+    draft.conditions = draft.conditions.includes(k)
+      ? draft.conditions.filter(x => x !== k) : draft.conditions.concat([k]);
+    renderOnb();
+  });
+}
+function saveProfile(skip){
+  const v = parseInt(document.getElementById("inAge").value, 10);
+  const p = {age: (skip || !v || v < 1 || v > 120) ? null : v,
+             conditions: skip ? [] : draft.conditions, at: Date.now()};
+  localStorage.setItem("jp_profile", JSON.stringify(p));
+  document.getElementById("onb").classList.remove("on");
+  start();
+}
+
+// ─── 화면 ───────────────────────────────────────────
+function applyLang(){
+  const t = T();
+  document.documentElement.lang = L_;
+  document.getElementById("t_sub").textContent = t.sub;
+  document.getElementById("t_now").textContent = t.now;
+  document.getElementById("t_feel").textContent = t.feel;
+  document.getElementById("t_wbgt").textContent = t.wbgt;
+  document.getElementById("t_map").textContent = t.map;
+  document.getElementById("t_route").textContent = t.route;
+  document.getElementById("t_poi").textContent = t.poi;
+  document.getElementById("t_dog").textContent = t.dog;
+  document.querySelectorAll(".lang button").forEach(b =>
+    b.classList.toggle("on", b.dataset.l === L_));
+  renderOnb();
+}
+document.querySelectorAll(".lang button").forEach(b => b.onclick = () => {
+  L_ = b.dataset.l; localStorage.setItem("jp_lang", L_); applyLang(); if(last) render(last);
+});
+
+/** 카드 → 지도 화면. 기능은 그쪽에 이미 다 있다 — 다시 만들지 않는다. */
+function go(mode){
+  const q = [];
+  if(mode) q.push("mode=" + mode);
+  if(here) q.push("lat=" + here.lat.toFixed(6), "lon=" + here.lon.toFixed(6));
+  location.href = "./index.html" + (q.length ? "?" + q.join("&") : "");
+}
+
+let here = null, last = null;
+
+function setPlace(txt, spinning){
+  document.getElementById("placeTxt").textContent = txt;
+  document.querySelector("#place .spin").style.display = spinning ? "" : "none";
+}
+
+function render(d){
+  const t = T(), c = colorFor(d);
+  const feel = (d.pet_ai != null && d.ai_applied) ? d.pet_ai : d.vpti;
+  document.getElementById("feelN").textContent = (feel == null) ? "–" : feel.toFixed(1);
+  document.getElementById("feelN").style.color = c;
+  document.getElementById("badge").innerHTML =
+    `<span class="badge" style="background:${c}22;color:${c};border:1px solid ${c}55">${t.risk[d.risk] || d.risk}</span>`;
+  const rows = [
+    [t.sky, Math.round((d.svf || 0) * 100) + "%"],
+    [t.green, Math.round((d.gvi || 0) * 100) + "%"],
+  ];
+  if(d.street_width_m) rows.push([t.width, d.street_width_m + " m"]);
+  document.getElementById("envRows").innerHTML = rows.map(
+    r => `<div class="k">${r[0]}</div><div class="v">${r[1]}</div>`).join("");
+}
+
+function renderWbgt(w){
+  const t = T(), card = document.getElementById("wbgtCard");
+  if(!w || !w.ok){ card.style.display = "none"; return; }
+  card.style.display = "";
+  const lv = w.level || {};
+  const name = lv[L_] || lv.ja || "";
+  const adv = (lv.advice || {})[L_] || (lv.advice || {}).ja || "";
+  const shift = lv.vuln_shift ? ` <small>(${lv.vuln_shift > 0 ? "−" + lv.vuln_shift + "℃" : ""})</small>` : "";
+  let html = `<div class="wline"><span class="l">${t.official}<br><small style="opacity:.7">${w.official.name} · ${w.official.distance_m} m</small></span>`
+           + `<span class="r">${w.official.wbgt.toFixed(1)}<small>${name}</small></span></div>`;
+  if(w.alert)
+    html += `<div class="wline"><span class="l" style="color:#e07b39;font-weight:700">⚠ ${t.alertOn}</span><span class="r"></span></div>`;
+  if(adv) html += `<div style="font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.55">${adv}${shift}</div>`;
+  document.getElementById("wbgtBody").innerHTML = html;
+}
+
+async function load(lat, lon){
+  here = {lat, lon};
+  setPlace(T().calc, true);
+  const p = profile() || {};
+  const q = `lat=${lat.toFixed(6)}&lon=${lon.toFixed(6)}`;
+  try {
+    const r = await fetch(`/api/v1/vpti/geo/at?${q}`);
+    if(!r.ok){ setPlace(T().outside, false); return; }
+    last = await r.json();
+    render(last);
+    setPlace(last.exposure ? `${lat.toFixed(4)}, ${lon.toFixed(4)} · ${last.exposure}` : `${lat.toFixed(4)}, ${lon.toFixed(4)}`, false);
+  } catch(e){ setPlace(T().locFail, false); }
+
+  // 공식 WBGT — 나이·질환은 **보내기만** 하고 서버에 남기지 않는다.
+  let wq = q;
+  if(p.age) wq += `&age=${p.age}`;
+  if(p.conditions && p.conditions.length) wq += `&conditions=${p.conditions.join(",")}`;
+  try {
+    const rw = await fetch(`/api/v1/jp/wbgt?${wq}`);
+    const w = await rw.json();
+    renderWbgt(w);
+    document.getElementById("foot").textContent = (w && w.attribution) ? (w.attribution[L_] || w.attribution.ja) : "";
+  } catch(e){ /* 공식값이 없어도 우리 값은 보여준다 */ }
+}
+
+function start(){
+  const u = new URL(location.href);
+  const qlat = parseFloat(u.searchParams.get("lat")), qlon = parseFloat(u.searchParams.get("lon"));
+  if(!isNaN(qlat) && !isNaN(qlon)){ load(qlat, qlon); return; }   // 지도에서 돌아온 경우
+  if(!navigator.geolocation){ locFail(); return; }
+  setPlace(T().locating, true);
+  navigator.geolocation.getCurrentPosition(
+    pos => load(pos.coords.latitude, pos.coords.longitude),
+    () => locFail(), {enableHighAccuracy:true, timeout:10000, maximumAge:60000});
+}
+function locFail(){
+  setPlace(T().locFail, false);
+  document.getElementById("feelCard").innerHTML =
+    `<div class="ttl">${T().locFail}</div>
+     <button class="btn" style="margin-top:12px" onclick="go('')">${T().pickOnMap}</button>`;
+}
+
+/** 네이티브(iOS 껍데기)에서 위치가 오면 갱신한다. 앱이 아니면 아무 일도 없다. */
+window.Native = { on(msg){
+  if(msg && msg.fn === "location" && msg.lat) load(msg.lat, msg.lon);
+}};
+
+applyLang();
+if(profile()){ start(); } else { document.getElementById("onb").classList.add("on"); }
+</script>
+</body>
+</html>

@@ -16,7 +16,11 @@ struct MomssiJPApp: App {
 
 enum Config {
     /// 운영 주소. 개발 중 LAN 서버를 쓰려면 여기만 바꾼다.
-    static let webURL = URL(string: "https://api.climaxapp.kr/jp/")!
+    ///
+    /// 앱은 **대시보드**(home.html)로 시작한다 — 설치한 사람에게는 지도보다
+    /// "지금 나 위험한가"가 먼저다. 웹 링크(`/jp/`)는 지도 그대로 둔다:
+    /// 링크를 받아 눌러보는 사람에게는 권한부터 묻는 첫 화면이 무겁다 (2026-09-18).
+    static let webURL = URL(string: "https://api.climaxapp.kr/jp/home.html")!
     /// 앱에서 열렸음을 웹에 알린다 — 웹은 이 값으로 「홈 화면에 추가」 안내를 감춘다.
     static let appFlag = "?app=ios"
 }
