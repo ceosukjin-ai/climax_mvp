@@ -10,6 +10,10 @@ PET 잔차 AI — 물리 뼈대 위의 학습 보정 (2026-09-09).
 재학습 이유: 물리가 바뀌어 엔진 PET 평균이 45.87 → 50.24 로 올라갔는데 잔차 계수는 옛 물리에 맞춰져 있었다.
 그 상태의 배포 계수는 표본 내에서조차 MAE 3.56·bias +2.91(κ +0.17)로, 교차검증한 새 계수(2.27)보다 나빴다.
 물리를 손볼 때마다 이 상수들을 같이 갱신해야 한다 — scripts/run_calib_refit.py 가 값을 찍어 준다.
+2026-09-19 재학습: 볕/그늘 라벨을 360° 사진 판독값(v7, 61/19)으로 교체(옛 라벨 8점 오류). 같은 물리에서
+물리 단독 MAE 4.91(bias +4.33, r 0.65) → LONO MAE 1.86, bias -0.04, r 0.81, 극심 63/63, 오경보 5/17(특이도 0.71, κ +0.79).
+볕 계수가 -0.82 → -0.10 으로 거의 사라짐: 라벨이 맞아지자 물리(direct_shade)가 볕/그늘을 이미 설명하고, 잔차층이 라벨 오류를
+메우던 몫이 없어졌다는 뜻. 1위는 여전히 풍속(+2.15).
 물리가 좋아지자 10피처는 과적합(LOSO 3.55)이라 피처를 5개(볕·SVF·Ta·v·엔진PET)로 줄임. 순수 ML(원격피처만)이 LOSO R²<0으로
 전이 실패한 것과 대비 — "AI는 물리 위에 얹혀야 다양한 공간에 일반화된다"의 실증.
 
@@ -21,11 +25,11 @@ PET 잔차 AI — 물리 뼈대 위의 학습 보정 (2026-09-09).
 from __future__ import annotations
 
 FEATURES = ['볕', 'tier3_svf', 'Ta', 'v', 'run_C_PET']
-_COEF = [-0.821710, 0.490910, 0.853994, 2.066249, -1.718506]
-_INTERCEPT = -4.136625
-_MEAN = [0.737500, 0.721714, 35.232500, 0.556250, 50.235000]
-_STD = [0.439993, 0.145777, 1.492211, 0.442110, 5.445440]
-TRAINED_ON = "80 field points Busan 2026-08, engine 2026-09-14 (wall shortwave reflection ON, wall temp stage OFF), Ridge a=20, 5 feats (LONO MAE 2.27, bias +0.06, r 0.68)"
+_COEF = [-0.102855, 0.136226, 0.569899, 2.149492, -1.331291]
+_INTERCEPT = -4.326125
+_MEAN = [0.762500, 0.721714, 35.232500, 0.556250, 50.424500]
+_STD = [0.425551, 0.145777, 1.492211, 0.442110, 5.357096]
+TRAINED_ON = "80 field points Busan 2026-08, engine 2026-09-14 (wall shortwave reflection ON, wall temp stage OFF), Ridge a=20, 5 feats (LONO MAE 1.86, bias -0.04, r 0.81; sun/shade label photo-verified 2026-09-19)"
 
 
 def apply_pet_residual(pet_physics_c: float, feats: dict) -> tuple[float, bool, float]:
