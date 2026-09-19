@@ -256,7 +256,16 @@ def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) ->
     horizon 은 중심점에서 5°, SVF 는 2° 로 계산(svf_geometric 과 동일 값)."""
     from app.services.geo import _snap_outside, _snap_to_street_center, _shift_rings, street_width_geometric  # noqa: F401
     if not rings:
-        return Skyline(cell_id(lat, lon), lat, lon, [0.0] * N_AZ, 1.0, 0.0, None, None, None, 0, 0.0, src)
+        # 🔴 2026-09-19: 건물이 없으면 SVF 1.0 으로 박고 끝냈다 — **나무를 보지 않았다.**
+        #    황거 앞 광장: 격자 1.000 / 실시간 0.357. 공원 한가운데·강변·광장이 전부 "완전 개방"으로
+        #    저장돼 있었다(도쿄 수관 재계산에서 open 으로 집계된 105,232 칸).
+        #    geo.svf_geometric 은 9/18 에 같은 자리를 고쳤는데 격자 쪽이 남아 있었다.
+        from app.services.geo import canopy_items
+        _c = canopy_items(lat, lon)
+        _svf = (_svf_blend([0.0] * (360 // SVF_AZ_STEP),
+                           _canopy_horizon(_c, SVF_AZ_STEP)) if _c else 1.0)
+        return Skyline(cell_id(lat, lon), lat, lon, [0.0] * N_AZ, _svf, 0.0,
+                       None, None, None, 0, 0.0, src)
     # 수관 — 스냅을 따라가야 한다. 두 스냅은 평행이동만 하므로 _probe_delta 로 이동량을 되찾는다
     # (geo.svf_geometric 과 **완전히 같은 절차**. 다르면 격자와 실시간 값이 갈라진다).
     from app.services.geo import canopy_items, _shift_items, _probe_delta
