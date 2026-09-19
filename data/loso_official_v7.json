@@ -1,0 +1,76 @@
+{
+  "generated": "2026-09-14",
+  "input": "/tmp/tier3_engine_output_80_v7_photo.csv",
+  "n": 80,
+  "settings": {
+    "wall_reflect": true,
+    "wall_stage": false
+  },
+  "physics": {
+    "n": 80,
+    "mae": 4.908,
+    "bias": 4.326,
+    "r": 0.652,
+    "hot": 63,
+    "hit": 63
+  },
+  "physics_plus_ai_lono": {
+    "n": 80,
+    "mae": 1.857,
+    "bias": -0.045,
+    "r": 0.805,
+    "hot": 63,
+    "hit": 63
+  },
+  "physics_plus_ai_shipped_insample": {
+    "n": 80,
+    "mae": 1.807,
+    "bias": 0.058,
+    "r": 0.833,
+    "hot": 63,
+    "hit": 63
+  },
+  "per_neighbourhood_lono": {
+    "명장동": {
+      "n": 17,
+      "mae": 2.272,
+      "bias": 0.195,
+      "r": 0.779,
+      "hot": 11,
+      "hit": 11
+    },
+    "보수동": {
+      "n": 16,
+      "mae": 1.378,
+      "bias": -0.189,
+      "r": 0.849,
+      "hot": 12,
+      "hit": 12
+    },
+    "부암제1동": {
+      "n": 15,
+      "mae": 1.97,
+      "bias": -0.89,
+      "r": 0.572,
+      "hot": 15,
+      "hit": 15
+    },
+    "서제2동": {
+      "n": 17,
+      "mae": 1.509,
+      "bias": 1.185,
+      "r": 0.917,
+      "hot": 10,
+      "hit": 10
+    },
+    "용호제1동": {
+      "n": 15,
+      "mae": 2.181,
+      "bias": -0.711,
+      "r": 0.204,
+      "hot": 15,
+      "hit": 15
+    }
+  },
+  "note": "볕/그늘을 실측으로 준 조건. 실서비스는 엔진 판정을 쓰며 일치도 kappa 0.06 이므로 운영 성능은 이보다 나쁘다."
+}
