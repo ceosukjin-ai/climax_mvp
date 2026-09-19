@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse, asyncio, csv, os, sys, time
 sys.path.insert(0, "/app")
 from app.services import skyline as SK  # noqa: E402
-from app.services.geo import _rings_cached  # noqa: E402
+from app.services.geo import _rings_cached, canopy_items  # noqa: E402
 
 
 def cells_from_csv(path: str):
@@ -86,14 +86,18 @@ async def tiles_available(cells: list) -> set:
     return {k for k in keys if os.path.isfile(os.path.join(_LOCAL_BUILDING_DIR, k + ".json"))}
 
 
-async def worker(q: asyncio.Queue, stats: dict, force: bool, src_hint: str):
+async def worker(q: asyncio.Queue, stats: dict, force: bool, src_hint: str, canopy_only: bool = False):
     while True:
         item = await q.get()
         if item is None:
             q.task_done(); return
         lat, lon = item
         try:
-            if not force and await SK.get_cell(lat, lon) is not None:
+            # 수관 있는 칸만 다시 계산 (2026-09-19): 도쿄 격자 v2 가 수관 래스터 미마운트 상태로 돌아
+            # 공원·가로수길 칸이 건물만으로 계산됐다. 수관 없는 칸은 값이 같으므로 건너뛴다.
+            if canopy_only and not canopy_items(lat, lon):
+                stats["skip"] += 1
+            elif not force and await SK.get_cell(lat, lon) is not None:
                 stats["skip"] += 1
             else:
                 rings, src = await asyncio.wait_for(_rings_cached(lat, lon), timeout=30.0)
@@ -118,6 +122,7 @@ async def main():
     ap.add_argument("--limit", type=int, default=0); ap.add_argument("--src-hint", default="")
     ap.add_argument("--near-roads", type=float, default=0.0, metavar="M", help="보행도로에서 M m 안 격자만 (전국 배치 권장 25)")
     ap.add_argument("--tiles-only", action="store_true", help="로컬 건물 타일 파일이 있는 곳만 (V-World 실시간 호출 방지)")
+    ap.add_argument("--canopy-only", action="store_true", help="수관 화소가 있는 칸만 (--force 와 같이: 수관 누락 격자 보정)")
     a = ap.parse_args()
     if await SK._get_pool() is None:
         print("DB 접속 실패 — 중단"); return
@@ -138,10 +143,14 @@ async def main():
         cells = [c for c in cells if f"{int(math.floor(c[0] * 100))}_{int(math.floor(c[1] * 100))}" in have]
     if a.limit:
         cells = cells[:a.limit]
-    print(f"격자 {len(cells)}개, 스레드 {a.threads}, resume={a.resume} force={a.force}", flush=True)
+    if a.canopy_only:
+        from app.services import geo as _g
+        if not os.path.isdir(_g.CANOPY_DIR):
+            print(f"수관 디렉터리 없음: {_g.CANOPY_DIR} — 마운트 확인 (run_grid_kr.sh -v data/canopy)"); return
+    print(f"격자 {len(cells)}개, 스레드 {a.threads}, resume={a.resume} force={a.force} canopy_only={a.canopy_only}", flush=True)
     q: asyncio.Queue = asyncio.Queue(maxsize=a.threads * 4)
     stats = {"done": 0, "ok": 0, "skip": 0, "fail": 0, "open": 0}
-    workers = [asyncio.create_task(worker(q, stats, a.force, a.src_hint)) for _ in range(a.threads)]
+    workers = [asyncio.create_task(worker(q, stats, a.force, a.src_hint, a.canopy_only)) for _ in range(a.threads)]
     t0 = time.time()
     for i, c in enumerate(cells, 1):
         await q.put(c)

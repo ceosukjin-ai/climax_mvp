@@ -39,7 +39,8 @@ DC="nice -n 19 docker run --rm --memory $MEM --memory-swap $MEM --cpus $CPUS \
  -e DATABASE_URL=$DBURL -e VWORLD_API_KEY=$(val VWORLD_API_KEY) \
  -e LOCAL_TILE_CACHE_MAX=${TILE_CACHE:-24} -e RINGS_CACHE_MAX=${RING_CACHE:-1500} \
  -e BUILDING_SOURCE=${BUILDING_SOURCE:-db} \
- -v $HOME/climax_mvp:/repo -v $HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro $IMG"
+ -v $HOME/climax_mvp:/repo -v $HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro \
+ -v $HOME/climax_mvp/data/canopy:/app/data/canopy:ro $IMG"
 
 case "${1:-}" in
   tiles)
