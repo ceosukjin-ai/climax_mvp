@@ -200,6 +200,13 @@ async def main() -> None:
                      "일치도 kappa 0.06 이므로 운영 성능은 이보다 나쁘다."))
     json.dump(out, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
     print(f"\n저장: {OUT}")
+    # 지점별 예측 (티어 사다리 (f) 패널용) — 2026-09-19
+    OUT_SITES = OUT.replace(".json", "_sites.csv")
+    with open(OUT_SITES, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f); w.writerow(["측정ID", "권역", "볕", "실측PET", "물리_PET", "물리+AI_LONO_PET", "물리+AI_배포계수_PET", "확신도"])
+        for i, r in enumerate(rows):
+            w.writerow([r["측정ID"], r["권역"], int(sun[i]), truth[i], round(phys[i], 2), round(lono[i], 2), round(ship[i], 2), round(confs[i], 3)])
+    print(f"저장: {OUT_SITES}")
 
     print("\n=== 논문·그림·문서에 그대로 쓸 문장 ===")
     print(f"  물리 단독 MAE {s_phys['mae']:.2f} °C, 물리+잔차 {s_lono['mae']:.2f} °C "
