@@ -24,13 +24,14 @@
 - `PushBridge.swift` — 알림 권한·디바이스 토큰
 - `Resources/Info.plist` — 권한 문구(일본어)
 
-## 대표님이 하실 것 (제가 못 하는 것)
-1. Xcode → File → New → Project → **App**, Interface **SwiftUI**, 이름 `MomssiJP`
-2. 번들 ID: `kr.climaxapp.momssi.jp` (한국 앱 `com.sukjin.ClimaX` 와 **달라야 한다**. 같으면 덮어쓴다)
-3. 이 폴더의 `Sources/*.swift` 를 프로젝트에 끌어다 넣기
-4. Info.plist 에 이 폴더 `Resources/Info.plist` 의 키들을 병합
-5. Signing & Capabilities → **Background Modes** → Location updates, Remote notifications 체크
-6. ⌘R
+## 열기 (2026-09-19 — 프로젝트 파일 생성됨)
+`MomssiJP.xcodeproj` 더블클릭 → 기기 선택 → ⌘R. 끝.
+한국 몸씨 프로젝트(FileSystemSynchronized, objectVersion 77)를 본떠 만들었다:
+번들 ID `kr.climaxapp.momssi.jp`, 개발 언어 ja, iOS 17.6+, iPhone 전용, HealthKit 없음, 아이콘은 몸씨 것.
+`MomssiJP/` 폴더에 파일을 넣으면 자동으로 타깃에 들어간다(pbxproj 수정 불필요).
+
+처음 열 때 한 번만: Signing & Capabilities → Team 선택 → **+ Capability → Background Modes** →
+Location updates · Remote notifications 체크 (Info.plist 의 UIBackgroundModes 와 짝. 푸시는 Push Notifications capability 도 — 애플 개발자 콘솔 등록 뒤).
 
 ## 한계 (정직하게)
 - 위치 백그라운드는 **significant-change** 만 쓴다. 상시 GPS 는 배터리를 먹고 애플 심사도 까다롭다.

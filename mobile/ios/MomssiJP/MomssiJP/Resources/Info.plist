@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   몸씨 일본판 — Info.plist 에 **병합할** 키들 (2026-09-18).
-  Xcode 가 만든 Info.plist 에 이 키들을 넣는다. 파일을 통째로 덮지 말 것.
+  (2026-09-19) 프로젝트가 이 파일을 INFOPLIST_FILE 로 직접 쓴다. Xcode 가 나머지 키를 병합해 넣는다.
   권한 문구는 일본어다 — 심사에서 사용자에게 그대로 보인다.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -9,6 +9,10 @@
 <dict>
     <key>CFBundleDisplayName</key>
     <string>カラダ天気</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>ja</string>
+    <key>CFBundleLocalizations</key>
+    <array><string>ja</string></array>
 
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>いま立っている場所の暑さを計算するために位置情報を使います。</string>
