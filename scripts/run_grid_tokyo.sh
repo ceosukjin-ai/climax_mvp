@@ -21,7 +21,10 @@
 #
 # ⚠️ 반드시 setsid + < /dev/null 로 띄울 것. nohup 은 SIGHUP 만 막는다 — ssh 가 끊기면 SIGINT 가
 #    프로세스 그룹에 가서 배치가 죽는다 (9/16 에 두 번 날렸다).
+# 수관 보정 (2026-09-19): v2 는 data/canopy 미마운트로 건물만 계산됐다. 수관 있는 칸만 다시:
+#   GRID_EXTRA="--force --canopy-only" RUN=canopy setsid nohup bash scripts/run_grid_tokyo.sh < /dev/null > ~/grid_tokyo_canopy_driver.log 2>&1 &
 set -u
+RUN=${RUN:-v2}
 cd "$HOME/climax_mvp"
 docker exec climax-api printenv | grep -E '^(DATABASE_URL|BUILDING_SOURCE|REDIS_URL)=' > /tmp/grid.env
 chmod 600 /tmp/grid.env
@@ -29,14 +32,15 @@ W=139.55; E=139.92
 
 band() {   # $1=남위도 $2=북위도
   local s=$1 n=$2 tag=${1/./_}
-  local log="$HOME/grid_tokyo_v2_$tag.log"
+  local log="$HOME/grid_tokyo_${RUN}_$tag.log"
   for t in $(seq 1 5); do
     nice -n 19 docker run --rm --memory 2500m --memory-swap 2500m --cpus 1.0 \
       --env-file /tmp/grid.env -e LOCAL_TILE_CACHE_MAX=24 -e RINGS_CACHE_MAX=1500 -e BUILDING_SOURCE=db \
       -v "$HOME/climax_mvp:/repo" -v "$HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro" \
+      -v "$HOME/climax_mvp/data/canopy:/app/data/canopy:ro" \
       climax-backend:latest python3 /repo/scripts/build_skyline_grid.py \
       --bbox "$s" "$W" "$n" "$E" --step 0.0002 --threads 2 --resume --near-roads 25 --tiles-only \
-      --src-hint "plateau" >> "$log" 2>&1
+      --src-hint "plateau" ${GRID_EXTRA:-} >> "$log" 2>&1
     if tail -n 3 "$log" | grep -q "완료:"; then break; fi
     echo "띠 $s~$n $t회차 중단 — 다시 건다: $(tail -n 1 "$log")"; sleep 10
   done
