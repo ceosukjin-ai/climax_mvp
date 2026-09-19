@@ -521,7 +521,8 @@ class Archive:
                                "pvpti_est": e.get("pvpti"), "mrt_est": e.get("mrt"),
                                "shade": e.get("shade")})
                 out["field"] = fc
-            out["hotspots"] = await self.hotspots(hours=hours, min_samples=min_samples, limit=1500)
+            # 상위 1,500개만 보내던 것을 전체 격자로 (2026-09-19, 대표 요청 "모든 측정장소")
+            out["hotspots"] = await self.hotspots(hours=hours, min_samples=min_samples, limit=50000)
             return out
         except Exception as e:  # noqa: BLE001
             logger.warning("[archive] dashboard 집계 실패: {}: {}", type(e).__name__, e)

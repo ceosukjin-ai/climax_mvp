@@ -150,7 +150,7 @@
       </section>
     </div>
     <section class="card">
-      <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도</small></h2>
+      <h2>핫스팟 지도 <small id="map-sub">선택 기간 · 격자 11m · 평균 체감온도 · 측정 격자 전체</small></h2>
       <p class="maplabel">개요 — 클릭한 곳을 아래에 크게</p>
       <div id="map"></div>
       <p class="maplabel" id="map2-label" style="margin-top:8px">상세</p>
@@ -713,15 +713,15 @@
     const inKorea = c => c.lat >= 33 && c.lat <= 39 && c.lon >= 124 && c.lon <= 132;
     const cells = allCells.filter(inKorea);
     const dropped = allCells.length - cells.length;
-    $("#map-sub").textContent = `${label} · 격자 11m · 평균 체감온도 · ${fmt(cells.length)}개` + (dropped ? ` · 국외 좌표 ${fmt(dropped)}개 제외` : "");
+    $("#map-sub").textContent = `${label} · 격자 11m · 평균 체감온도 · 측정 격자 전체 ${fmt(cells.length)}개` + (dropped ? ` · 국외 좌표 ${fmt(dropped)}개 제외` : "");
     const VK = (data && data.vworld_key) || "";
     const tiles = () => VK
       ? L.tileLayer(`https://api.vworld.kr/req/wmts/1.0.0/${VK}/Base/{z}/{y}/{x}.png`, { maxZoom: 19, minZoom: 6, attribution: "© 국토교통부 V-World" })
       : L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors", className: "osm-dim" });
     if (!map) {
-      map = L.map("map", { zoomControl: false }).setView([35.23, 129.08], 11);
+      map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([35.23, 129.08], 11);
       tiles().addTo(map); layer = L.layerGroup().addTo(map);
-      map2 = L.map("map2").setView([35.23, 129.08], 15);
+      map2 = L.map("map2", { preferCanvas: true }).setView([35.23, 129.08], 15);
       tiles().addTo(map2); layer2 = L.layerGroup().addTo(map2);
       // 개요 클릭 → 상세 지도가 그곳으로
       map.on("click", e => map2.setView(e.latlng, Math.max(map2.getZoom(), 15)));
