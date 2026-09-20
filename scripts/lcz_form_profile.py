@@ -128,7 +128,8 @@ async def main():
             wm = await dominant_wall_material(la, lo)
         except Exception:
             wm = {}
-        out[lcz].append(dict(n_bld=len(rings),
+        out[lcz].append(dict(all_h=heights,
+                             n_bld=len(rings),
                              floor=st.median(floors) if floors else None,
                              hmax=max(heights) if heights else None,
                              hmed=st.median(heights) if heights else None,
@@ -141,6 +142,19 @@ async def main():
         xs = [x for x in xs if x is not None]
         return st.median(xs) if xs else float("nan")
 
+    # 2026-09-20: 그림 (b) 용 — 근린 건물 높이의 분포(반경 60 m 안 모든 건물을 합친 것).
+    #   실측 지점의 캐년 높이 범위를 이 분포 위에 진한 색으로 얹기 위한 값이다.
+    print(f"\n{'LCZ':7}{'건물n':>8}{'최소':>8}{'5%':>8}{'중앙':>8}{'95%':>8}{'최대':>8}")
+    import statistics as _st
+    for lcz in sorted(out):
+        hs = sorted(h for x in out[lcz] for h in x["all_h"])
+        if not hs:
+            continue
+        q = lambda p: hs[min(len(hs) - 1, int(p * (len(hs) - 1)))]  # noqa: E731
+        print(f"{lcz:7}{len(hs):>8}{hs[0]:>8.1f}{q(.05):>8.1f}{_st.median(hs):>8.1f}"
+              f"{q(.95):>8.1f}{hs[-1]:>8.1f}")
+
+    print()
     print(f"{'LCZ':7}{'n':>3}{'건물수':>7}{'층수':>7}{'높이중앙':>9}{'높이최대':>9}"
           f"{'수관칸':>7}{'수관고평균':>11}{'수관고최대':>11}  대표 외벽재질")
     for lcz in sorted(out):
