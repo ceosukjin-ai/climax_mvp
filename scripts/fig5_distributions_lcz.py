@@ -110,7 +110,15 @@ def main():
         ax.plot([v[0], v[-1]], [0, 0], color=ic, lw=0.8, alpha=0.6, zorder=2)
         for x, _l, c in xs:
             ax.scatter([x], [rng.uniform(-0.28, 0.28)], s=9.5, color=c, zorder=3, lw=0)
-        ax.plot([med, med], [-0.58, 0.58], color=INK, lw=1.4, zorder=4)
+        ax.plot([med, med], [-0.42, 0.62], color=INK, lw=1.4, zorder=4)
+        # 그룹 요약 — 점 구름은 그대로 두고 LCZ 별 중앙값만 아래에 삼각형으로 찍는다.
+        # 층지게 나누지 않으므로 분포의 모양이 그대로 남는다.
+        for code, dong, _en, col in LCZ:
+            g = sorted(x for x, l, _c in xs if l == code)
+            if not g:
+                continue
+            ax.scatter([st.median(g)], [-0.62], s=17, marker="^", color=col,
+                       edgecolor="white", linewidth=0.45, zorder=6, clip_on=False)
         ax.set_ylim(-0.62, 0.62); ax.set_yticks([])
         ax.spines["left"].set_visible(False)
         ax.set_title(title, loc="left", pad=16, fontweight="bold", color=INK)
@@ -127,7 +135,8 @@ def main():
                  x=0.04, ha="left", y=0.995, fontsize=10, fontweight="bold", color=INK)
     fig.text(0.04, 0.95,
              "Same site, same minute. Each dot is one site, coloured by local climate zone; "
-             "black line = median, band = interquartile range. "
+             "black line = median of all sites, band = interquartile range, triangles = "
+             "median of each zone. "
              "View factors re-derived on 2026-09-14 (fisheye stitched, tilted cube-map; "
              "79 sites — one pose failure excluded).",
              fontsize=6.8, color=MUTED)
