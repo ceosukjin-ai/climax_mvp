@@ -128,8 +128,9 @@ def panel(ax, sites, blds, roads, bbox, title, sub, elev_lim, cmap):
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
         sp.set_linewidth(0.6); sp.set_color("#8A8A8A")
-    ax.set_title(title, fontsize=8.0, fontweight="bold", color=INK, pad=3.0, loc="left")
-    ax.text(0.0, 1.005, sub, transform=ax.transAxes, fontsize=7.0, color=MUTED,
+    # 제목과 부제가 겹치지 않게 — 제목을 위로 올리고 부제를 그 아래 한 줄에 둔다
+    ax.set_title(title, fontsize=8.0, fontweight="bold", color=INK, pad=14.0, loc="left")
+    ax.text(0.0, 1.012, sub, transform=ax.transAxes, fontsize=7.0, color=MUTED,
             va="bottom", ha="left")
     # 축척 200 m
     span_m = (e - w) * 111320.0 * kx
@@ -155,8 +156,8 @@ async def main():
     elo, ehi = min(ev), max(ev)
     cmap = plt.get_cmap("YlGnBu")
 
-    fig, axes = plt.subplots(2, 3, figsize=(190 * MM, 132 * MM))
-    fig.subplots_adjust(left=0.012, right=0.988, top=0.95, bottom=0.02, wspace=0.07, hspace=0.18)
+    fig, axes = plt.subplots(2, 3, figsize=(190 * MM, 138 * MM))
+    fig.subplots_adjust(left=0.012, right=0.988, top=0.925, bottom=0.02, wspace=0.07, hspace=0.30)
     axs = axes.ravel()
 
     for i, dong in enumerate(ORDER):
@@ -172,8 +173,8 @@ async def main():
         sun = sum(1 for x in g if x["sun"])
         panel(axs[i], g, blds, roads, bbox,
               f"({'abcdef'[i]})  {code}  {kind}",
-              f"{name} · n = {len(g)} ({sun} sunlit) · elevation "
-              f"{min(x['elev'] for x in g):.0f}–{max(x['elev'] for x in g):.0f} m",
+              f"{name} · n = {len(g)}, {sun} sunlit · "
+              f"{min(x['elev'] for x in g):.0f}–{max(x['elev'] for x in g):.0f} m a.s.l.",
               (elo, ehi), cmap)
         print(f"  {code} {name}: 건물 {len(blds)} 도로 {len(roads)}", flush=True)
 
