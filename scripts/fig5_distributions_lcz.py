@@ -76,15 +76,16 @@ def load():
     return rows
 
 
-PANELS = [("Air temperature (°C)", "Weather meter", "Ta", "°C", 1),
-          ("Relative humidity (%)", "Weather meter", "RH", "%", 1),
-          ("Wind speed (m/s)", "Weather meter", "v", "m/s", 2),
-          ("Globe temperature (°C)", "Globe thermometer", "Tg", "°C", 1),
-          ("Mean radiant temp., globe-derived (°C)", "Globe thermometer", "Tmrt", "°C", 1),
-          ("Physiological equivalent temperature (°C)", "Globe thermometer", "PET", "°C", 1),
-          ("Sky view factor", "360° camera", "SVF", "", 2),
-          ("Tree view factor", "360° camera", "GVI", "", 2),
-          ("Pavement surface temperature (°C)", "Thermal camera", "Ts", "°C", 1)]
+BLUE, REDC, GREEN, VIOLET = "#1F6FB2", "#C8394A", "#0B9A9C", "#7B4FB5"
+PANELS = [("Air temperature (°C)", "Weather meter", BLUE, "Ta", "°C", 1),
+          ("Relative humidity (%)", "Weather meter", BLUE, "RH", "%", 1),
+          ("Wind speed (m/s)", "Weather meter", BLUE, "v", "m/s", 2),
+          ("Globe temperature (°C)", "Globe thermometer", REDC, "Tg", "°C", 1),
+          ("Mean radiant temp., globe-derived (°C)", "Globe thermometer", REDC, "Tmrt", "°C", 1),
+          ("Physiological equivalent temperature (°C)", "Globe thermometer", REDC, "PET", "°C", 1),
+          ("Sky view factor", "360° camera", GREEN, "SVF", "", 2),
+          ("Tree view factor", "360° camera", GREEN, "GVI", "", 2),
+          ("Pavement surface temperature (°C)", "Thermal camera", VIOLET, "Ts", "°C", 1)]
 
 
 def main():
@@ -94,24 +95,26 @@ def main():
     fig.subplots_adjust(left=0.04, right=0.99, top=0.83, bottom=0.135,
                         hspace=1.15, wspace=0.2)
 
-    # LCZ 별로 y 를 층지게 둔다 — 겹쳐 찍히는 것보다 어느 근린인지가 먼저 보인다
-    lane = {c: 0.42 - i * 0.21 for i, (c, _d, _e, _col) in enumerate(LCZ)}
+    # 원본 그대로 한 줄에 흩뿌리고 **색만** LCZ 로 바꾼다. 층지게 나누면 분포의
+    # 모양(어디에 몰렸나)이 깨져서 원래 그림이 하던 말을 못 한다.
+    import random
+    rng = random.Random(1)
 
-    for ax, (title, inst, key, unit, dec) in zip(axes.flat, PANELS):
+    for ax, (title, inst, ic, key, unit, dec) in zip(axes.flat, PANELS):
         xs = [(r[key], r["lcz"], r["col"]) for r in rows if r[key] is not None]
         v = sorted(x for x, _l, _c in xs)
         med = st.median(v)
         q1 = v[max(0, int(0.25 * (len(v) - 1)))]
         q3 = v[min(len(v) - 1, int(0.75 * (len(v) - 1)))]
-        ax.axvspan(q1, q3, color="#BFBFBF", alpha=0.22, zorder=1)
-        ax.plot([v[0], v[-1]], [0, 0], color="#AAAAAA", lw=0.7, zorder=2)
-        for x, l, c in xs:
-            ax.scatter([x], [lane[l]], s=9.5, color=c, zorder=3, lw=0)
+        ax.axvspan(q1, q3, color=ic, alpha=0.15, zorder=1)
+        ax.plot([v[0], v[-1]], [0, 0], color=ic, lw=0.8, alpha=0.6, zorder=2)
+        for x, _l, c in xs:
+            ax.scatter([x], [rng.uniform(-0.28, 0.28)], s=9.5, color=c, zorder=3, lw=0)
         ax.plot([med, med], [-0.58, 0.58], color=INK, lw=1.4, zorder=4)
         ax.set_ylim(-0.62, 0.62); ax.set_yticks([])
         ax.spines["left"].set_visible(False)
         ax.set_title(title, loc="left", pad=16, fontweight="bold", color=INK)
-        ax.text(0, 1.12, inst, transform=ax.transAxes, color=MUTED, fontsize=7,
+        ax.text(0, 1.12, inst, transform=ax.transAxes, color=ic, fontsize=7,
                 va="bottom", fontweight="bold")
         n = f" · n = {len(v)}" if len(v) < 80 else ""
         ax.text(1, 1.12,
@@ -123,8 +126,8 @@ def main():
     fig.suptitle("Distribution of the field measurements (80 sites), by local climate zone",
                  x=0.04, ha="left", y=0.995, fontsize=10, fontweight="bold", color=INK)
     fig.text(0.04, 0.95,
-             "Same site, same minute. Each dot is one site, placed on its own row by local "
-             "climate zone; black line = median of all sites, band = interquartile range. "
+             "Same site, same minute. Each dot is one site, coloured by local climate zone; "
+             "black line = median, band = interquartile range. "
              "View factors re-derived on 2026-09-14 (fisheye stitched, tilted cube-map; "
              "79 sites — one pose failure excluded).",
              fontsize=6.8, color=MUTED)
