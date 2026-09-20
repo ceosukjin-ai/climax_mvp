@@ -197,8 +197,8 @@ def main():
     # 위성 래스터 값(수관 화소 0~5칸)은 캡션으로 옮겼다 — 막대 옆에 두니 글자가 축 밖으로
     # 나가 가로축이 끊어져 보였다.
     style(axs[3], "(d)  Tree cover", "tree view factor at the site (%, fisheye)",
-          "", 4.6, False)
-    axs[3].set_xticks([0, 1, 2, 3, 4])
+          "", 5.0, False)
+    axs[3].set_xticks([0, 1, 2, 3, 4, 5])
 
     for ext in ("pdf", "png"):
         fig.savefig(f"{OUT}/SCS_Fig_form_bars.{ext}", bbox_inches="tight", pad_inches=0.03)
