@@ -53,13 +53,26 @@ BLD = {"부암제1동": dict(floor=2, hmed=6.9, hmax=49.2, mat={"concrete": 11, 
 
 
 def load_width():
+    """폭 등급 구성과, **그 지점의 캐년을 만든 건물 높이**(H = H/W x 가로폭).
+
+    캐년 높이는 반경 60 m 안 건물 중앙값과 다른 것을 잰다 — 보행자가 바로 옆에 두고
+    선 건물이다. 논문 표 1 의 'Measured H' 가 이 값이다.
+    """
+    import statistics as _st
     w = {r["측정ID"]: r for r in csv.DictReader(open(f"{DATA}/tier3_width_80.csv", encoding="utf-8-sig"))}
     out = {k: [0, 0, 0, 0] for k, _n in ROWS}
     n = {k: 0 for k, _n in ROWS}
+    canyon = {k: [] for k, _n in ROWS}
     for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig")):
         k = r["권역"]; n[k] += 1
-        out[k][WCLS.get(w.get(r["측정ID"], {}).get("폭등급", ""), 3)] += 1
-    return out, n
+        wr = w.get(r["측정ID"], {})
+        out[k][WCLS.get(wr.get("폭등급", ""), 3)] += 1
+        try:
+            canyon[k].append(float(wr["width_m"]) * float(wr["hw_ratio"]))
+        except (KeyError, ValueError):
+            pass
+    cmed = {k: _st.median(v) for k, v in canyon.items()}
+    return out, n, cmed
 
 
 def style(ax, title, sub, xlabel, xmax, first):
@@ -82,7 +95,7 @@ def style(ax, title, sub, xlabel, xmax, first):
 
 
 def main():
-    wc, n = load_width()
+    wc, n, cmed = load_width()
     y = list(range(len(ROWS)))
     fig, axs = plt.subplots(1, 4, figsize=(190 * MM, 66 * MM))
     fig.subplots_adjust(left=0.115, right=0.995, top=0.775, bottom=0.235, wspace=0.30)
@@ -105,25 +118,33 @@ def main():
                   fontsize=6.5, handlelength=1.2, columnspacing=1.0, handletextpad=0.45)
 
     # (b) 건물 높이 — 중앙값 점에서 최댓값까지 선
+    # 실측 지점의 캐년 높이를 **진한 색**으로 앞세우고, 동네 맥락(60 m 중앙값·최고)은
+    # 옅게 둔다. 보행자 옆은 2층인데 같은 반경에 20~65 m 가 서 있다는 대비가 요점.
+    C_SITE, C_MED, C_MAX = "#A33B1F", "#9FB0C2", "#5C738C"
     for i, (k, _nm) in enumerate(ROWS):
         b = BLD[k]
-        axs[1].plot([b["hmed"], b["hmax"]], [i, i], color="#C6D4E2", lw=3.2,
+        axs[1].plot([min(cmed[k], b["hmed"]), b["hmax"]], [i, i], color="#DCE3EA", lw=3.0,
                     solid_capstyle="round", zorder=2)
-        axs[1].scatter([b["hmax"]], [i], s=26, color="#5C738C", zorder=3)
-        axs[1].scatter([b["hmed"]], [i], s=26, color="#B5714F", zorder=4)
+        axs[1].scatter([b["hmed"]], [i], s=16, color=C_MED, zorder=3)
+        axs[1].scatter([b["hmax"]], [i], s=24, color=C_MAX, zorder=3)
+        axs[1].scatter([cmed[k]], [i], s=46, color=C_SITE, edgecolor="white",
+                       linewidth=0.8, zorder=5)
         axs[1].text(b["hmax"] + 2.0, i, f"{b['hmax']:.0f}", va="center",
                     fontsize=6.6, color=INK)
-        axs[1].text(b["hmed"] - 2.0, i, f"{b['hmed']:.1f}", va="center", ha="right",
-                    fontsize=6.6, color=INK)
-    style(axs[1], "(b)  Building height", "median → tallest within 60 m (m)", "", 76, False)
+        axs[1].text(cmed[k] - 2.2, i, f"{cmed[k]:.1f}", va="center", ha="right",
+                    fontsize=6.9, color=C_SITE, fontweight="bold")
+    style(axs[1], "(b)  Building height", "at the site → tallest within 60 m (m)", "", 76, False)
     axs[1].legend(handles=[plt.Line2D([], [], marker="o", color="none",
-                                      markerfacecolor="#B5714F", markersize=4.6,
-                                      label="median building"),
+                                      markerfacecolor=C_SITE, markeredgecolor="white",
+                                      markersize=5.6, label="canyon at the site"),
                            plt.Line2D([], [], marker="o", color="none",
-                                      markerfacecolor="#5C738C", markersize=4.6,
-                                      label="tallest building")],
+                                      markerfacecolor=C_MED, markersize=3.8,
+                                      label="median within 60 m"),
+                           plt.Line2D([], [], marker="o", color="none",
+                                      markerfacecolor=C_MAX, markersize=4.6,
+                                      label="tallest within 60 m")],
                   loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=1, frameon=False,
-                  fontsize=6.5, handlelength=1.0, handletextpad=0.4)
+                  fontsize=6.5, handlelength=1.0, handletextpad=0.4, labelspacing=0.35)
 
     # (c) 외벽 재질
     left = [0.0] * len(ROWS)
