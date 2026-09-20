@@ -102,8 +102,8 @@ def style(ax, title, sub, xlabel, xmax, first):
     for s in ("top", "right", "left"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_linewidth(0.6); ax.spines["bottom"].set_color(RULE)
-    ax.set_title(title, fontsize=8.2, fontweight="bold", color=INK, loc="left", pad=12.0)
-    ax.text(0.0, 1.035, sub, transform=ax.transAxes, fontsize=6.6, color=MUTED,
+    ax.set_title(title, fontsize=8.2, fontweight="bold", color=INK, loc="left", pad=17.0)
+    ax.text(0.0, 1.075, sub, transform=ax.transAxes, fontsize=6.6, color=MUTED,
             ha="left", va="bottom")
     ax.set_xlabel(xlabel, fontsize=6.8, color=MUTED, labelpad=2.0)
 
@@ -112,7 +112,7 @@ def main():
     wc, n, cmed, tmed = load_width()
     y = list(range(len(ROWS)))
     fig, axs = plt.subplots(1, 4, figsize=(190 * MM, 66 * MM))
-    fig.subplots_adjust(left=0.115, right=0.995, top=0.775, bottom=0.235, wspace=0.30)
+    fig.subplots_adjust(left=0.115, right=0.995, top=0.755, bottom=0.235, wspace=0.30)
 
     # (a) 가로폭 구성
     left = [0.0] * len(ROWS)
@@ -146,8 +146,9 @@ def main():
                     solid_capstyle="butt", zorder=4)
         axs[1].scatter([smed], [i], s=30, color="white", edgecolor=C_SITE,
                        linewidth=1.4, zorder=5)
-        # 범위 라벨을 막대 위에 두니 첫 행에서 패널 부제와 겹쳤다. 막대 아래로 내린다.
-        axs[1].text(smin * 0.92, i + 0.34, f"{smin:.1f}–{smax:.0f}", va="center",
+        # 범위 라벨은 막대 **위**. 아래로 내렸더니 마지막 행에서 가로축과 겹쳤다.
+        # 첫 행이 부제와 닿지 않도록 style() 에서 제목 여백과 부제 높이를 함께 키웠다.
+        axs[1].text(smin * 0.92, i - 0.33, f"{smin:.1f}–{smax:.0f}", va="center",
                     ha="left", fontsize=6.4, color=C_SITE, fontweight="bold")
         axs[1].text(hmax * 1.06, i + 0.02, f"{hmax:.0f}", va="center",
                     fontsize=6.3, color=C_TIP)
