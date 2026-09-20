@@ -33,10 +33,14 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Polygon, Rectangle, FancyArrow
 
 mpl.rcParams.update({
-    "font.family": "Liberation Sans",
+    # 2026-09-20: 논문 안에서 그림 폰트를 하나로 — 형태지표 4패널·그림 1 과 같은 Times.
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
     "pdf.fonttype": 42, "ps.fonttype": 42,
     "figure.dpi": 200, "savefig.dpi": 600,
 })
+MIN_PT = 7.0        # Elsevier 최소 글자 크기 — 이 아래로 줄이지 않는다
 INK, MUTED = "#1A1A1A", "#6B6B6B"
 DATA, CHECK, FINAL = "#EAF0F7", "#F6EEE3", "#DCE8F4"
 RULE = "#3C3C3C"
@@ -55,7 +59,7 @@ W = 23.6
 _TEXTS = []          # (artist, box_left, box_right, box_bottom, box_top)
 
 
-def lines(x, y, rows, fs=6.0, lead=None, color=INK, w=None, h=None):
+def lines(x, y, rows, fs=7.0, lead=None, color=INK, w=None, h=None):
     """행들을 그리고, 틀 경계와 함께 기록해 둔다(뒤에서 자동 축소 검사)."""
     lead = lead or fs * 0.205
     y0 = y + (len(rows) - 1) * lead / 2
@@ -86,6 +90,8 @@ def fit_all(pad_x=1.6, pad_y=1.0):
                     over = True
             if not over:
                 break
+            if min(t.get_fontsize() for t in drawn) - 0.15 < MIN_PT:
+                break
             for t in drawn:
                 t.set_fontsize(t.get_fontsize() - 0.15)
             fig.canvas.draw()
@@ -112,7 +118,7 @@ def rows_of(title, *rest, sub=None):
     return r
 
 
-def para(cx, cy, w, h, rows, fc=DATA, fs=6.0, skew=2.2):
+def para(cx, cy, w, h, rows, fc=DATA, fs=7.0, skew=2.2):
     ax.add_patch(Polygon([(cx - w/2 + skew, cy - h/2), (cx + w/2 + skew, cy - h/2),
                           (cx + w/2 - skew, cy + h/2), (cx - w/2 - skew, cy + h/2)],
                          closed=True, facecolor=fc, edgecolor=RULE, lw=LW, zorder=4))
@@ -120,14 +126,14 @@ def para(cx, cy, w, h, rows, fc=DATA, fs=6.0, skew=2.2):
     return dict(cx=cx, cy=cy, w=w, h=h)
 
 
-def box(cx, cy, w, h, rows, fc="white", fs=6.0, ec=RULE):
+def box(cx, cy, w, h, rows, fc="white", fs=7.0, ec=RULE):
     ax.add_patch(Rectangle((cx - w/2, cy - h/2), w, h, facecolor=fc,
                            edgecolor=ec, lw=LW, zorder=4))
     lines(cx, cy, rows, fs, w=w, h=h)
     return dict(cx=cx, cy=cy, w=w, h=h)
 
 
-def check(cx, cy, w, h, rows, fs=6.0):
+def check(cx, cy, w, h, rows, fs=7.0):
     """검증 띠 — 왼쪽에 굵은 세로선을 둬서 처리 단계와 구분한다."""
     ax.add_patch(Rectangle((cx - w/2, cy - h/2), w, h, facecolor=CHECK,
                            edgecolor="none", zorder=3))
@@ -155,27 +161,28 @@ IN = [rows_of("360° panoramas", "91 panoramas at 80 sites",
       rows_of("Thermal images", "328 radiometric images",
               "emissivity 0.93–0.95"),
       rows_of("360° panoramas", "the same panoramas",
-              "showing the solar disc"),
-      rows_of("Building and satellite data", "305,621 building polygons",
-              "Sentinel-2 and Landsat 8/9")]
+              "read for the direct beam"),
+      rows_of("Buildings and canopy", "305,621 polygons",
+              "Meta/WRI canopy height")]
 PR = [rows_of("Semantic segmentation", "sky, tree, building, ground",
               "Steyn 36-ring integration"),
       rows_of("Temperature retrieval", "raw radiance and the",
               "displayed value (OCR)"),
-      rows_of("Solar disc detection", "position of the disc",
-              "at the reading time"),
-      rows_of("Geometric view factors", "V-World building geometry",
-              "no imagery of any kind")]
+      rows_of("Sun or shade reading", "one observer, all 80 sites",
+              "cloud-diffuse counted as no beam"),
+      rows_of("Geometric view factors", "national building polygons",
+              "joined to register heights")]
 CK = [[("Verification", True, MUTED), ("difference from the analytic", False, None),
        ("solution ≤ 0.003", False, None)],
       [("Verification", True, MUTED), ("radiance linear in T$^4$", False, None),
        ("324 of 328 images passed", False, None)],
-      [("Verification", True, MUTED), ("disc within ±5° of the computed", False, None),
-       ("position; T$_g$ − T$_a$ separates", False, None),
-       ("the sun and shade groups", False, None)],
-      [("Verification", True, MUTED), ("geometric SVF vs. 80 field", False, None),
-       ("panoramas: MAE 0.121,", False, None),
-       ("bias −0.004, r 0.39", False, None)]]
+      [("Verification", True, MUTED), ("globe-temperature rise separates", False, None),
+       ("the groups: 21.8 K sunlit against", False, None),
+       ("9.8 K shaded, $p$ < 0.001;", False, None),
+       ("two sites disagreed", False, None)],
+      [("Verification", True, MUTED), ("geometric SVF vs. 79 field", False, None),
+       ("panoramas: MAE 0.108,", False, None),
+       ("bias +0.022, r 0.69", False, None)]]
 OU = [rows_of("View factors", "sky, tree and building"),
       rows_of("Surface temperature", "pavement and wall separated",
               "mean offset +9.3 K"),
@@ -194,18 +201,18 @@ BUS = 67.0
 eb = box(50.0, 60.0, 78.0, 9.0,
          rows_of("Energy balance model",
                  "deterministic solution at the pedestrian location;",
-                 "coefficients fixed at the deployed state"), fs=6.6)
+                 "coefficients fixed at the deployed state"), fs=7.4)
 for i in range(4):
     ax.plot([COL[i], COL[i]], [Y_OU - 4.6, BUS], color=RULE, lw=LW, zorder=3)
 ax.plot([COL[0], COL[3]], [BUS, BUS], color=RULE, lw=LW, zorder=3)
 arrow(50.0, BUS, eb["cy"] + eb["h"]/2)
 
 mrt = para(29.0, 46.5, 34.0, 8.6,
-           rows_of("Mean radiant temperature", "ISO 7726, globe reference"), fs=6.4)
+           rows_of("Mean radiant temperature", "ISO 7726, globe reference"), fs=7.2)
 pet = para(71.0, 46.5, 37.0, 10.6,
            rows_of("PET", "physiological equivalent temperature",
                    "VDI 3787 Part 2 / Höppe MEMI",
-                   "1.37 met, 0.5 clo (summer)"), fs=6.4)
+                   "1.37 met, 0.5 clo (summer)"), fs=7.2)
 ax.plot([50.0, 50.0], [eb["cy"] - eb["h"]/2, 54.0], color=RULE, lw=LW, zorder=3)
 ax.plot([50.0, 29.0], [54.0, 54.0], color=RULE, lw=LW, zorder=3)
 arrow(29.0, 54.0, mrt["cy"] + mrt["h"]/2)
@@ -220,17 +227,16 @@ res = box(50.0, 32.0, 80.0, 11.4,
                   "ridge regression, α = 20;  five standardised predictors",
                   "sun, geometric SVF, T$_a$, pedestrian wind, engine PET"
                   ";  no coordinates",
-                  "PET = PET$_{phys}$ + c · Δ,  with c decaying to 0 "
-                  "outside the training domain"), fs=6.5)
+                  "PET = PET$_{phys}$ + Δ"), fs=7.3)
 ax.plot([71.0, 71.0], [pet["cy"] - pet["h"]/2, 39.5], color=RULE, lw=LW, zorder=3)
 ax.plot([71.0, 50.0], [39.5, 39.5], color=RULE, lw=LW, zorder=3)
 arrow(50.0, 39.5, res["cy"] + res["h"]/2)
 
 rep = para(50.0, 19.0, 54.0, 9.6,
            rows_of("Reported PET",
-                   "leave-one-neighbourhood-out MAE 2.7 °C",
+                   "leave-one-neighbourhood-out MAE 1.9 °C",
                    "all 63 extreme-heat cases (PET ≥ 41 °C) detected"),
-           fc=FINAL, fs=6.6)
+           fc=FINAL, fs=7.4)
 link(res, rep)
 
 # ---------------------------------------------------------------- legend
@@ -249,7 +255,7 @@ ax.plot([68.0, 68.0], [LY - 1.5, LY + 1.5], color="#C08A4A", lw=1.6,
 ax.text(79.0, LY, "verification", fontsize=6.6, va="center", color=INK)
 
 ax.text(50.0, 2.6,
-        "All values verified against the deployed engine, 2026-09-13. The "
+        "All values verified against the deployed engine, 2026-09-20. The "
         "street-view learning layer is not part of this pipeline: its labels "
         "derive from Street View\npanoramas, which the platform terms exclude "
         "from training and validation alike. The imagery-free view factors "
