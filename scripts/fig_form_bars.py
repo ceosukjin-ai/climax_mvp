@@ -80,12 +80,23 @@ def load_width():
             canyon[k].append(float(wr["width_m"]) * float(wr["hw_ratio"]))
         except (KeyError, ValueError):
             pass
+        # ⚠️ tier3_engine_output_*.csv 의 SVF/TVF/BVF 열은 **옛 파노라마 값**이다
+        #    (2026-09-15 에 무효 판정). 정본은 aug80_indices.csv 의 9/14 재산출본.
+    # 수목 시계는 9/14 재산출본(aug80_indices.csv 의 GVI)에서 읽는다
+    dong = {r["측정ID"]: r["권역"]
+            for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv",
+                                         encoding="utf-8-sig"))}
+    for r in csv.DictReader(open(f"{DATA}/aug80_indices.csv", encoding="utf-8-sig")):
+        k = dong.get(r["측정ID"])
+        if k is None:
+            continue
         try:
-            tvf[k].append(float(r["TVF"]))
+            tvf[k].append(float(r["GVI"]))
         except (KeyError, ValueError):
             pass
     cmed = {k: (min(v), _st.median(v), max(v), len(v)) for k, v in canyon.items()}
-    tmed = {k: (100.0 * _st.median(v), 100.0 * max(v)) for k, v in tvf.items()}
+    tmed = {k: (100.0 * _st.median(v), 100.0 * max(v),
+                sum(1 for x in v if x < 0.005), len(v)) for k, v in tvf.items()}
     return out, n, cmed, tmed
 
 
@@ -194,12 +205,14 @@ def main():
     v = [tmed[k][0] for k, _nm in ROWS]
     axs[3].barh(y, v, height=0.58, color="#6E8B5E", edgecolor="none")
     for i, (k, _nm) in enumerate(ROWS):
-        axs[3].text(v[i] + 0.10, i, f"{v[i]:.1f} %", va="center", fontsize=6.6, color=INK)
+        z, tot = tmed[k][2], tmed[k][3]
+        axs[3].text(v[i] + 0.10, i, f"{v[i]:.1f} %   ({z}/{tot} at 0)", va="center",
+                    fontsize=6.4, color=INK)
     # 위성 래스터 값(수관 화소 0~5칸)은 캡션으로 옮겼다 — 막대 옆에 두니 글자가 축 밖으로
     # 나가 가로축이 끊어져 보였다.
     style(axs[3], "(d)  Tree cover", "tree view factor at the site (%, fisheye)",
-          "", 5.0, False)
-    axs[3].set_xticks([0, 1, 2, 3, 4, 5])
+          "", 8.0, False)
+    axs[3].set_xticks([0, 2, 4, 6, 8])
 
     for ext in ("pdf", "png"):
         fig.savefig(f"{OUT}/SCS_Fig_form_bars.{ext}", bbox_inches="tight", pad_inches=0.03)
