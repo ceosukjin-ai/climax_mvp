@@ -16,7 +16,7 @@ from __future__ import annotations
 import argparse, asyncio, csv, os, sys, time
 sys.path.insert(0, "/app")
 from app.services import skyline as SK  # noqa: E402
-from app.services.geo import _rings_cached, canopy_items  # noqa: E402
+from app.services.geo import _rings_cached, canopy_items, _tile_covered  # noqa: E402
 
 
 def cells_from_csv(path: str):
@@ -101,11 +101,20 @@ async def worker(q: asyncio.Queue, stats: dict, force: bool, src_hint: str, cano
                 stats["skip"] += 1
             else:
                 rings, src = await asyncio.wait_for(_rings_cached(lat, lon), timeout=30.0)
-                sk = SK.compute_skyline_from_rings(lat, lon, rings, (src_hint or src or "none"))
-                ok = await SK.upsert(sk)
-                stats["ok" if ok else "fail"] += 1
-                if sk.n_bld == 0:
-                    stats["open"] += 1
+                # 🔴 2026-09-20: "건물이 없다" 와 "조회에 실패해서 모른다" 를 구분한다.
+                #   _rings_cached 는 DB→Local→V-World→OSM 을 훑고 못 찾으면 빈 목록을 돌려준다.
+                #   Overpass 가 406 으로 죽어 있던 이 날, 타일 미적재 칸이 전부 빈 목록을 받아
+                #   **하늘 열림(SVF 1.0)** 으로 저장되고 있었다 (부산 전역 배치 2분에 227칸).
+                #   geo.svf_geometric 은 9/18 에 _tile_covered 검사를 넣었는데 배치에는 없었다.
+                #   자료가 없는 곳에서 "하늘이 다 열렸다" 고 쓰는 것은 모르는 것을 아는 척하는 것이다.
+                if not rings and not await _tile_covered(lat, lon):
+                    stats["nodata"] += 1
+                else:
+                    sk = SK.compute_skyline_from_rings(lat, lon, rings, (src_hint or src or "none"))
+                    ok = await SK.upsert(sk)
+                    stats["ok" if ok else "fail"] += 1
+                    if sk.n_bld == 0:
+                        stats["open"] += 1
         except Exception as e:  # noqa: BLE001
             stats["fail"] += 1
             if stats["fail"] <= 5:
@@ -149,14 +158,14 @@ async def main():
             print(f"수관 디렉터리 없음: {_g.CANOPY_DIR} — 마운트 확인 (run_grid_kr.sh -v data/canopy)"); return
     print(f"격자 {len(cells)}개, 스레드 {a.threads}, resume={a.resume} force={a.force} canopy_only={a.canopy_only}", flush=True)
     q: asyncio.Queue = asyncio.Queue(maxsize=a.threads * 4)
-    stats = {"done": 0, "ok": 0, "skip": 0, "fail": 0, "open": 0}
+    stats = {"done": 0, "ok": 0, "skip": 0, "fail": 0, "open": 0, "nodata": 0}
     workers = [asyncio.create_task(worker(q, stats, a.force, a.src_hint, a.canopy_only)) for _ in range(a.threads)]
     t0 = time.time()
     for i, c in enumerate(cells, 1):
         await q.put(c)
         if i % 200 == 0:
             el = time.time() - t0
-            print(f"  {stats['done']}/{len(cells)} ok {stats['ok']} skip {stats['skip']} fail {stats['fail']} open {stats['open']}  "
+            print(f"  {stats['done']}/{len(cells)} ok {stats['ok']} skip {stats['skip']} fail {stats['fail']} open {stats['open']} nodata {stats['nodata']}  "
                   f"{el:.0f}s ({stats['done']/max(el,1):.1f}/s)", flush=True)
     for _ in workers:
         await q.put(None)
