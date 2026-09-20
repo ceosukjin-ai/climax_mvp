@@ -49,8 +49,10 @@ LCZ = {"부암제1동": ("LCZ 1", "Compact high-rise", "Buam 1"),
 ORDER = ["부암제1동", "보수동", "서제2동", "용호제1동", "명장동"]
 
 # 건물 높이 음영 — 경계는 LCZ 계층 정의(3~10 / 10~25 / >25 m)와 같게 둔다
-H_BINS = [(0.0, 10.0, "#D9DEE4"), (10.0, 25.0, "#9FB0C2"), (25.0, 1e9, "#5C738C")]
-ROAD_C = "#BFBFBF"
+# 2026-09-20: 건물을 청회색으로 두니 지점 표식(청록~남색)과 구분이 안 됐다.
+# 배경은 **중립 회색**으로 내리고 지점은 노랑~보라(plasma)로 — 색상환에서 멀리 떨어뜨린다.
+H_BINS = [(0.0, 10.0, "#E8E8E6"), (10.0, 25.0, "#C4C4C0"), (25.0, 1e9, "#8E8E88")]
+ROAD_C = "#D2D2CE"
 INK, MUTED = "#1A1A1A", "#5E5E5E"
 
 
@@ -122,9 +124,9 @@ def panel(ax, sites, blds, roads, bbox, title, sub, elev_lim, cmap):
                                         lw=0, zorder=2))
                 break
     for st in sites:
-        ax.scatter(st["lon"], st["lat"], s=26, marker=("o" if st["sun"] else "s"),
+        ax.scatter(st["lon"], st["lat"], s=34, marker=("o" if st["sun"] else "s"),
                    c=[st["elev"]], cmap=cmap, vmin=elev_lim[0], vmax=elev_lim[1],
-                   edgecolor="white", linewidth=0.6, zorder=5)
+                   edgecolor="white", linewidth=0.9, zorder=5)
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
         sp.set_linewidth(0.6); sp.set_color("#8A8A8A")
@@ -154,7 +156,7 @@ async def main():
     for st, v in zip(sites, ev):
         st["elev"] = v
     elo, ehi = min(ev), max(ev)
-    cmap = plt.get_cmap("YlGnBu")
+    cmap = plt.get_cmap("plasma")
 
     fig, axes = plt.subplots(2, 3, figsize=(190 * MM, 138 * MM))
     fig.subplots_adjust(left=0.012, right=0.988, top=0.925, bottom=0.02, wspace=0.07, hspace=0.30)
@@ -185,10 +187,10 @@ async def main():
                        (f"building {lo_:.0f}–{hi:.0f} m" if hi < 1e8 else f"building > {lo_:.0f} m")))
           for lo_, hi, c in H_BINS]
     h1.append(Line2D([], [], color=ROAD_C, lw=1.0, label="street"))
-    h2 = [Line2D([], [], marker="o", color="none", markerfacecolor="#7A9BB8",
-                 markeredgecolor="white", markersize=6, label="measurement site — sunlit"),
-          Line2D([], [], marker="s", color="none", markerfacecolor="#7A9BB8",
-                 markeredgecolor="white", markersize=6, label="measurement site — shaded")]
+    h2 = [Line2D([], [], marker="o", color="none", markerfacecolor="#CC4778",
+                 markeredgecolor="white", markersize=6.5, label="measurement site — sunlit"),
+          Line2D([], [], marker="s", color="none", markerfacecolor="#CC4778",
+                 markeredgecolor="white", markersize=6.5, label="measurement site — shaded")]
     lg.legend(handles=h1 + h2, loc="upper left", frameon=False, fontsize=7.2,
               handlelength=1.5, borderpad=0.0, labelspacing=0.55,
               bbox_to_anchor=(0.02, 0.98))
