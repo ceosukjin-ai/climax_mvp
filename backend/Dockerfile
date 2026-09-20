@@ -25,12 +25,17 @@ COPY requirements.txt .
 # 기존 pip를 지우고 새 pip를 /install에 설치해버려서 PATH에서 사라지고,
 # 다음 pip 호출이 "pip: not found" (exit 127)로 죽습니다.
 # 업그레이드는 prefix 없이, 패키지 설치만 --prefix로. 호출은 python -m pip 사용.
-# torch 는 CPU 전용 휠로 설치한다. **버전을 requirements.txt 와 똑같이 고정해야 한다.**
+# torch 는 CPU 전용 휠로 설치하고, **requirements.txt 에서는 빼 둔다.**
 #
-# 고정하지 않으면: 여기서 최신 CPU torch 가 깔리고 → 다음 줄의 requirements.txt 가
-# torch==2.5.0 을 요구하면서 **PyPI 에서 CUDA 판을 다시 받는다**(nvidia-* 약 3GB).
-# CPU 서버인데 CUDA 라이브러리가 이미지에 들어가고, 빌드가 디스크를 터뜨린다.
-# (2026-09-01 배포 실패: libcublasLt.so.12 추출 중 no space left on device)
+# 2026-09-01 에 같은 사고가 났고(libcublasLt.so.12 추출 중 no space left on device),
+# 그때 처방은 "양쪽 버전을 똑같이 고정한다" 였다. **그 처방은 듣지 않았다** —
+# 2026-09-19 배포 이미지가 여전히 torch 2.5.0+cu124, nvidia/ 2.7 GB, 이미지 10.3 GB 였다.
+#
+# 진짜 원인은 `--prefix=/install` 이다. 첫 설치는 /install 로 들어가는데 그 경로는
+# 두 번째 pip 의 sys.path 에 없다. 그래서 pip 는 torch 가 이미 있는 줄 모르고,
+# 버전이 같아도 requirements.txt 의 torch==2.5.0 을 **PyPI 에서 다시 받는다** → CUDA 판.
+# 따라서 해결은 버전 고정이 아니라 **requirements.txt 에서 torch 줄을 지우는 것**이다.
+# (2026-09-19 배포 두 번 실패. 48 GB 서버에 14 GB 여유로도 빌드가 안 됐다.)
 RUN python -m pip install --upgrade pip && \
     python -m pip install --prefix=/install \
         torch==2.5.0 --index-url https://download.pytorch.org/whl/cpu && \

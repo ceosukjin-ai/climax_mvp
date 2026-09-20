@@ -22,7 +22,12 @@ geoalchemy2==0.15.2
 redis==5.1.1
 
 # ML / CV
-torch==2.5.0
+# ⚠️ torch 는 여기에 두지 않는다. Dockerfile 이 CPU 판(download.pytorch.org/whl/cpu)을
+#    먼저 설치하는데, 이 줄이 있으면 pip 가 PyPI 에서 CUDA 판(2.5.0+cu124)을 다시 받아
+#    덮어쓴다. GPU 가 없는 서버에 nvidia 라이브러리 2.7 GB 가 실려 이미지가 10.3 GB 가 됐고,
+#    그 때문에 48 GB 서버에서 배포 빌드가 두 번 디스크로 막혔다 (2026-09-19).
+#    로컬에서 requirements.txt 만으로 설치할 때는 아래를 직접 실행할 것:
+#      pip install torch==2.5.0 --index-url https://download.pytorch.org/whl/cpu
 transformers==4.45.2
 pillow==10.4.0
 numpy==2.2.6           # pythermalcomfort→numba 호환 상한(<2.3)에 맞춤
