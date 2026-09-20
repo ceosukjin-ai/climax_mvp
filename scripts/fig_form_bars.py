@@ -123,10 +123,11 @@ def main():
     C_SITE, C_MED, C_MAX = "#A33B1F", "#9FB0C2", "#5C738C"
     for i, (k, _nm) in enumerate(ROWS):
         b = BLD[k]
-        axs[1].plot([min(cmed[k], b["hmed"]), b["hmax"]], [i, i], color="#DCE3EA", lw=3.0,
+        # 60 m 중앙값(6.9~8.8 m)은 캐년 높이(5.6~8.4 m)와 1 m 안쪽으로 붙어 점이 겹쳤다.
+        # 구분이 안 되므로 뺀다 — 말하려는 것은 「옆은 2층, 반경 안엔 22~65 m」 둘뿐이다.
+        axs[1].plot([cmed[k], b["hmax"]], [i, i], color="#DCE3EA", lw=3.0,
                     solid_capstyle="round", zorder=2)
-        axs[1].scatter([b["hmed"]], [i], s=16, color=C_MED, zorder=3)
-        axs[1].scatter([b["hmax"]], [i], s=24, color=C_MAX, zorder=3)
+        axs[1].scatter([b["hmax"]], [i], s=30, color=C_MAX, zorder=3)
         axs[1].scatter([cmed[k]], [i], s=46, color=C_SITE, edgecolor="white",
                        linewidth=0.8, zorder=5)
         axs[1].text(b["hmax"] + 2.0, i, f"{b['hmax']:.0f}", va="center",
@@ -136,15 +137,12 @@ def main():
     style(axs[1], "(b)  Building height", "at the site → tallest within 60 m (m)", "", 76, False)
     axs[1].legend(handles=[plt.Line2D([], [], marker="o", color="none",
                                       markerfacecolor=C_SITE, markeredgecolor="white",
-                                      markersize=5.6, label="canyon at the site"),
+                                      markersize=6.0, label="canyon at the site"),
                            plt.Line2D([], [], marker="o", color="none",
-                                      markerfacecolor=C_MED, markersize=3.8,
-                                      label="median within 60 m"),
-                           plt.Line2D([], [], marker="o", color="none",
-                                      markerfacecolor=C_MAX, markersize=4.6,
+                                      markerfacecolor=C_MAX, markersize=5.0,
                                       label="tallest within 60 m")],
                   loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=1, frameon=False,
-                  fontsize=6.5, handlelength=1.0, handletextpad=0.4, labelspacing=0.35)
+                  fontsize=6.5, handlelength=1.0, handletextpad=0.4, labelspacing=0.45)
 
     # (c) 외벽 재질
     left = [0.0] * len(ROWS)
