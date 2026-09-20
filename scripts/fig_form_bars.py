@@ -39,6 +39,14 @@ WCOL = ["#3F5F7F", "#7C9CBF", "#C6D4E2", "#EFEFEF"]
 WNAME = ["alley < 6 m", "street 6–12 m", "street > 12 m", "open, no street"]
 MCOL = {"concrete": "#9AA5AE", "brick": "#B5714F"}
 
+# 근린 건물 높이 분포 — 반경 60 m 안 모든 건물 (scripts/lcz_form_profile.py, 09-20)
+#   (건물 수, 최소, 5%, 중앙, 95%, 최대)
+NEIGH_H = {"부암제1동": (5011, 3.0, 3.9, 6.9, 11.9, 88.4),
+           "보수동":   (5770, 1.5, 3.9, 8.6, 16.3, 50.6),
+           "서제2동":  (13475, 2.7, 3.9, 7.4, 11.9, 54.0),
+           "용호제1동": (4402, 3.3, 3.9, 6.9, 13.7, 67.9),
+           "명장동":   (1810, 3.3, 3.9, 6.9, 18.2, 91.4)}
+
 # scripts/lcz_form_profile.py 출력 (2026-09-20 서버 실행)
 BLD = {"부암제1동": dict(floor=2, hmed=6.9, hmax=49.2, mat={"concrete": 11, "brick": 4},
                       cnp=0, ch=0.0),
@@ -71,7 +79,7 @@ def load_width():
             canyon[k].append(float(wr["width_m"]) * float(wr["hw_ratio"]))
         except (KeyError, ValueError):
             pass
-    cmed = {k: _st.median(v) for k, v in canyon.items()}
+    cmed = {k: (min(v), _st.median(v), max(v), len(v)) for k, v in canyon.items()}
     return out, n, cmed
 
 
@@ -118,31 +126,39 @@ def main():
                   fontsize=6.5, handlelength=1.2, columnspacing=1.0, handletextpad=0.45)
 
     # (b) 건물 높이 — 중앙값 점에서 최댓값까지 선
-    # 실측 지점의 캐년 높이를 **진한 색**으로 앞세우고, 동네 맥락(60 m 중앙값·최고)은
-    # 옅게 둔다. 보행자 옆은 2층인데 같은 반경에 20~65 m 가 서 있다는 대비가 요점.
-    C_SITE, C_MED, C_MAX = "#A33B1F", "#9FB0C2", "#5C738C"
+    # 근린 건물 높이의 **분포**(옅은 막대) 위에 **실측 지점이 실제로 마주한 캐년 높이의
+    # 범위**(진한 막대)를 얹는다. 높이가 3 m~91 m 로 두 자릿수 차이라 가로축은 로그.
+    C_SITE, C_ALL, C_TIP = "#A33B1F", "#D6DEE6", "#5C738C"
     for i, (k, _nm) in enumerate(ROWS):
-        b = BLD[k]
-        # 60 m 중앙값(6.9~8.8 m)은 캐년 높이(5.6~8.4 m)와 1 m 안쪽으로 붙어 점이 겹쳤다.
-        # 구분이 안 되므로 뺀다 — 말하려는 것은 「옆은 2층, 반경 안엔 22~65 m」 둘뿐이다.
-        axs[1].plot([cmed[k], b["hmax"]], [i, i], color="#DCE3EA", lw=3.0,
-                    solid_capstyle="round", zorder=2)
-        axs[1].scatter([b["hmax"]], [i], s=30, color=C_MAX, zorder=3)
-        axs[1].scatter([cmed[k]], [i], s=46, color=C_SITE, edgecolor="white",
-                       linewidth=0.8, zorder=5)
-        axs[1].text(b["hmax"] + 2.0, i, f"{b['hmax']:.0f}", va="center",
-                    fontsize=6.6, color=INK)
-        axs[1].text(cmed[k] - 2.2, i, f"{cmed[k]:.1f}", va="center", ha="right",
-                    fontsize=6.9, color=C_SITE, fontweight="bold")
-    style(axs[1], "(b)  Building height", "at the site → tallest within 60 m (m)", "", 76, False)
-    axs[1].legend(handles=[plt.Line2D([], [], marker="o", color="none",
-                                      markerfacecolor=C_SITE, markeredgecolor="white",
-                                      markersize=6.0, label="canyon at the site"),
-                           plt.Line2D([], [], marker="o", color="none",
-                                      markerfacecolor=C_MAX, markersize=5.0,
-                                      label="tallest within 60 m")],
+        _n, hmin, h05, hmed, h95, hmax = NEIGH_H[k]
+        smin, smed, smax, _sn = cmed[k]
+        axs[1].plot([hmin, hmax], [i, i], color=C_ALL, lw=7.0,
+                    solid_capstyle="butt", zorder=2)
+        axs[1].plot([h05, h95], [i, i], color="#AFBCCA", lw=7.0,
+                    solid_capstyle="butt", zorder=3)
+        axs[1].plot([smin, smax], [i, i], color=C_SITE, lw=3.4,
+                    solid_capstyle="butt", zorder=4)
+        axs[1].scatter([smed], [i], s=30, color="white", edgecolor=C_SITE,
+                       linewidth=1.4, zorder=5)
+        axs[1].text(smax * 1.10, i - 0.30, f"{smin:.1f}–{smax:.0f}", va="center",
+                    fontsize=6.5, color=C_SITE, fontweight="bold")
+        axs[1].text(hmax * 1.06, i + 0.02, f"{hmax:.0f}", va="center",
+                    fontsize=6.3, color=C_TIP)
+    axs[1].set_xscale("log")
+    axs[1].set_xticks([3, 5, 10, 20, 50, 100])
+    axs[1].set_xticklabels(["3", "5", "10", "20", "50", "100"])
+    axs[1].xaxis.set_minor_locator(mpl.ticker.NullLocator())
+    style(axs[1], "(b)  Building height", "all buildings within 60 m vs. the sites (m, log)",
+          "", 160, False)
+    axs[1].set_xlim(2.2, 165)
+    axs[1].legend(handles=[plt.Line2D([], [], color=C_SITE, lw=3.4,
+                                      label="canyon height at the sites"),
+                           plt.Line2D([], [], color="#AFBCCA", lw=6.0,
+                                      label="all buildings, 5–95 %"),
+                           plt.Line2D([], [], color=C_ALL, lw=6.0,
+                                      label="all buildings, full range")],
                   loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=1, frameon=False,
-                  fontsize=6.5, handlelength=1.0, handletextpad=0.4, labelspacing=0.45)
+                  fontsize=6.5, handlelength=1.3, handletextpad=0.5, labelspacing=0.38)
 
     # (c) 외벽 재질
     left = [0.0] * len(ROWS)
