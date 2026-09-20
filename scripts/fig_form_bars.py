@@ -193,12 +193,12 @@ def main():
     v = [tmed[k][0] for k, _nm in ROWS]
     axs[3].barh(y, v, height=0.58, color="#6E8B5E", edgecolor="none")
     for i, (k, _nm) in enumerate(ROWS):
-        b = BLD[k]
-        sat = "no canopy cell" if b["cnp"] == 0 else f"{b['cnp']} cells, {b['ch']:.1f} m"
-        axs[3].text(v[i] + 0.12, i, f"{v[i]:.1f} %   ({sat})", va="center",
-                    fontsize=6.4, color=INK)
+        axs[3].text(v[i] + 0.10, i, f"{v[i]:.1f} %", va="center", fontsize=6.6, color=INK)
+    # 위성 래스터 값(수관 화소 0~5칸)은 캡션으로 옮겼다 — 막대 옆에 두니 글자가 축 밖으로
+    # 나가 가로축이 끊어져 보였다.
     style(axs[3], "(d)  Tree cover", "tree view factor at the site (%, fisheye)",
-          "", 5.2, False)
+          "", 4.6, False)
+    axs[3].set_xticks([0, 1, 2, 3, 4])
 
     for ext in ("pdf", "png"):
         fig.savefig(f"{OUT}/SCS_Fig_form_bars.{ext}", bbox_inches="tight", pad_inches=0.03)
