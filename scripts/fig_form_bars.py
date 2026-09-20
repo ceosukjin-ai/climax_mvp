@@ -71,6 +71,7 @@ def load_width():
     out = {k: [0, 0, 0, 0] for k, _n in ROWS}
     n = {k: 0 for k, _n in ROWS}
     canyon = {k: [] for k, _n in ROWS}
+    tvf = {k: [] for k, _n in ROWS}
     for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig")):
         k = r["권역"]; n[k] += 1
         wr = w.get(r["측정ID"], {})
@@ -79,8 +80,13 @@ def load_width():
             canyon[k].append(float(wr["width_m"]) * float(wr["hw_ratio"]))
         except (KeyError, ValueError):
             pass
+        try:
+            tvf[k].append(float(r["TVF"]))
+        except (KeyError, ValueError):
+            pass
     cmed = {k: (min(v), _st.median(v), max(v), len(v)) for k, v in canyon.items()}
-    return out, n, cmed
+    tmed = {k: (100.0 * _st.median(v), 100.0 * max(v)) for k, v in tvf.items()}
+    return out, n, cmed, tmed
 
 
 def style(ax, title, sub, xlabel, xmax, first):
@@ -103,7 +109,7 @@ def style(ax, title, sub, xlabel, xmax, first):
 
 
 def main():
-    wc, n, cmed = load_width()
+    wc, n, cmed, tmed = load_width()
     y = list(range(len(ROWS)))
     fig, axs = plt.subplots(1, 4, figsize=(190 * MM, 66 * MM))
     fig.subplots_adjust(left=0.115, right=0.995, top=0.775, bottom=0.235, wspace=0.30)
@@ -140,8 +146,9 @@ def main():
                     solid_capstyle="butt", zorder=4)
         axs[1].scatter([smed], [i], s=30, color="white", edgecolor=C_SITE,
                        linewidth=1.4, zorder=5)
-        axs[1].text(smax * 1.10, i - 0.30, f"{smin:.1f}–{smax:.0f}", va="center",
-                    fontsize=6.5, color=C_SITE, fontweight="bold")
+        # 범위 라벨을 막대 위에 두니 첫 행에서 패널 부제와 겹쳤다. 막대 아래로 내린다.
+        axs[1].text(smin * 0.92, i + 0.34, f"{smin:.1f}–{smax:.0f}", va="center",
+                    ha="left", fontsize=6.4, color=C_SITE, fontweight="bold")
         axs[1].text(hmax * 1.06, i + 0.02, f"{hmax:.0f}", va="center",
                     fontsize=6.3, color=C_TIP)
     axs[1].set_xscale("log")
@@ -179,15 +186,19 @@ def main():
                   loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=1, frameon=False,
                   fontsize=6.5, handlelength=1.2, handletextpad=0.45)
 
-    # (d) 수관
-    v = [BLD[k]["cnp"] for k, _nm in ROWS]
+    # (d) 수목 — **어안사진 실측 TVF** 를 막대로 쓴다.
+    #   위성 수관 래스터(canopy_items)는 반경 30 m·수고 3 m 이상만 세므로 가로수 한 그루나
+    #   낮은 수목을 놓친다. 그래서 래스터로는 다섯 중 셋이 0 이지만 사진에는 나무가 찍힌다.
+    #   측정값을 앞세우고 래스터는 괄호로 덧붙인다.
+    v = [tmed[k][0] for k, _nm in ROWS]
     axs[3].barh(y, v, height=0.58, color="#6E8B5E", edgecolor="none")
     for i, (k, _nm) in enumerate(ROWS):
         b = BLD[k]
-        axs[3].text(max(v[i], 0) + 0.25, i,
-                    ("none" if b["cnp"] == 0 else f"{b['cnp']} px · {b['ch']:.1f} m"),
-                    va="center", fontsize=6.6, color=(MUTED if b["cnp"] == 0 else INK))
-    style(axs[3], "(d)  Tree canopy", "canopy cells within 30 m (median)", "", 9.5, False)
+        sat = "no canopy cell" if b["cnp"] == 0 else f"{b['cnp']} cells, {b['ch']:.1f} m"
+        axs[3].text(v[i] + 0.12, i, f"{v[i]:.1f} %   ({sat})", va="center",
+                    fontsize=6.4, color=INK)
+    style(axs[3], "(d)  Tree cover", "tree view factor at the site (%, fisheye)",
+          "", 5.2, False)
 
     for ext in ("pdf", "png"):
         fig.savefig(f"{OUT}/SCS_Fig_form_bars.{ext}", bbox_inches="tight", pad_inches=0.03)
