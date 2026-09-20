@@ -124,9 +124,12 @@ def panel(ax, sites, blds, roads, bbox, title, sub, elev_lim, cmap):
                                         lw=0, zorder=2))
                 break
     for st in sites:
-        ax.scatter(st["lon"], st["lat"], s=34, marker=("o" if st["sun"] else "s"),
+        # 흰 테두리 + 얇은 검정 외곽 — 밝은 건물 위에서도 표식 경계가 살아 있게
+        ax.scatter(st["lon"], st["lat"], s=40, marker=("o" if st["sun"] else "s"),
                    c=[st["elev"]], cmap=cmap, vmin=elev_lim[0], vmax=elev_lim[1],
-                   edgecolor="white", linewidth=0.9, zorder=5)
+                   edgecolor="white", linewidth=1.2, zorder=5)
+        ax.scatter(st["lon"], st["lat"], s=40, marker=("o" if st["sun"] else "s"),
+                   facecolor="none", edgecolor="#333333", linewidth=0.35, zorder=6)
     ax.set_xticks([]); ax.set_yticks([])
     for sp in ax.spines.values():
         sp.set_linewidth(0.6); sp.set_color("#8A8A8A")
@@ -156,7 +159,12 @@ async def main():
     for st, v in zip(sites, ev):
         st["elev"] = v
     elo, ehi = min(ev), max(ev)
-    cmap = plt.get_cmap("plasma")
+    # 지점 색표 — 보라 계열을 쓰지 않는다. YlOrRd 의 옅은 끝(거의 흰색)은 잘라내서
+    # 회색 건물 위에서도 가장 낮은 지점까지 또렷하게 보이게 한다.
+    import numpy as _np
+    from matplotlib.colors import LinearSegmentedColormap
+    _base = plt.get_cmap("YlOrRd")
+    cmap = LinearSegmentedColormap.from_list("elev", _base(_np.linspace(0.22, 0.95, 256)))
 
     fig, axes = plt.subplots(2, 3, figsize=(190 * MM, 138 * MM))
     fig.subplots_adjust(left=0.012, right=0.988, top=0.925, bottom=0.02, wspace=0.07, hspace=0.30)
@@ -187,9 +195,9 @@ async def main():
                        (f"building {lo_:.0f}–{hi:.0f} m" if hi < 1e8 else f"building > {lo_:.0f} m")))
           for lo_, hi, c in H_BINS]
     h1.append(Line2D([], [], color=ROAD_C, lw=1.0, label="street"))
-    h2 = [Line2D([], [], marker="o", color="none", markerfacecolor="#CC4778",
+    h2 = [Line2D([], [], marker="o", color="none", markerfacecolor="#E8703A",
                  markeredgecolor="white", markersize=6.5, label="measurement site — sunlit"),
-          Line2D([], [], marker="s", color="none", markerfacecolor="#CC4778",
+          Line2D([], [], marker="s", color="none", markerfacecolor="#E8703A",
                  markeredgecolor="white", markersize=6.5, label="measurement site — shaded")]
     lg.legend(handles=h1 + h2, loc="upper left", frameon=False, fontsize=7.2,
               handlelength=1.5, borderpad=0.0, labelspacing=0.55,
