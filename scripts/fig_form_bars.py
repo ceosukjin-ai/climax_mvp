@@ -26,12 +26,13 @@ DATA = sys.argv[1] if len(sys.argv) > 1 else "/mnt/user-data/uploads/climax_mvp/
 OUT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/claude-0/fig4"
 INK, MUTED, RULE = "#1A1A1A", "#5E5E5E", "#5A5A5A"
 
-# 그림 4 와 같은 순서(1인가구 비율 내림차순)·같은 라벨
-ROWS = [("서제2동", "Seo 2",      "LCZ 3 Compact low-rise · 7,005/km²"),
-        ("보수동",  "Bosu",       "LCZ 2 Compact mid-rise · 7,893/km²"),
-        ("명장동",  "Myeongjang", "LCZ 5 Open mid-rise · 4,907/km²"),
-        ("부암제1동", "Buam 1",   "LCZ 1 Compact high-rise · 6,809/km²"),
-        ("용호제1동", "Yongho 1", "LCZ 4 Open high-rise · 7,196/km²")]
+# 2026-09-20: LCZ 1~5 순서로. 라벨은 한 줄로 합쳐 둔다 — 이름 아래에 설명을 따로
+# 찍으니 아랫줄 이름과 겹쳤다. 계층 이름(Compact low-rise 등)과 노인밀도는 표 1 에 있다.
+ROWS = [("부암제1동", "LCZ 1 · Buam 1"),
+        ("보수동",   "LCZ 2 · Bosu"),
+        ("서제2동",  "LCZ 3 · Seo 2"),
+        ("용호제1동", "LCZ 4 · Yongho 1"),
+        ("명장동",   "LCZ 5 · Myeongjang")]
 
 WCLS = {"보행골목(<6m)": 0, "혼합골목(6-12m)": 1, "큰길(12m+)": 2, "개방": 3}
 WCOL = ["#3F5F7F", "#7C9CBF", "#C6D4E2", "#EFEFEF"]
@@ -53,8 +54,8 @@ BLD = {"부암제1동": dict(floor=2, hmed=6.9, hmax=49.2, mat={"concrete": 11, 
 
 def load_width():
     w = {r["측정ID"]: r for r in csv.DictReader(open(f"{DATA}/tier3_width_80.csv", encoding="utf-8-sig"))}
-    out = {k: [0, 0, 0, 0] for k, _n, _s in ROWS}
-    n = {k: 0 for k, _n, _s in ROWS}
+    out = {k: [0, 0, 0, 0] for k, _n in ROWS}
+    n = {k: 0 for k, _n in ROWS}
     for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig")):
         k = r["권역"]; n[k] += 1
         out[k][WCLS.get(w.get(r["측정ID"], {}).get("폭등급", ""), 3)] += 1
@@ -64,11 +65,8 @@ def load_width():
 def style(ax, title, sub, xlabel, xmax, first):
     ax.set_yticks(range(len(ROWS)))
     if first:
-        ax.set_yticklabels([f"{nm}" for _k, nm, _s in ROWS], fontsize=7.6,
+        ax.set_yticklabels([nm for _k, nm in ROWS], fontsize=7.6,
                            fontweight="bold", color=INK)
-        for i, (_k, _nm, sb) in enumerate(ROWS):
-            ax.text(-0.035, i + 0.30, sb, transform=ax.get_yaxis_transform(),
-                    ha="right", va="center", fontsize=6.2, color=MUTED)
     else:
         ax.set_yticklabels([""] * len(ROWS))
     ax.invert_yaxis(); ax.set_xlim(0, xmax)
@@ -87,12 +85,12 @@ def main():
     wc, n = load_width()
     y = list(range(len(ROWS)))
     fig, axs = plt.subplots(1, 4, figsize=(190 * MM, 66 * MM))
-    fig.subplots_adjust(left=0.175, right=0.995, top=0.775, bottom=0.235, wspace=0.30)
+    fig.subplots_adjust(left=0.115, right=0.995, top=0.775, bottom=0.235, wspace=0.30)
 
     # (a) 가로폭 구성
     left = [0.0] * len(ROWS)
     for j in range(4):
-        v = [100.0 * wc[k][j] / n[k] for k, _nm, _s in ROWS]
+        v = [100.0 * wc[k][j] / n[k] for k, _nm in ROWS]
         axs[0].barh(y, v, left=left, height=0.58, color=WCOL[j], edgecolor="white", lw=0.5)
         for i, x in enumerate(v):
             if x >= 11:
@@ -107,7 +105,7 @@ def main():
                   fontsize=6.5, handlelength=1.2, columnspacing=1.0, handletextpad=0.45)
 
     # (b) 건물 높이 — 중앙값 점에서 최댓값까지 선
-    for i, (k, _nm, _s) in enumerate(ROWS):
+    for i, (k, _nm) in enumerate(ROWS):
         b = BLD[k]
         axs[1].plot([b["hmed"], b["hmax"]], [i, i], color="#C6D4E2", lw=3.2,
                     solid_capstyle="round", zorder=2)
@@ -131,7 +129,7 @@ def main():
     left = [0.0] * len(ROWS)
     for mat in ("concrete", "brick"):
         v = []
-        for k, _nm, _s in ROWS:
+        for k, _nm in ROWS:
             tot = sum(BLD[k]["mat"].values())
             v.append(100.0 * BLD[k]["mat"].get(mat, 0) / tot)
         axs[2].barh(y, v, left=left, height=0.58, color=MCOL[mat], edgecolor="white", lw=0.5)
@@ -147,9 +145,9 @@ def main():
                   fontsize=6.5, handlelength=1.2, handletextpad=0.45)
 
     # (d) 수관
-    v = [BLD[k]["cnp"] for k, _nm, _s in ROWS]
+    v = [BLD[k]["cnp"] for k, _nm in ROWS]
     axs[3].barh(y, v, height=0.58, color="#6E8B5E", edgecolor="none")
-    for i, (k, _nm, _s) in enumerate(ROWS):
+    for i, (k, _nm) in enumerate(ROWS):
         b = BLD[k]
         axs[3].text(max(v[i], 0) + 0.25, i,
                     ("none" if b["cnp"] == 0 else f"{b['cnp']} px · {b['ch']:.1f} m"),
