@@ -109,17 +109,25 @@ def main():
         ax.axvspan(q1, q3, color=ic, alpha=0.15, zorder=1)
         ax.plot([v[0], v[-1]], [0, 0], color=ic, lw=0.8, alpha=0.6, zorder=2)
         for x, _l, c in xs:
-            ax.scatter([x], [rng.uniform(-0.28, 0.28)], s=9.5, color=c, zorder=3, lw=0)
-        ax.plot([med, med], [-0.42, 0.62], color=INK, lw=1.4, zorder=4)
-        # 그룹 요약 — 점 구름은 그대로 두고 LCZ 별 중앙값만 아래에 삼각형으로 찍는다.
-        # 층지게 나누지 않으므로 분포의 모양이 그대로 남는다.
-        for code, dong, _en, col in LCZ:
+            ax.scatter([x], [rng.uniform(0.06, 0.62)], s=9.5, color=c, zorder=3, lw=0)
+        ax.plot([med, med], [-0.72, 0.68], color=INK, lw=1.4, zorder=4)
+        # 그룹 묶음 — 점은 위쪽에 그대로 흩뿌리고, 아래에 LCZ 별 막대를 깐다.
+        #   굵은 선 = 사분위 범위, 가는 선 = 전 범위, 흰 점 = 중앙값.
+        #   1차원 분포라 y 에 뜻이 없다. 점을 원으로 둘러싸면 아무 의미가 없으므로
+        #   그룹은 아래 막대로 묶는다.
+        for j, (code, _dong, _en, col) in enumerate(LCZ):
             g = sorted(x for x, l, _c in xs if l == code)
             if not g:
                 continue
-            ax.scatter([st.median(g)], [-0.62], s=17, marker="^", color=col,
-                       edgecolor="white", linewidth=0.45, zorder=6, clip_on=False)
-        ax.set_ylim(-0.62, 0.62); ax.set_yticks([])
+            yy = -0.10 - j * 0.155
+            gq1 = g[max(0, int(0.25 * (len(g) - 1)))]
+            gq3 = g[min(len(g) - 1, int(0.75 * (len(g) - 1)))]
+            ax.plot([g[0], g[-1]], [yy, yy], color=col, lw=0.8, alpha=0.55, zorder=5)
+            ax.plot([gq1, gq3], [yy, yy], color=col, lw=3.6, solid_capstyle="round",
+                    zorder=6)
+            ax.scatter([st.median(g)], [yy], s=8, color="white", edgecolor=col,
+                       linewidth=0.9, zorder=7)
+        ax.set_ylim(-0.76, 0.70); ax.set_yticks([])
         ax.spines["left"].set_visible(False)
         ax.set_title(title, loc="left", pad=16, fontweight="bold", color=INK)
         ax.text(0, 1.12, inst, transform=ax.transAxes, color=ic, fontsize=7,
@@ -135,8 +143,9 @@ def main():
                  x=0.04, ha="left", y=0.995, fontsize=10, fontweight="bold", color=INK)
     fig.text(0.04, 0.95,
              "Same site, same minute. Each dot is one site, coloured by local climate zone; "
-             "black line = median of all sites, band = interquartile range, triangles = "
-             "median of each zone. "
+             "black line = median of all sites, band = interquartile range. The bars below "
+             "each cloud group the sites by zone — thick = interquartile range, thin = full "
+             "range, white dot = median. "
              "View factors re-derived on 2026-09-14 (fisheye stitched, tilted cube-map; "
              "79 sites — one pose failure excluded).",
              fontsize=6.8, color=MUTED)
