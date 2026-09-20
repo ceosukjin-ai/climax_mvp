@@ -39,10 +39,15 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, FancyArrow
 
 mpl.rcParams.update({
-    "font.family": "Liberation Sans",
+    # 2026-09-20: 논문 안에서 그림 폰트를 하나로 — 4패널 형태지표 그림과 같은 Times.
+    # Elsevier 허용: Arial/Helvetica, Courier, Symbol, Times/Times New Roman.
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Liberation Serif", "Nimbus Roman", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
     "pdf.fonttype": 42, "ps.fonttype": 42,
     "figure.dpi": 200, "savefig.dpi": 600,
 })
+MIN_PT = 7.0        # Elsevier 최소 글자 크기 — 이 아래로는 줄이지 않는다
 INK, MUTED, RULE = "#1A1A1A", "#5E5E5E", "#5A5A5A"
 BLUE = ("#E9F0F8", "#9DB8D4")
 GREEN = ("#E9F1E7", "#A9C3A2")
@@ -56,7 +61,7 @@ MM = 1 / 25.4
 PAD_T, PAD_B, LEAD = 3.5, 2.7, 2.15      # 상자 안쪽 위/아래 여백, 줄 간격
 GAP = 4.6                                 # 상자 사이 화살표 길이
 
-fig, ax = plt.subplots(figsize=(190 * MM, 241 * MM))
+fig, ax = plt.subplots(figsize=(190 * MM, 234 * MM))
 ax.set_xlim(0, 100); ax.set_ylim(0, 128)
 ax.axis("off")
 fig.subplots_adjust(left=0.004, right=0.996, bottom=0.004, top=0.996)
@@ -64,7 +69,7 @@ fig.subplots_adjust(left=0.004, right=0.996, bottom=0.004, top=0.996)
 _T = []
 
 
-def block(x0, x1, ytop, title, body, palette, fs=6.1, nmin=0):
+def block(x0, x1, ytop, title, body, palette, fs=7.0, nmin=0):
     """nmin 을 주면 그 줄 수만큼의 높이로 맞춘다 — 한 행의 상자를 같은 크기로."""
     fc, ec = palette
     h = PAD_T + PAD_B + (max(len(body), nmin) - 1) * LEAD
@@ -72,7 +77,7 @@ def block(x0, x1, ytop, title, body, palette, fs=6.1, nmin=0):
     ax.add_patch(Rectangle((x0, y0), x1 - x0, h, facecolor=fc, edgecolor=ec,
                            lw=LW, zorder=4))
     maxw = x1 - x0 - 3.8
-    t = ax.text(x0 + 2.1, ytop - PAD_T + 0.6, title, fontsize=7.2,
+    t = ax.text(x0 + 2.1, ytop - PAD_T + 0.6, title, fontsize=8.0,
                 fontweight="bold", va="center", ha="left", color=INK, zorder=6)
     _T.append((t, maxw))
     yy = ytop - PAD_T - 1.9
@@ -94,6 +99,8 @@ def fit():
             (a, _u), (c, _v) = inv.transform([[bb.x0, bb.y0], [bb.x1, bb.y1]])
             if (c - a) <= maxw:
                 ok = True
+                break
+            if t.get_fontsize() - 0.12 < MIN_PT:
                 break
             t.set_fontsize(t.get_fontsize() - 0.12)
             fig.canvas.draw()
@@ -168,7 +175,7 @@ m2 = block(LX0, LX1, m1["bot"] - GAP, "Physical consistency check",
             "the same 80 sites and minutes as the tier estimates"], GREY)
 m3 = block(LX0, LX1, m2["bot"] - GAP, "Measured outcome (reference)",
            ["PET 35.9–53.8 °C · 63 of 80 extreme (≥ 41 °C)",
-            "sun 59, shade 21 · surface 35.3–66.4 °C"], GREEN)
+            "sunlit 61, shaded 19 · surface 35.3–66.4 °C"], GREEN)
 
 t1 = block(RX0, RX1, TOP2, "Tier 1    official heat-warning inputs",
            ["official gridded air temperature, humidity, wind",
@@ -180,15 +187,15 @@ t2 = block(RX0, RX1, t1["bot"] - GAP, "Tier 2    deployed service",
             "MAE 7.2 °C · 25 of 63 detected"], BLUE)
 t3 = block(RX0, RX1, t2["bot"] - GAP, "Tier 3    street-view-free pathway",
            ["gridded weather + ray casting on open building polygons",
-            "(SVF, BVI) + satellite NDVI for trees",
+            "(SVF, BVF) + satellite canopy height for trees",
             "no learning step · all 80 sites · MAE 6.6 °C"], BLUE)
 t4 = block(RX0, RX1, t3["bot"] - GAP,
            "Diagnostic runs (same engine, inputs swapped)",
            ["+ measured weather · + observed sun / shade",
-            "isolates what each input is worth (6.4, 5.4 °C)"], ORANGE)
+            "isolates what each input is worth (6.4, 5.1 °C)"], ORANGE)
 t5 = block(RX0, RX1, t4["bot"] - GAP, "Residual correction layer (deployed)",
            ["ridge, α = 20 · five standardised predictors · no coordinates",
-            "leave-one-neighbourhood-out MAE 2.7 °C",
+            "leave-one-neighbourhood-out MAE 1.9 °C",
             "all 63 extreme cases detected"], DEEP)
 
 # ---- AI 학습이 일어나는 곳 표시 (파이프라인에서 학습 단계는 여기 하나뿐이다)
@@ -236,9 +243,9 @@ BODY = [
      ["MAE, bias, r and extreme detection",
       "counterfactual input swaps attribute error to",
       "gridded weather, view factors, sun–shade",
-      "geometric shade vs. observed: κ = 0.06",
-      "(19 of 21 shaded sites called sunlit)",
-      "transfer to unseen neighbourhoods: MAE 2.7 °C"]),
+      "geometric shade vs. observed: κ = −0.02",
+      "(18 of 19 shaded sites called sunlit)",
+      "transfer to unseen neighbourhoods: MAE 1.9 °C"]),
     ("Equity",
      ["exposure versus social vulnerability",
       "extreme detection rate by neighbourhood",
