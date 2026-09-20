@@ -33,14 +33,14 @@ MM = 1 / 25.4
 DATA = sys.argv[1] if len(sys.argv) > 1 else "/mnt/user-data/uploads/climax_mvp/data"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/claude-0/fig5"
 
-# LCZ 는 **모양**으로 가른다. 색은 원본처럼 기기(계측기)를 뜻한다 —
-# 색까지 LCZ 로 쓰면 기기 구분이 사라진다.
-LCZ = [("LCZ 1", "부암제1동", "Buam 1",     "o", 10.0),
-       ("LCZ 2", "보수동",   "Bosu",       "s",  8.5),
-       ("LCZ 3", "서제2동",  "Seo 2",      "^", 11.0),
-       ("LCZ 4", "용호제1동", "Yongho 1",   "D",  7.0),
-       ("LCZ 5", "명장동",   "Myeongjang", "v", 11.0)]
-CODE = {d: (c, mk, sz) for c, d, _en, mk, sz in LCZ}
+# LCZ 는 **색과 모양을 함께** 쓴다 — 색만 쓰면 흑백 인쇄에서 사라지고, 모양만 쓰면
+# 작은 표식이라 구분이 더디다. 기기(계측기)는 띠·기준선·기기 이름 색으로 남는다.
+LCZ = [("LCZ 1", "부암제1동", "Buam 1",     "o", 11.0, "#1F6FB2"),
+       ("LCZ 2", "보수동",   "Bosu",       "s",  9.0, "#0B9A9C"),
+       ("LCZ 3", "서제2동",  "Seo 2",      "^", 12.0, "#6E9A3A"),
+       ("LCZ 4", "용호제1동", "Yongho 1",   "D",  7.5, "#D94801"),
+       ("LCZ 5", "명장동",   "Myeongjang", "v", 12.0, "#7A5AA8")]
+CODE = {d: (c, mk, sz, col) for c, d, _en, mk, sz, col in LCZ}
 
 
 def tg_from(tmrt, ta, v):
@@ -71,7 +71,7 @@ def load():
         a = idx.get(r["측정ID"], {})
         ta, tmrt, v = float(r["Ta"]), float(r["Tmrt"]), float(r["v"])
         rows.append(dict(lcz=CODE[r["권역"]][0], mk=CODE[r["권역"]][1],
-                         sz=CODE[r["권역"]][2],
+                         sz=CODE[r["권역"]][2], col=CODE[r["권역"]][3],
                          Ta=ta, RH=float(r["RH"]), v=v,
                          Tg=tg_from(tmrt, ta, v), Tmrt=tmrt, PET=float(r["PET"]),
                          SVF=a.get("svf"), GVI=a.get("gvi"), Ts=float(r["Ts"])))
@@ -103,15 +103,16 @@ def main():
     rng = random.Random(1)
 
     for ax, (title, inst, ic, key, unit, dec) in zip(axes.flat, PANELS):
-        xs = [(r[key], r["lcz"], r["mk"], r["sz"]) for r in rows if r[key] is not None]
-        v = sorted(x for x, _l, _m, _s in xs)
+        xs = [(r[key], r["lcz"], r["mk"], r["sz"], r["col"])
+              for r in rows if r[key] is not None]
+        v = sorted(x for x, _l, _m, _s, _c in xs)
         med = st.median(v)
         q1 = v[max(0, int(0.25 * (len(v) - 1)))]
         q3 = v[min(len(v) - 1, int(0.75 * (len(v) - 1)))]
         ax.axvspan(q1, q3, color=ic, alpha=0.15, zorder=1)
         ax.plot([v[0], v[-1]], [0, 0], color=ic, lw=0.8, alpha=0.6, zorder=2)
-        for x, _l, mk, sz in xs:
-            ax.scatter([x], [rng.uniform(-0.28, 0.28)], s=sz, marker=mk, color=ic,
+        for x, _l, mk, sz, col in xs:
+            ax.scatter([x], [rng.uniform(-0.28, 0.28)], s=sz, marker=mk, color=col,
                        zorder=3, lw=0)
         ax.plot([med, med], [-0.55, 0.55], color=INK, lw=1.4, zorder=4)
         ax.set_ylim(-0.7, 0.7); ax.set_yticks([])
@@ -129,15 +130,15 @@ def main():
     fig.suptitle("Distribution of the field measurements, by instrument and local climate zone (80 sites)",
                  x=0.04, ha="left", y=0.995, fontsize=10, fontweight="bold", color=INK)
     fig.text(0.04, 0.95,
-             "Same site, same minute. Each marker is one site; marker shape gives the local "
-             "climate zone and colour gives the instrument. Black line = median, band = "
-             "interquartile range. "
+             "Same site, same minute. Each marker is one site; shape and colour both give the "
+             "local climate zone, while the band, baseline and instrument label carry the "
+             "instrument. Black line = median, band = interquartile range. "
              "View factors re-derived on 2026-09-14 (fisheye stitched, tilted cube-map; "
              "79 sites — one pose failure excluded).",
              fontsize=6.8, color=MUTED)
-    fig.legend(handles=[Line2D([], [], marker=mk, color="none", markerfacecolor="#4A4A4A",
-                               markersize=4.6, label=f"{code} · {en}")
-                        for code, _d, en, mk, _sz in LCZ],
+    fig.legend(handles=[Line2D([], [], marker=mk, color="none", markerfacecolor=col,
+                               markersize=4.8, label=f"{code} · {en}")
+                        for code, _d, en, mk, _sz, col in LCZ],
                loc="lower center", bbox_to_anchor=(0.5, 0.055), ncol=5, frameon=False,
                fontsize=7.0, handlelength=1.0, handletextpad=0.45, columnspacing=1.8)
     fig.text(0.04, 0.012,
