@@ -133,12 +133,18 @@ def box(cx, cy, w, h, rows, fc="white", fs=7.0, ec=RULE):
     return dict(cx=cx, cy=cy, w=w, h=h)
 
 
+CHECK_EC = "#C08A4A"
+
+
 def check(cx, cy, w, h, rows, fs=7.0):
-    """검증 띠 — 왼쪽에 굵은 세로선을 둬서 처리 단계와 구분한다."""
+    """검증 띠 — 바탕색과 주황 테두리로 처리 단계와 구분한다.
+
+    2026-09-20: 왼쪽 한 변에만 굵은 막대를 두던 방식(인용문 관용)을 버렸다.
+    확대하면 선이 잘린 인쇄 사고처럼 보인다는 지적. 네 변을 같은 색으로 두르면
+    구분은 그대로 남고 비대칭이 사라진다.
+    """
     ax.add_patch(Rectangle((cx - w/2, cy - h/2), w, h, facecolor=CHECK,
-                           edgecolor="none", zorder=3))
-    ax.plot([cx - w/2, cx - w/2], [cy - h/2, cy + h/2], color="#C08A4A",
-            lw=1.6, zorder=5, solid_capstyle="butt")
+                           edgecolor=CHECK_EC, lw=LW, zorder=3))
     lines(cx, cy, rows, fs, w=w, h=h)
     return dict(cx=cx, cy=cy, w=w, h=h)
 
@@ -249,9 +255,7 @@ ax.add_patch(Rectangle((40.0, LY - 1.5), 9.2, 3.0, facecolor="white",
                        edgecolor=RULE, lw=LW))
 ax.text(51.0, LY, "processing step", fontsize=6.6, va="center", color=INK)
 ax.add_patch(Rectangle((68.0, LY - 1.5), 9.2, 3.0, facecolor=CHECK,
-                       edgecolor="none"))
-ax.plot([68.0, 68.0], [LY - 1.5, LY + 1.5], color="#C08A4A", lw=1.6,
-        solid_capstyle="butt")
+                       edgecolor=CHECK_EC, lw=LW))
 ax.text(79.0, LY, "verification", fontsize=6.6, va="center", color=INK)
 
 ax.text(50.0, 2.6,
