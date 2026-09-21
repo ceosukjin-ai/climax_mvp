@@ -7,20 +7,20 @@
   (b) **같은 태양·같은 기상에 올려놓은 뒤** 근린별 볕/그늘.
       근린마다 다른 날·다른 시각에 쟀으므로 실측 PET 를 그대로 나란히 두면
       「언제 쟀는가」가 「어떻게 생겼는가」와 섞인다. 그래서 지점의 형태
-      (9/14 재산출 어안 SVF·GVI·BVI)와 볕/그늘 라벨만 남기고 태양 위치·기상을
+      (일관 정의 뷰팩터 SVF·TVF·BVF — aug80_viewfactors.csv)와 볕/그늘 라벨만 남기고 태양 위치·기상을
       하나로 고정해 배포 엔진으로 PET 를 다시 계산했다
       (scripts/ref_condition_80.py → data/ref_condition_80.csv).
-      기준조건: 2026-08-23 12:30 KST(부산 태양고도 ≈ 65°), Ta 35.0 °C, RH 45 %,
-      바람 1.0 m/s, 운량 0.
+      기준조건 = 80지점 실측 중앙값: 2026-08-23 12:30 KST(태양고도 ≈ 65°), Ta 35.0 °C,
+      RH 47.6 %, 보행풍속 0.5 m/s, 운량 0.
 
-  결과: 같은 조건에서 **볕 61곳 전부가 PET 41 °C 를 넘고 그늘 19곳 전부가 밑**이다.
-  그늘의 이득은 LCZ 1~5 에서 3.3~3.6 K 로 거의 같다 — 도시형태와 무관하게
+  결과: 같은 조건에서 볕(44.4~46.9 °C)과 그늘(40.5~41.9 °C)이 **한 곳도 겹치지 않는다**(빈틈 2.4 K).
+  그늘의 이득은 LCZ 1~5 에서 4.5~5.1 K 로 거의 같다 — 도시형태와 무관하게
   볕/그늘 구분이 열부하를 가른다.
 
-  주의: (a) 는 실측, (b) 는 같은 조건에서의 엔진 산출. 엔진의 Δ(중앙 3.5 K)는
+  주의: (a) 는 실측, (b) 는 같은 조건에서의 엔진 산출. 엔진의 Δ(중앙 4.6 K)는
   실측 Δ(중앙 5.4 K)보다 작으므로 (b) 는 **근린 간 비교**용이다.
 
-자료: tier3_engine_output_80_v7_photo.csv, aug80_indices.csv, ref_condition_80.csv
+자료: tier3_engine_output_80_v7_photo.csv, aug80_viewfactors.csv, ref_condition_80.csv
 """
 from __future__ import annotations
 import csv, random, statistics as st, sys
@@ -151,12 +151,16 @@ def main():
         bx.text(LCOL, i + 0.21, f"{len(s)} sunlit / {len(h)} shaded", fontsize=6.5,
                 transform=tr, va="center", color=MUTED, clip_on=False)
     bx.axvline(THRESHOLD, color=THR, lw=0.9, ls=(0, (5, 3)), zorder=1)
-    bx.text(THRESHOLD - 0.10, -0.62, "all 19 shaded sites below 41 °C", fontsize=6.5,
-            color=SHADE, ha="right", va="bottom")
-    bx.text(THRESHOLD + 0.10, -0.62, "all 61 sunlit sites above", fontsize=6.5,
-            color=SUN, ha="left", va="bottom")
-    bx.set_xlim(37.9, 44.3); bx.set_ylim(len(ROWS) - 0.30, -0.78)
-    bx.set_yticks([]); bx.set_xticks([38, 39, 40, 41, 42, 43, 44])
+    # 두 무리 사이 빈틈 — 겹치는 지점이 하나도 없다
+    allS = [x for k in ref.values() for x in k["s"]]
+    allH = [x for k in ref.values() for x in k["h"]]
+    hmax, smin = max(allH), min(allS)
+    bx.axvspan(hmax, smin, color=INK, alpha=0.06, zorder=0)
+    bx.text((hmax + smin) / 2, -0.62,
+            f"no overlap — gap {smin - hmax:.1f} K", fontsize=6.6, color=INK,
+            ha="center", va="bottom")
+    bx.set_xlim(39.8, 47.6); bx.set_ylim(len(ROWS) - 0.30, -0.78)
+    bx.set_yticks([]); bx.set_xticks([40, 41, 42, 43, 44, 45, 46, 47])
     bx.set_xlabel("PET at the common reference condition (°C)")
     bx.spines["left"].set_visible(False)
     bx.set_title("(b)  Same sun, same weather — only the form differs",
@@ -176,12 +180,12 @@ def main():
         fontsize=6.7, handlelength=1.4, handletextpad=0.5, columnspacing=1.6)
 
     fig.text(0.058, 0.068,
-             "(b) puts every site at one reference condition — 23 Aug 12:30, solar elevation "
-             "65°, $T_a$ 35 °C, RH 45 %, wind 1.0 m s$^{-1}$, clear sky — keeping only its "
-             "measured form (sky, tree and building view) and its sun-or-shade reading, and recomputes "
+             "(b) puts every site at one reference condition — the campaign medians: 23 Aug 12:30, "
+             "solar elevation 65°, $T_a$ 35.0 °C, RH 47.6 %, pedestrian wind 0.5 m s$^{-1}$, clear sky — "
+             "keeping only its measured sky, tree and building view factors and its sun-or-shade reading, and recomputes "
              "PET with the same engine, so that neighbourhoods surveyed on different days and "
              "at different hours can be read side by side. The engine gives a smaller sun–shade "
-             "difference than the field data (median 3.5 against 5.4 K); (b) is therefore read "
+             "difference than the field data (median 4.6 against 5.4 K); (b) is therefore read "
              "for the comparison between neighbourhoods, not for the absolute level.",
              fontsize=6.0, color=MUTED, va="top", ha="left", wrap=True)
 

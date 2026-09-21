@@ -14,8 +14,10 @@
   「언제 쟀는가」가 아니라 **「어떻게 생겼는가」**에서만 온다.
 
 기준 조건
-  2026-08-23 12:30 KST (부산 태양고도 ≈ 65°), Ta 35.0 °C, RH 45 %, 바람 1.0 m/s, 운량 0.
-  형태 입력은 9/14 재산출 어안 지표(aug80_indices.csv 의 SVF·GVI·BVI) — 정본.
+  2026-08-23 12:30 KST (부산 태양고도 ≈ 65°), Ta 35.0 °C, RH 47.6 %, 보행풍속 0.5 m/s, 운량 0.
+  태양고도·기온·습도·바람·운량 모두 80지점 실측 중앙값(64.9°, 35.0, 47.6, 0.5, 0).
+  형태 입력은 일관 정의 뷰팩터(aug80_viewfactors.csv 의 SVF·TVF·BVF, 위쪽 반구 Steyn 가중,
+  보정계수 없음 — scripts/run_viewfactors.py).
 
 출력: data/ref_condition_80.csv (측정ID, 권역, 볕, SVF, GVI, ref_Tmrt, ref_PET)
 """
@@ -31,7 +33,9 @@ from vpti_core.vpti import WeatherContext, compute_vpti_thermal
 from vpti_core.comfort import compute_pet
 
 REF_WHEN = datetime(2026, 8, 23, 12, 30, 0)
-REF_TA, REF_RH, REF_V, REF_CLOUD = 35.0, 45.0, 1.0, 0.0
+# 2026-09-21: 기상은 전부 80지점 실측 중앙값. 바람은 1.5 m 실측값이므로 보행풍속으로 그대로 넣는다.
+REF_TA, REF_RH, REF_V, REF_CLOUD = 35.0, 47.6, 0.5, 0.0
+REF_WIND_IS_PEDESTRIAN = True
 
 MATS = [MaterialFraction(material="asphalt", fraction=0.7),
         MaterialFraction(material="concrete", fraction=0.3)]
@@ -54,7 +58,7 @@ def views(svf, gvi, bvi):
 def main():
     meas = {r["측정ID"]: r for r in csv.DictReader(
         open("data/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig"))}
-    idx = list(csv.DictReader(open("data/aug80_indices.csv", encoding="utf-8-sig")))
+    idx = list(csv.DictReader(open("data/aug80_viewfactors.csv", encoding="utf-8-sig")))
 
     out = []
     for r in idx:
@@ -63,19 +67,19 @@ def main():
         if not m:
             continue
         lat, lon = float(m["위도"]), float(m["경도"])
-        svf, gvi, bvi = float(r["SVF"]), float(r["GVI"]), float(r["BVI"])
+        svf, gvi, bvi = float(r["SVF"]), float(r["TVF"]), float(r["BVF"])   # 일관 뷰팩터
         shade = 1.0 if str(m["볕"]).strip() == "1" else 0.0
         wc = WeatherContext(temperature_c=REF_TA, humidity_pct=REF_RH,
                             wind_speed_ms=REF_V, wind_direction_deg=0.0)
         res = compute_vpti_thermal(views_5=views(svf, gvi, bvi), materials=MATS, weather=wc,
                                    road_axis_deg=0.0, lat=lat, lon=lon, when=REF_WHEN,
-                                   direct_shade=shade, wind_is_pedestrian=False,
+                                   direct_shade=shade, wind_is_pedestrian=REF_WIND_IS_PEDESTRIAN,
                                    cloud_fraction=REF_CLOUD)
         tmrt = float(res.mrt.tmrt)
         pet = compute_pet(tdb=REF_TA, tr=tmrt, v=res.pedestrian_wind_ms, rh=REF_RH,
                           season=res.season, config=DEFAULT_CONFIG.comfort)
         out.append(dict(측정ID=mid, 권역=m["권역"], 볕=m["볕"], SVF=f"{svf:.4f}",
-                        GVI=f"{gvi:.4f}", BVI=f"{bvi:.4f}", ref_Tmrt=f"{tmrt:.2f}",
+                        TVF=f"{gvi:.4f}", BVF=f"{bvi:.4f}", ref_Tmrt=f"{tmrt:.2f}",
                         ref_PET=f"{float(pet.value):.2f}"))
 
     with open("data/ref_condition_80.csv", "w", newline="", encoding="utf-8-sig") as f:
