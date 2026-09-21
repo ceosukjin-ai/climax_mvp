@@ -7,17 +7,17 @@
   (b) **같은 태양·같은 기상에 올려놓은 뒤** 근린별 볕/그늘.
       근린마다 다른 날·다른 시각에 쟀으므로 실측 PET 를 그대로 나란히 두면
       「언제 쟀는가」가 「어떻게 생겼는가」와 섞인다. 그래서 지점의 형태
-      (9/14 재산출 어안 SVF·GVI)와 볕/그늘 라벨만 남기고 태양 위치·기상을
+      (9/14 재산출 어안 SVF·GVI·BVI)와 볕/그늘 라벨만 남기고 태양 위치·기상을
       하나로 고정해 배포 엔진으로 PET 를 다시 계산했다
       (scripts/ref_condition_80.py → data/ref_condition_80.csv).
       기준조건: 2026-08-23 12:30 KST(부산 태양고도 ≈ 65°), Ta 35.0 °C, RH 45 %,
       바람 1.0 m/s, 운량 0.
 
   결과: 같은 조건에서 **볕 61곳 전부가 PET 41 °C 를 넘고 그늘 19곳 전부가 밑**이다.
-  그늘의 이득은 LCZ 1~5 에서 3.2~3.6 K 로 거의 같다 — 도시형태와 무관하게
+  그늘의 이득은 LCZ 1~5 에서 3.3~3.6 K 로 거의 같다 — 도시형태와 무관하게
   볕/그늘 구분이 열부하를 가른다.
 
-  주의: (a) 는 실측, (b) 는 같은 조건에서의 엔진 산출. 엔진의 Δ(중앙 3.4 K)는
+  주의: (a) 는 실측, (b) 는 같은 조건에서의 엔진 산출. 엔진의 Δ(중앙 3.5 K)는
   실측 Δ(중앙 5.4 K)보다 작으므로 (b) 는 **근린 간 비교**용이다.
 
 자료: tier3_engine_output_80_v7_photo.csv, aug80_indices.csv, ref_condition_80.csv
@@ -178,10 +178,10 @@ def main():
     fig.text(0.058, 0.068,
              "(b) puts every site at one reference condition — 23 Aug 12:30, solar elevation "
              "65°, $T_a$ 35 °C, RH 45 %, wind 1.0 m s$^{-1}$, clear sky — keeping only its "
-             "measured form (sky view, tree view) and its sun-or-shade reading, and recomputes "
+             "measured form (sky, tree and building view) and its sun-or-shade reading, and recomputes "
              "PET with the same engine, so that neighbourhoods surveyed on different days and "
              "at different hours can be read side by side. The engine gives a smaller sun–shade "
-             "difference than the field data (median 3.4 against 5.4 K); (b) is therefore read "
+             "difference than the field data (median 3.5 against 5.4 K); (b) is therefore read "
              "for the comparison between neighbourhoods, not for the absolute level.",
              fontsize=6.0, color=MUTED, va="top", ha="left", wrap=True)
 

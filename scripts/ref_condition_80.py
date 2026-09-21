@@ -15,7 +15,7 @@
 
 기준 조건
   2026-08-23 12:30 KST (부산 태양고도 ≈ 65°), Ta 35.0 °C, RH 45 %, 바람 1.0 m/s, 운량 0.
-  형태 입력은 9/14 재산출 어안 지표(aug80_indices.csv 의 SVF·GVI) — 정본.
+  형태 입력은 9/14 재산출 어안 지표(aug80_indices.csv 의 SVF·GVI·BVI) — 정본.
 
 출력: data/ref_condition_80.csv (측정ID, 권역, 볕, SVF, GVI, ref_Tmrt, ref_PET)
 """
@@ -37,10 +37,13 @@ MATS = [MaterialFraction(material="asphalt", fraction=0.7),
         MaterialFraction(material="concrete", fraction=0.3)]
 
 
-def views(svf, gvi):
+def views(svf, gvi, bvi):
+    """실측 세 지표를 모두 넣는다. (2026-09-21 수정: 예전엔 건물 비율을 1−SVF 로
+    추정해 넣었다 — 배포 엔진 스칼라 입력의 관행. 실측 BVI 가 있으므로 그걸 쓴다.)
+    엔진에서 BVI 는 복사(MRT)에는 안 들어가고 보행 풍속(PWI) 감쇠에만 쓰인다."""
     g = max(0.0, min(1.0, gvi))
-    b = max(0.0, min(1.0 - g, 1.0 - svf))
     sky_h = max(0.0, min(0.5, svf / 2.0))
+    b = max(0.0, min(bvi, 1.0 - sky_h - g))
     vs = [ViewSegmentation(direction="up", sky_ratio=max(0.0, min(1.0, svf)),
                            vegetation_ratio=0.0, building_ratio=0.0)]
     vs += [ViewSegmentation(direction=d, sky_ratio=sky_h, vegetation_ratio=g,
@@ -60,11 +63,11 @@ def main():
         if not m:
             continue
         lat, lon = float(m["위도"]), float(m["경도"])
-        svf, gvi = float(r["SVF"]), float(r["GVI"])
+        svf, gvi, bvi = float(r["SVF"]), float(r["GVI"]), float(r["BVI"])
         shade = 1.0 if str(m["볕"]).strip() == "1" else 0.0
         wc = WeatherContext(temperature_c=REF_TA, humidity_pct=REF_RH,
                             wind_speed_ms=REF_V, wind_direction_deg=0.0)
-        res = compute_vpti_thermal(views_5=views(svf, gvi), materials=MATS, weather=wc,
+        res = compute_vpti_thermal(views_5=views(svf, gvi, bvi), materials=MATS, weather=wc,
                                    road_axis_deg=0.0, lat=lat, lon=lon, when=REF_WHEN,
                                    direct_shade=shade, wind_is_pedestrian=False,
                                    cloud_fraction=REF_CLOUD)
@@ -72,7 +75,7 @@ def main():
         pet = compute_pet(tdb=REF_TA, tr=tmrt, v=res.pedestrian_wind_ms, rh=REF_RH,
                           season=res.season, config=DEFAULT_CONFIG.comfort)
         out.append(dict(측정ID=mid, 권역=m["권역"], 볕=m["볕"], SVF=f"{svf:.4f}",
-                        GVI=f"{gvi:.4f}", ref_Tmrt=f"{tmrt:.2f}",
+                        GVI=f"{gvi:.4f}", BVI=f"{bvi:.4f}", ref_Tmrt=f"{tmrt:.2f}",
                         ref_PET=f"{float(pet.value):.2f}"))
 
     with open("data/ref_condition_80.csv", "w", newline="", encoding="utf-8-sig") as f:
