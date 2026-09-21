@@ -19,7 +19,9 @@ ENVF=infra/ncp/.env.prod
 val() { grep -m1 "^$1=" "$ENVF" | cut -d= -f2-; }
 PSQL="docker exec -i -e PGPASSWORD=$(val DB_PASSWORD) climax-postgres psql -h $(val DB_HOST) -U climax -d climax -At"
 cmd=$1; name=$2; shift 2
-where() { echo "lat BETWEEN $1 AND $2 AND lon BETWEEN $3 AND $4 AND src IS DISTINCT FROM '$NEW'"; }
+# 국내 출처만 (2026-09-21): 전국 범위로 뽑으면 대마도 등 일본 칸(plateau/osm)이 섞인다.
+KR_SRC=${KR_SRC:-'^(vwtile|vworld|V-World)'}
+where() { echo "lat BETWEEN $1 AND $2 AND lon BETWEEN $3 AND $4 AND src IS DISTINCT FROM '$NEW' AND src ~ '$KR_SRC'"; }
 
 case "$cmd" in
   count)
