@@ -7,10 +7,10 @@
 
 자료(전부 로컬):
   tier3_engine_output_80_v7_photo.csv  Ta RH v Tmrt PET Ts 권역
-  aug80_indices.csv                    SVF GVI (2026-09-14 재산출, 158번 자세복원 실패 제외)
+  aug80_viewfactors.csv                SVF TVF (2026-09-21 일관 정의: 위쪽 반구·Steyn·보정 없음, 158번 제외)
 
 각주 정정: 원본의 「46 of 79 sites at 0」은 어느 기준으로도 나오지 않는다.
-  정확히 0 = 20지점, 소수 둘째 자리로 0.00 이 되는 것(< 0.005) = 37지점.
+  (9/14 판) 정확히 0 = 20, < 0.005 = 37  →  (9/21 일관 정의) 0 = 19, < 0.005 = 38.
 """
 from __future__ import annotations
 import csv, math, sys
@@ -62,11 +62,11 @@ def tg_from(tmrt, ta, v):
 
 def load():
     idx = {}
-    for r in csv.DictReader(open(f"{DATA}/aug80_indices.csv", encoding="utf-8-sig")):
+    for r in csv.DictReader(open(f"{DATA}/aug80_viewfactors.csv", encoding="utf-8-sig")):
         bad = (r.get("비고") or "").strip()          # 158번 자세복원 실패
         idx[r["측정ID"]] = dict(
             svf=None if bad else float(r["SVF"]),
-            gvi=None if bad else float(r["GVI"]))
+            gvi=None if bad else float(r["TVF"]))   # 일관 정의 뷰팩터 (9/21)
     rows = []
     for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv",
                                  encoding="utf-8-sig")):
@@ -145,8 +145,8 @@ def main():
                fontsize=7.0, handlelength=1.0, handletextpad=0.45, columnspacing=1.8)
     fig.text(0.04, 0.012,
              "Globe temperature is back-calculated from the globe-derived T$_{mrt}$ "
-             "(ISO 7726, Ø0.05 m, ε 0.95). Tree view factor: median 0.01; 20 of the 79 sites "
-             "are exactly 0 and 37 round to 0.00 — the sites were chosen without street trees. "
+             "(ISO 7726, Ø0.05 m, ε 0.95). Tree view factor: median 0.01; 19 of the 79 sites "
+             "are exactly 0 and 38 round to 0.00 — the sites were chosen without street trees. "
              "Pavement temperature: 90th percentile of sunlit pavement; thermal-camera clock "
              "offset (+35 min) verified, pairing unchanged.",
              fontsize=6.4, color=MUTED, wrap=True)

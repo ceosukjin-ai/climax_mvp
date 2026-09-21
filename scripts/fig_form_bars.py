@@ -82,16 +82,16 @@ def load_width():
             pass
         # ⚠️ tier3_engine_output_*.csv 의 SVF/TVF/BVF 열은 **옛 파노라마 값**이다
         #    (2026-09-15 에 무효 판정). 정본은 aug80_indices.csv 의 9/14 재산출본.
-    # 수목 시계는 9/14 재산출본(aug80_indices.csv 의 GVI)에서 읽는다
+    # 수목 시계는 9/21 일관 정의 뷰팩터(aug80_viewfactors.csv 의 TVF)에서 읽는다
     dong = {r["측정ID"]: r["권역"]
             for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv",
                                          encoding="utf-8-sig"))}
-    for r in csv.DictReader(open(f"{DATA}/aug80_indices.csv", encoding="utf-8-sig")):
+    for r in csv.DictReader(open(f"{DATA}/aug80_viewfactors.csv", encoding="utf-8-sig")):
         k = dong.get(r["측정ID"])
         if k is None:
             continue
         try:
-            tvf[k].append(float(r["GVI"]))
+            tvf[k].append(float(r["TVF"]))
         except (KeyError, ValueError):
             pass
     cmed = {k: (min(v), _st.median(v), max(v), len(v)) for k, v in canyon.items()}

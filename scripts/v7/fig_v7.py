@@ -22,9 +22,9 @@ OUT = "/tmp/claude-0/-home-claude/b4e7b56e-8778-54d4-89ee-5b1ce772403b/scratchpa
 import os; os.makedirs(OUT, exist_ok=True)
 
 D = pd.read_csv("../tier3_engine_output_80_v7_photo.csv")
-A = pd.read_csv("/mnt/user-data/uploads/climax_mvp/data/aug80_indices.csv")
+A = pd.read_csv(os.environ.get("DATA", "/mnt/user-data/uploads/climax_mvp/data") + "/aug80_viewfactors.csv")   # 9/21 일관 정의
 W = pd.read_csv("/mnt/user-data/uploads/climax_mvp/data/tier3_width_80.csv")[["측정ID","width_m","hw_ratio"]]
-A = A.rename(columns={"SVF":"SVF2","GVI":"GVI2","BVI":"BVI2"})
+A = A.rename(columns={"SVF":"SVF2","TVF":"GVI2","BVF":"BVI2"})
 A.loc[A["비고"].notna(), ["SVF2","GVI2","BVI2"]] = np.nan          # 158번 자세복원 실패
 D = D.merge(A[["측정ID","SVF2","GVI2","BVI2"]], on="측정ID").merge(W, on="측정ID")
 D["sun"] = D["볕"] == 1
