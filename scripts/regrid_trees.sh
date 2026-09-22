@@ -51,12 +51,13 @@ case "$cmd" in
       setsid nohup nice -n 19 docker run --rm --memory 2500m --memory-swap 2500m --cpus 2.0 \
         -e DATABASE_URL="$DBURL" -e BUILDING_SOURCE=db \
         -e GEO_TREE_SVF=1 -e LOCAL_TILE_CACHE_MAX=24 -e RINGS_CACHE_MAX=1500 \
-        -v "$HOME/climax_mvp:/repo" -v "$HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro" \
+        -v "$HOME/climax_mvp:/repo" -v "$HOME/climax_mvp/backend/app:/app/app:ro" \
+        -v "$HOME/climax_mvp/backend/data/buildings:/app/data/buildings:ro" \
         -v "$HOME/climax_mvp/data/canopy:/app/data/canopy:ro" climax-backend:latest \
         python3 /repo/scripts/build_skyline_grid.py --cells "/repo/data/regrid_tree_${name}_${i}.csv" \
           --threads 4 --force --tiles-only --src-hint "$NEW" \
         < /dev/null > "$HOME/grid_tree_${name}_${i}.log" 2>&1 &
-      echo "  띄움: 조각 $i → ~/grid_${name}_${i}.log"
+      echo "  띄움: 조각 $i → ~/grid_tree_${name}_${i}.log"
       sleep 2
     done ;;
   *) echo "count | export | run"; exit 1 ;;
