@@ -39,7 +39,11 @@ async def main():
     diffs = []
     for r in rs:
         rings, src = await geo._rings_cached(r["lat"], r["lon"])
-        sk = SK.compute_skyline_from_rings(r["lat"], r["lon"], list(rings or []), src or "check")
+        from app.services.geo import _trees_near, _trees_local, TREE_SVF_ON
+        _tr = (_trees_local(r["lat"], r["lon"], await _trees_near(r["lat"], r["lon"]))
+               if TREE_SVF_ON else [])
+        sk = SK.compute_skyline_from_rings(r["lat"], r["lon"], list(rings or []), src or "check",
+                                           trees=_tr)
         d = sk.svf - r["svf"]; diffs.append(abs(d))
         print(f"      {r['lat']:.4f},{r['lon']:.4f}  저장 {r['svf']:.3f}  재계산 {sk.svf:.3f}  "
               f"차이 {d:+.3f}  건물 {r['n_bld']}")

@@ -16,7 +16,8 @@ from __future__ import annotations
 import argparse, asyncio, csv, os, sys, time
 sys.path.insert(0, "/app")
 from app.services import skyline as SK  # noqa: E402
-from app.services.geo import _rings_cached, canopy_items, _tile_covered  # noqa: E402
+from app.services.geo import (_rings_cached, canopy_items, _tile_covered,  # noqa: E402
+                              _trees_near, _trees_local, TREE_SVF_ON)
 
 
 def cells_from_csv(path: str):
@@ -110,7 +111,11 @@ async def worker(q: asyncio.Queue, stats: dict, force: bool, src_hint: str, cano
                 if not rings and not await _tile_covered(lat, lon):
                     stats["nodata"] += 1
                 else:
-                    sk = SK.compute_skyline_from_rings(lat, lon, rings, (src_hint or src or "none"))
+                    # 가로수(2026-09-22) — 격자도 실시간과 같은 자료를 봐야 값이 갈라지지 않는다.
+                    trees = (_trees_local(lat, lon, await _trees_near(lat, lon))
+                             if TREE_SVF_ON else [])
+                    sk = SK.compute_skyline_from_rings(lat, lon, rings, (src_hint or src or "none"),
+                                                       trees=trees)
                     ok = await SK.upsert(sk)
                     stats["ok" if ok else "fail"] += 1
                     if sk.n_bld == 0:

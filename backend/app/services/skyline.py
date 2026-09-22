@@ -227,6 +227,53 @@ def _canopy_horizon(canopy: list, az_step: int) -> list[float]:
     return out
 
 
+def _tree_horizon(trees: list, az_step: int) -> list[float]:
+    """가로수(점 자료)의 방위별 상승각 [deg]. `geo._trees_local()` 형식 (x, y, 수고, 수관반경).
+
+    geo._svf_from_rings 와 **같은 식**이다 — 수관을 반지름 r, 중심높이 h-r 인 구로 보고
+    이 방위에서 구를 자른 높이를 쓴다. 다르면 격자와 실시간 값이 갈라진다(9/15 의 교훈).
+    """
+    from app.services.geo import TREE_SEARCH_M
+    items = []
+    for x, y, h, r in trees or []:
+        d = math.hypot(x, y)
+        if d < 0.5 or d > TREE_SEARCH_M:
+            continue
+        rr = max(0.3, float(r))
+        hc = float(h) - rr - EYE_M
+        if hc + rr <= 0:
+            continue
+        items.append((math.atan2(x, y), d, hc, rr))
+    n = 360 // az_step
+    out = [0.0] * n
+    if not items:
+        return out
+    for i in range(n):
+        az = math.radians(i * az_step)
+        b = 0.0
+        for br, d, hc, rr in items:
+            da = abs((az - br + math.pi) % (2 * math.pi) - math.pi)
+            s_off = d * math.sin(da)
+            if s_off >= rr:
+                continue
+            v = math.degrees(math.atan2(hc + math.sqrt(rr * rr - s_off * s_off), d))
+            if v > b:
+                b = v
+        out[i] = b
+    return out
+
+
+def _veg_horizon(canopy: list, trees: list, az_step: int) -> list[float] | None:
+    """위성 수관 + 가로수 = 초록 지평선(둘 중 높은 쪽). 둘 다 없으면 None."""
+    hc = _canopy_horizon(canopy, az_step) if canopy else None
+    ht = _tree_horizon(trees, az_step) if trees else None
+    if hc is None:
+        return ht if ht and max(ht) > 0 else None
+    if ht is None:
+        return hc
+    return [max(a, b) for a, b in zip(hc, ht)]
+
+
 def _svf_blend(hor_b: list[float], hor_c: list[float] | None) -> float:
     """건물 지평선과 수관 지평선을 합쳐 SVF (2026-09-15).
 
@@ -251,7 +298,8 @@ def _svf_blend(hor_b: list[float], hor_c: list[float] | None) -> float:
     return max(0.0, min(1.0, 1.0 - s / len(hor_b)))
 
 
-def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) -> Skyline:
+def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str,
+                               trees: list | None = None) -> Skyline:
     """오늘 검증된 절차 그대로: 건물 밖으로 스냅 → 가로 중심선 스냅 → 도로축 ±4m 3점 중앙값(SVF).
     horizon 은 중심점에서 5°, SVF 는 2° 로 계산(svf_geometric 과 동일 값)."""
     from app.services.geo import _snap_outside, _snap_to_street_center, _shift_rings, street_width_geometric  # noqa: F401
@@ -262,8 +310,8 @@ def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) ->
         #    geo.svf_geometric 은 9/18 에 같은 자리를 고쳤는데 격자 쪽이 남아 있었다.
         from app.services.geo import canopy_items
         _c = canopy_items(lat, lon)
-        _svf = (_svf_blend([0.0] * (360 // SVF_AZ_STEP),
-                           _canopy_horizon(_c, SVF_AZ_STEP)) if _c else 1.0)
+        _v = _veg_horizon(_c, trees, SVF_AZ_STEP)
+        _svf = (_svf_blend([0.0] * (360 // SVF_AZ_STEP), _v) if _v else 1.0)
         return Skyline(cell_id(lat, lon), lat, lon, [0.0] * N_AZ, _svf, 0.0,
                        None, None, None, 0, 0.0, src)
     # 수관 — 스냅을 따라가야 한다. 두 스냅은 평행이동만 하므로 _probe_delta 로 이동량을 되찾는다
@@ -277,6 +325,8 @@ def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) ->
     rings, centered, axis = _snap_to_street_center(rings)
     _dx, _dy = _probe_delta(_b0, rings)
     canopy = _shift_items(canopy, _ox + _dx, _oy + _dy)
+    from app.services.geo import _shift_trees
+    trees = _shift_trees(list(trees or []), _ox + _dx, _oy + _dy)
 
     hor = _horizon_np if _np is not None else _horizon_from_rings
     horizon5, n_bld = hor(rings, AZ_STEP)     # 저장되는 지평선은 **건물만** — 볕/그늘 판정용
@@ -289,13 +339,14 @@ def compute_skyline_from_rings(lat: float, lon: float, rings: list, src: str) ->
             rr, _ = _snap_outside(_bb)
             _ex, _ey = _probe_delta(_bb, rr)
             _cc = _shift_items(canopy, _sx + _ex, _sy + _ey)
+            _tt = _shift_trees(trees, _sx + _ex, _sy + _ey)
             vals.append(_svf_blend(hor(rr, SVF_AZ_STEP)[0],
-                                   _canopy_horizon(_cc, SVF_AZ_STEP) if _cc else None))
+                                   _veg_horizon(_cc, _tt, SVF_AZ_STEP)))
         vals.sort()
         svf = vals[1]
     else:
         svf = _svf_blend(hor(rings, SVF_AZ_STEP)[0],
-                         _canopy_horizon(canopy, SVF_AZ_STEP) if canopy else None)
+                         _veg_horizon(canopy, trees, SVF_AZ_STEP))
     # 가로폭·H/W — 중심점에서 마주보는 광선쌍 최소합 (street_width_geometric 과 같은 정의)
     width, hw = _width_np(rings) if _np is not None else _width_from_rings(rings)
     bvi = max(0.0, 1.0 - svf)      # 위성 GVI 가 나중에 빼 간다(orchestrator._analyze_geometry 와 동일)
@@ -418,8 +469,9 @@ async def upsert(sk: Skyline) -> bool:
 
 async def compute_and_store(lat: float, lon: float) -> Skyline | None:
     """실시간 미스 → 건물 조회(기존 캐시 경로) → 계산 → 저장. 배치와 같은 함수."""
-    from app.services.geo import _rings_cached
+    from app.services.geo import _rings_cached, _trees_near, _trees_local, TREE_SVF_ON
     rings, src = await _rings_cached(lat, lon)
-    sk = compute_skyline_from_rings(lat, lon, rings, src or "none")
+    trees = _trees_local(lat, lon, await _trees_near(lat, lon)) if TREE_SVF_ON else []
+    sk = compute_skyline_from_rings(lat, lon, rings, src or "none", trees=trees)
     await upsert(sk)
     return sk

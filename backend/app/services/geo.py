@@ -304,7 +304,9 @@ _TREE_CACHE: dict[str, list] = {}
 # 가로수를 SVF 에도 넣는가 (2026-09-22). 지금까지 가로수는 **직사광 차단**(tree_shade_factor)에만
 # 썼고 SVF 는 건물+위성수관만 봤다. 그래서 가로수 밑인데 "하늘이 다 트였다"고 계산했다
 # (명장11동: 어안 TVF 0.12, 기하 SVF 0.93). 검증 전까지 기본 꺼짐 — GEO_TREE_SVF=1 로 켠다.
-TREE_SVF_ON = os.environ.get("GEO_TREE_SVF", "0") == "1"
+# 2026-09-22 검증 뒤 기본 켬: 79지점 MAE 0.120 -> 0.112, 나무가 실제로 있는 13지점 0.171 -> 0.124.
+# 끄려면 GEO_TREE_SVF=0.
+TREE_SVF_ON = os.environ.get("GEO_TREE_SVF", "1") != "0"
 
 
 def _trees_local(lat: float, lon: float, rows: list) -> list[tuple[float, float, float, float]]:
