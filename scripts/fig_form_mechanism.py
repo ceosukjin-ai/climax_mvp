@@ -159,13 +159,13 @@ def fig_a(d):
     xg = 0.07       # 왼쪽 빈 자리 — 점과 겹치지 않는다
     bx.annotate("", xy=(xg, mh), xytext=(xg, ms),
                 arrowprops=dict(arrowstyle="<->", lw=0.8, color=INK, shrinkA=0, shrinkB=0))
-    bx.text(xg - 0.01, ms + 0.6, f"{ms - mh:.1f} K  sun vs shade\nat the same sky view\n(SVF 0.3–0.6)",
+    bx.text(xg - 0.01, ms + 0.6, f"{ms - mh:.1f} °C  sun vs shade\nat the same sky view\n(SVF 0.3–0.6)",
             ha="left", va="bottom", fontsize=6.8, color=INK, linespacing=1.3)
     for g, yv in ((1, 55.3), (0, 34.2)):
         sl, ci, q = res[g]
         col = SUN if g else SHADE
         lab = "sunlit" if g else "shaded"
-        bx.text(0.02, yv, f"{lab} (n = {len(q)}): {sl/10:+.1f} K per 0.1 SVF  "
+        bx.text(0.02, yv, f"{lab} (n = {len(q)}): {sl/10:+.1f} °C per 0.1 SVF  "
                 f"[{ci[0]/10:+.1f}, {ci[1]/10:+.1f}]", fontsize=6.9, color=col,
                 va="center", transform=bx.get_yaxis_transform() if False else bx.transData)
     bx.set_xlim(0, 0.9); bx.set_ylim(33.2, 56.3)
@@ -223,7 +223,7 @@ def fig_b(d):
         ax.plot([r["lo"], r["hi"]], [y, y], color=col, lw=1.6, solid_capstyle="butt", zorder=3)
         ax.scatter([r["e"]], [y], s=34, color=col, zorder=4,
                    marker="o" if r["kind"] != "ref" else "D")
-        ax.text(r["hi"] + 0.25, y, f"{r['e']:+.1f} K".replace("-", "−"), va="center", fontsize=7.2, color=col,
+        ax.text(r["hi"] + 0.25, y, f"{r['e']:+.1f} °C".replace("-", "−"), va="center", fontsize=7.2, color=col,
                 fontweight="bold" if r["kind"] == "shade" else "normal")
         ax.text(-0.02, y + 0.13, r["lab"], transform=ax.get_yaxis_transform(), ha="right",
                 va="center", fontsize=7.4, color=col,
@@ -237,7 +237,7 @@ def fig_b(d):
     ax.set_yticks([]); ax.spines["left"].set_visible(False)
     ax.set_ylim(-0.6, len(rows) - 0.4)
     ax.set_xlim(-2.5, 11.0)
-    ax.set_xlabel("Change in measured PET (K), with 95 % bootstrap interval")
+    ax.set_xlabel("Change in measured PET (°C), with 95 % bootstrap interval")
     ax.set_title("How much each factor moves PET", loc="left", fontweight="bold", pad=8,
                  x=-0.58)
     for ext in ("pdf", "png"):

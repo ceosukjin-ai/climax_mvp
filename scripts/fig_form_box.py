@@ -85,7 +85,7 @@ def main():
             xg = b + OFF + 0.24
             ax.annotate("", xy=(xg, mh), xytext=(xg, ms),
                         arrowprops=dict(arrowstyle="<->", lw=0.7, color=INK, shrinkA=0, shrinkB=0))
-            ax.text(xg + 0.035, (ms + mh) / 2, f"{ms - mh:.1f} K", fontsize=7.0, color=INK,
+            ax.text(xg + 0.035, (ms + mh) / 2, f"{ms - mh:.1f} °C", fontsize=7.0, color=INK,
                     va="center", ha="left", fontweight="bold")
         else:
             ax.text(b - OFF, 38.0, "no shaded\nsite", fontsize=6.6, color=SHADE, ha="center",

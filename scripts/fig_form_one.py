@@ -100,10 +100,10 @@ def main():
         ax.scatter(q.SVF, q.PET, s=16, color=col, edgecolor="white", lw=0.45, zorder=4)
         fits[g] = (sl, ci, len(q))
     sl, ci, n = fits[1]
-    ax.text(0.015, 55.2, f"sunlit, n = {n}\n{sl/10:+.1f} K per 0.1 SVF\n95 % CI {ci[0]/10:+.1f} to {ci[1]/10:+.1f}".replace("-", "−"),
+    ax.text(0.015, 55.2, f"sunlit, n = {n}\n{sl/10:+.1f} °C per 0.1 SVF\n95 % CI {ci[0]/10:+.1f} to {ci[1]/10:+.1f}".replace("-", "−"),
             ha="left", va="top", fontsize=6.6, color=SUN, linespacing=1.3)
     sl, ci, n = fits[0]
-    ax.text(0.885, 36.3, f"shaded, n = {n}\n{sl/10:+.1f} K per 0.1 SVF\n95 % CI {ci[0]/10:+.1f} to {ci[1]/10:+.1f}".replace("-", "−"),
+    ax.text(0.885, 36.3, f"shaded, n = {n}\n{sl/10:+.1f} °C per 0.1 SVF\n95 % CI {ci[0]/10:+.1f} to {ci[1]/10:+.1f}".replace("-", "−"),
             ha="right", va="bottom", fontsize=6.6, color=SHADE, linespacing=1.3)
     ax.set_xlim(*XL); ax.set_ylim(*YL)
     ax.set_xlabel("Sky view factor at the site (fisheye)")
@@ -146,7 +146,7 @@ def main():
     xk = side.get_xlim()[1] * 0.93
     side.annotate("", xy=(xk, mh), xytext=(xk, ms),
                   arrowprops=dict(arrowstyle="<->", lw=0.8, color=INK, shrinkA=0, shrinkB=0))
-    side.text(xk * 0.96, (ms + mh) / 2, f"{ms - mh:.1f} K", ha="right", va="center",
+    side.text(xk * 0.96, (ms + mh) / 2, f"{ms - mh:.1f} °C", ha="right", va="center",
               fontsize=7.2, color=INK, fontweight="bold")
     side.tick_params(labelleft=False, left=False, bottom=False, labelbottom=False)
     side.spines["left"].set_visible(False); side.spines["bottom"].set_visible(False)

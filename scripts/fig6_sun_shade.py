@@ -116,7 +116,7 @@ def main():
     ax.plot([xb, xb], [msha, msun], color=INK, lw=0.8)
     for yv in (msha, msun):
         ax.plot([xb - 0.05, xb], [yv, yv], color=INK, lw=0.8)
-    ax.text(1.55, 52.0, f"$\\Delta$ 7.7 K\nCliff's $\\delta$ = {delta:.2f}",
+    ax.text(1.55, 52.0, f"$\\Delta$ 7.7 °C\nCliff's $\\delta$ = {delta:.2f}",
             fontsize=7.2, va="bottom", ha="center", color=INK, linespacing=1.3)
     ax.axhline(THRESHOLD, color=THR, lw=0.9, ls=(0, (5, 3)), zorder=2)
     ax.set_xlim(-0.85, 2.70); ax.set_ylim(32.5, 56)
@@ -140,7 +140,7 @@ def main():
             bx.plot([mh, ms], [i, i], color="#9A9A9A", lw=2.2, solid_capstyle="round",
                     zorder=3)
             bx.scatter([mh], [i], s=42, color=SHADE, edgecolor="white", lw=0.9, zorder=5)
-            bx.text(RCOL, i, f"$\\Delta$ {ms - mh:.1f} K", fontsize=7.2, transform=tr,
+            bx.text(RCOL, i, f"$\\Delta$ {ms - mh:.1f} °C", fontsize=7.2, transform=tr,
                     va="center", color=INK, clip_on=False)
         else:
             bx.text(RCOL, i, "no shaded\nsite", fontsize=6.7, transform=tr, va="center",
@@ -157,7 +157,7 @@ def main():
     hmax, smin = max(allH), min(allS)
     bx.axvspan(hmax, smin, color=INK, alpha=0.06, zorder=0)
     bx.text((hmax + smin) / 2, -0.62,
-            f"no overlap — gap {smin - hmax:.1f} K", fontsize=6.6, color=INK,
+            f"no overlap — gap {smin - hmax:.1f} °C", fontsize=6.6, color=INK,
             ha="center", va="bottom")
     bx.set_xlim(39.8, 47.6); bx.set_ylim(len(ROWS) - 0.30, -0.78)
     bx.set_yticks([]); bx.set_xticks([40, 41, 42, 43, 44, 45, 46, 47])
@@ -185,7 +185,7 @@ def main():
              "keeping only its measured sky, tree and building view factors and its sun-or-shade reading, and recomputes "
              "PET with the same engine, so that neighbourhoods surveyed on different days and "
              "at different hours can be read side by side. The engine gives a smaller sun–shade "
-             "difference than the field data (median 4.6 against 5.4 K); (b) is therefore read "
+             "difference than the field data (median 4.6 against 5.4 °C); (b) is therefore read "
              "for the comparison between neighbourhoods, not for the absolute level.",
              fontsize=6.0, color=MUTED, va="top", ha="left", wrap=True)
 
