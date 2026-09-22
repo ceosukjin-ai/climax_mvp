@@ -6,25 +6,35 @@
   docker exec -i climax-api python3 /tmp/geo_svf_check_80.py
   docker cp climax-api:/tmp/geo_svf_80.csv data/
 
-출력 data/geo_svf_80.csv (측정ID, geo_svf, n_bld, n_canopy, source) + 화면에 MAE/bias/r.
+가로수 판(2026-09-22)은 배포 컨테이너를 건드리지 않고 일회용 컨테이너로 돌린다:
+  docker run --rm -e DATABASE_URL=... -e BUILDING_SOURCE=db -e GEO_TREE_SVF=1 \
+    -v ~/climax_mvp:/repo -v ~/climax_mvp/backend/app:/app/app:ro \
+    -v ~/climax_mvp/backend/data/buildings:/app/data/buildings:ro \
+    -v ~/climax_mvp/data/canopy:/app/data/canopy:ro climax-backend:latest \
+    python3 /repo/scripts/geo_svf_check_80.py /repo/data/scs_master_80.csv /repo/data/geo_svf_80_tree.csv
+
+출력 CSV (측정ID, geo_svf, n_bld, n_canopy, n_tree, source) + 화면에 MAE/bias/r.
 """
-import asyncio, csv, math, statistics as st, sys
+import asyncio, csv, math, os, statistics as st, sys
 sys.path.insert(0, "/app")
 
 
 async def main():
     from app.services import geo
-    rows = list(csv.DictReader(open("/tmp/scs_master_80.csv", encoding="utf-8-sig")))
+    src = sys.argv[1] if len(sys.argv) > 1 else "/tmp/scs_master_80.csv"
+    out_path = sys.argv[2] if len(sys.argv) > 2 else "/tmp/geo_svf_80.csv"
+    rows = list(csv.DictReader(open(src, encoding="utf-8-sig")))
     out = []
     for r in rows:
         d = await geo.svf_geometric(float(r["위도"]), float(r["경도"]))
         g = d.get("svf")
         out.append(dict(측정ID=r["측정ID"], geo_svf="" if g is None else round(g, 4),
                         n_bld=d.get("n_bld", ""), n_canopy=d.get("n_canopy", 0),
+                        n_tree=d.get("n_tree", 0),
                         source=str(d.get("source", ""))[:40]))
         if len(out) % 20 == 0:
             print(f"  {len(out)}/80", flush=True)
-    with open("/tmp/geo_svf_80.csv", "w", newline="", encoding="utf-8-sig") as f:
+    with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=list(out[0])); w.writeheader(); w.writerows(out)
     obs = {r["측정ID"]: r["SVF"] for r in rows}
     p = [(float(o["geo_svf"]), float(obs[o["측정ID"]])) for o in out
@@ -35,7 +45,8 @@ async def main():
     r = cov / math.sqrt(sum((a - ma) ** 2 for a, _ in p) * sum((b - mb) ** 2 for _, b in p))
     print(f"\n기하 SVF vs 어안 SVF   n {n}   MAE {st.mean(map(abs, e)):.3f}   "
           f"bias {st.mean(e):+.3f}   r {r:.2f}")
-    print("저장 /tmp/geo_svf_80.csv")
+    print(f"저장 {out_path}   GEO_TREE_SVF={os.environ.get('GEO_TREE_SVF','0')} "
+          f"GEO_CANOPY={os.environ.get('GEO_CANOPY','1')}")
 
 
 asyncio.run(main())

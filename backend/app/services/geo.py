@@ -301,6 +301,25 @@ TREE_H_M = 8.0            # 가로수 기본 수고(OSM height 있으면 그 값
 TREE_CROWN_R_M = 3.0      # 기본 수관 반경(diameter_crown 있으면 그 값/2)
 TREE_SEARCH_M = 30.0
 _TREE_CACHE: dict[str, list] = {}
+# 가로수를 SVF 에도 넣는가 (2026-09-22). 지금까지 가로수는 **직사광 차단**(tree_shade_factor)에만
+# 썼고 SVF 는 건물+위성수관만 봤다. 그래서 가로수 밑인데 "하늘이 다 트였다"고 계산했다
+# (명장11동: 어안 TVF 0.12, 기하 SVF 0.93). 검증 전까지 기본 꺼짐 — GEO_TREE_SVF=1 로 켠다.
+TREE_SVF_ON = os.environ.get("GEO_TREE_SVF", "0") == "1"
+
+
+def _trees_local(lat: float, lon: float, rows: list) -> list[tuple[float, float, float, float]]:
+    """(위도,경도,수고,수관반경) → 관측점 기준 로컬 m (x=동, y=북)."""
+    out = []
+    for tla, tlo, h, r in rows:
+        out.append(((tlo - lon) * 111320.0 * math.cos(math.radians(lat)),
+                    (tla - lat) * 111320.0, float(h), float(r)))
+    return out
+
+
+def _shift_trees(trees: list, ox: float, oy: float) -> list:
+    if not trees or (ox == 0.0 and oy == 0.0):
+        return trees
+    return [(x - ox, y - oy, h, r) for x, y, h, r in trees]
 
 
 async def _trees_near(lat: float, lon: float) -> list[tuple[float, float, float, float]]:
@@ -603,7 +622,9 @@ async def svf_geometric(
         if not await _tile_covered(lat, lon):
             return {"svf": None, "source": src or "", "n_buildings": 0, "reason": "건물 자료 없음"}
         canopy = canopy_items(lat, lon)          # 건물은 없어도 나무는 있을 수 있다(공원 한가운데)
-        svf, _nb = _svf_from_rings([], eye_height_m, az_step_deg, default_floors, canopy=canopy)
+        trees = _trees_local(lat, lon, await _trees_near(lat, lon)) if TREE_SVF_ON else []
+        svf, _nb = _svf_from_rings([], eye_height_m, az_step_deg, default_floors, canopy=canopy,
+                                   trees=trees)
         return {"svf": svf, "source": src or "open", "n_buildings": 0,
                 "snapped_m": 0.0, "centered_m": 0.0, "n_canopy": len(canopy),
                 "canopy_observed": canopy_observed(lat, lon), "reason": "건물 없음(개방)"}
@@ -613,6 +634,8 @@ async def svf_geometric(
     # (옆 골목 나무가 머리 위에 있는 것으로 계산된다). 두 스냅은 **평행이동만** 하므로
     # _probe_delta 로 이동량을 되찾아 수관도 같이 옮긴다.
     canopy = canopy_items(lat, lon)
+    # 가로수도 수관과 같은 스냅을 따라가야 한다 (2026-09-22).
+    trees = _trees_local(lat, lon, await _trees_near(lat, lon)) if TREE_SVF_ON else []
     _before = rings
     rings, snapped = _snap_outside(rings)   # GPS 오차로 건물 안이면 골목으로 끌어냄
     _ox, _oy = _probe_delta(_before, rings)
@@ -620,6 +643,7 @@ async def svf_geometric(
     rings, centered, axis = _snap_to_street_center(rings)   # 벽 → 가로 중심선
     _dx2, _dy2 = _probe_delta(_before, rings)
     canopy = _shift_items(canopy, _ox + _dx2, _oy + _dy2)
+    trees = _shift_trees(trees, _ox + _dx2, _oy + _dy2)
     if axis is not None:
         # 도로축 따라 ±4m 3점의 중앙값 — GPS 5~10m 오차에 강건 (2026-09-10)
         vals = []
@@ -630,16 +654,18 @@ async def svf_geometric(
             rr, _ = _snap_outside(_b)
             _ex, _ey = _probe_delta(_b, rr)
             vals.append(_svf_from_rings(rr, eye_height_m, az_step_deg, default_floors,
-                                        canopy=_shift_items(canopy, _sx + _ex, _sy + _ey)))
+                                        canopy=_shift_items(canopy, _sx + _ex, _sy + _ey),
+                                        trees=_shift_trees(trees, _sx + _ex, _sy + _ey)))
         vals.sort()
         svf, nb = vals[1]
         return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
                 "centered_m": round(centered, 1), "street_axis_deg": axis,
-                "n_canopy": len(canopy),
+                "n_canopy": len(canopy), "n_tree": len(trees),
                 "canopy_observed": canopy_observed(lat, lon)}
-    svf, nb = _svf_from_rings(rings, eye_height_m, az_step_deg, default_floors, canopy=canopy)
+    svf, nb = _svf_from_rings(rings, eye_height_m, az_step_deg, default_floors, canopy=canopy,
+                              trees=trees)
     return {"svf": svf, "source": src, "n_buildings": nb, "snapped_m": round(snapped, 1),
-            "centered_m": 0.0, "n_canopy": len(canopy),
+            "centered_m": 0.0, "n_canopy": len(canopy), "n_tree": len(trees),
             "canopy_observed": canopy_observed(lat, lon)}
 
 
@@ -898,7 +924,7 @@ def _probe_delta(before: list, after: list) -> tuple[float, float]:
 
 
 def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_floors: int,
-                    canopy: list | None = None) -> tuple[float, int]:
+                    canopy: list | None = None, trees: list | None = None) -> tuple[float, int]:
     """원점(0,0)에서 ray-cast SVF. 반환 (svf, 차폐 건물 수).
 
     `canopy` 는 (정사각 폴리곤, 수고 m) 목록 — 건물과 **같은 광선**에 태우되, 건물보다 높은
@@ -952,7 +978,20 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
             continue
         cnp.append((ring, h))
 
-    if not blds and not cnp and cnp_self <= 0.0:
+    # 가로수(점 자료) — 수관을 반지름 r, 중심높이 h-r 인 구로 본다 (2026-09-22).
+    # 위성 수관 래스터는 도심 가로수를 못 본다(9/15 단면시험). 그 몫을 여기서 센다.
+    tls: list[tuple[float, float, float, float]] = []
+    for _x, _y, _h, _r in (trees or []):
+        d = math.hypot(_x, _y)
+        if d < 0.5 or d > TREE_SEARCH_M:
+            continue
+        r = max(0.3, float(_r))
+        hc = float(_h) - r - eye_height_m       # 수관 중심 높이(눈높이 기준)
+        if hc + r <= 0:
+            continue
+        tls.append((math.atan2(_x, _y), d, hc, r))
+
+    if not blds and not cnp and cnp_self <= 0.0 and not tls:
         return 1.0, 0
 
     n_sectors = max(1, int(360 / az_step_deg))
@@ -969,7 +1008,7 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
             if beta > beta_max:
                 beta_max = beta
         blocked = math.sin(beta_max) ** 2
-        if cnp or cnp_self > 0.0:
+        if cnp or cnp_self > 0.0 or tls:
             # 수관 지평선각 — 품은 화소는 '화소 반경 거리의 나무'로 본다(위 edge 주석).
             bt = cnp_self
             for ring, h in cnp:
@@ -977,6 +1016,14 @@ def _svf_from_rings(rings: list, eye_height_m: float, az_step_deg: int, default_
                 if t is None:
                     continue
                 v = math.atan2(h, t)
+                if v > bt:
+                    bt = v
+            for br, d, hc, r in tls:      # 이 방위에서 수관 구를 자른 높이
+                da = abs((az - br + math.pi) % (2 * math.pi) - math.pi)
+                s_off = d * math.sin(da)
+                if s_off >= r:
+                    continue
+                v = math.atan2(hc + math.sqrt(r * r - s_off * s_off), d)
                 if v > bt:
                     bt = v
             # 건물보다 높은 부분만 (1-τ) 만큼 추가로 막는다. τ 는 유효 차폐율의 여집합이다.
