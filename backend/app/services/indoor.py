@@ -63,6 +63,8 @@ class IndoorResult:
     # 행동 권고 (2026-08-11) — "위험하다"에서 끝나지 않고 "뭘 하면 되는지"까지
     ventilation: dict | None = None   # {"t_vent_est","delta","advice"} — 창문 환기 what-if
     actions: list[str] | None = None  # 등급별 행동 사다리 (위 항목부터 우선)
+    # 2026-09-23 — 실측·외부부하 잔차. 실측이 있을 때만 값이 있다(라우터가 집별로 학습).
+    residual: float | None = None
 
 
 def _damping(structure: str | None) -> float:
@@ -171,6 +173,11 @@ def compute_indoor(
     facade_note: str | None = None,       # "서향 외피 — 지금 태양과 12° 차이"
     t_in_prev: float | None = None,       # 이전 실내 추정/실측 (열 기억, 2026-08-16)
     prev_age_h: float | None = None,      # 그 값의 경과 시간 [h]
+    # ── 2026-09-23 벽면센서 v4.1 ──
+    wall_measured: float | None = None,     # 벽 표면온도 실측 (MLX90614)
+    radiant_measured: float | None = None,  # 방 복사온도 실측 (8x8 배경 평균, 사람 칸 제외)
+    occupied: bool | None = None,           # 8x8 재실 여부
+    residual_bias: float | None = None,     # 이 집의 학습된 잔차 (실측 − 외부부하 추정)
 ) -> IndoorResult:
     now = now or datetime.now(KST)
     sf = _solar_factor(now, lat, lon)
@@ -179,10 +186,12 @@ def compute_indoor(
 
     night_w = 0.0
     t_in_formula: float | None = None
-    if ambient_measured is not None:
-        t_in = ambient_measured                    # 실측이 왕 — 층 보정 불필요
-        measured = True
-    else:
+    residual: float | None = None
+    # 2026-09-23 — 외부부하(①~④)는 **실측이 있어도 항상 계산**한다.
+    #   전에는 실측이 오면 이 블록을 통째로 건너뛰어 "센서가 엔진을 대체"했다.
+    #   이제 실측은 앵커, 외부부하는 설명·예측이다. 둘의 차이(잔차)를 집별로 학습해
+    #   센서가 끊긴 뒤·센서 없는 방에서 외부부하 추정을 보정한다.
+    if True:
         # ① 축열 감쇠: 실내는 오늘 평균기온 주변에서 바깥 변화를 D만큼만 따라감
         t_in = t_mean_today + d * (t_out_now - t_mean_today)
         # ② 일사 취득: 해가 떠 있고 하늘이 열려 있으면 외피가 데워져 실내로 (+0 ~ +2.6)
@@ -211,10 +220,20 @@ def compute_indoor(
         #    τ = 30h  ⚠️ 근사(공학적 판단) — 중량 콘크리트 구조의 문헌 시상수 수십 시간대
         #    의 중간값. 8/16 사례 시뮬레이션에서 15h는 너무 빨리 잊어 '주의'에 머물렀고
         #    30h는 실측과 같은 '경고'에 도달. 방 센서 짝 데이터가 쌓이면 데이터로 교정.
-        t_in_formula = t_in
+        t_in_formula = t_in                        # 순수 외부부하 추정 (열 기억 전)
+
+    if ambient_measured is not None:
+        t_in = ambient_measured                    # 실측이 앵커
+        residual = ambient_measured - t_in_formula # 이 집 고유 오차 (단열·생활)
+        measured = True
+    else:
+        # 학습된 잔차가 있으면 외부부하 추정에 더한다 (센서 끊김·센서 없는 방)
+        if residual_bias is not None:
+            t_in = t_in_formula + residual_bias
+        # ⑤ 열 기억 — 이전 값에서 공식 목표로 천천히 수렴 (τ=30h)
         if t_in_prev is not None and prev_age_h is not None and prev_age_h >= 0.0:
             w = math.exp(-prev_age_h / 30.0)
-            t_in = t_in_formula + (t_in_prev - t_in_formula) * w
+            t_in = t_in + (t_in_prev - t_in) * w
         measured = False
 
     # ④ 실내 체감 = 기온 + 습도(후덥지근함, 야외 엔진과 동일 공식) + 무풍 보정
@@ -234,7 +253,20 @@ def compute_indoor(
     season = wx.season
     dh = _humidity_contribution(t_in, rh_in, season)
     still_air = 0.5 if season == "summer" else 0.0   # 실내 무풍 — 여름 체감 가중
-    feel = t_in + dh + still_air
+    # 2026-09-23 — 복사 반영 (작용온도, ASHRAE 55 무풍 근사: To = (Ta + Tr)/2).
+    #   Tr = 8x8 배경(사람 칸 제외) 0.7 + 벽 표면 0.3. 둘 중 하나만 있으면 그것만.
+    #   공기와 12°C 넘게 벌어지면 센서 이상으로 보고 버린다.
+    t_rad: float | None = None
+    if radiant_measured is not None and wall_measured is not None:
+        t_rad = 0.7 * radiant_measured + 0.3 * wall_measured
+    elif radiant_measured is not None:
+        t_rad = radiant_measured
+    elif wall_measured is not None:
+        t_rad = wall_measured
+    if t_rad is not None and abs(t_rad - t_in) > 12.0:
+        t_rad = None
+    t_op = (t_in + t_rad) / 2.0 if t_rad is not None else t_in
+    feel = t_op + dh + still_air
 
     # ⑤ 위험 등급 (야외와 동일 등급표) + 취약군 앞당김 (레벨당 1.0°C, 상한 3.0)
     shift = min(vulnerability_level(age, conditions) * 1.0, 3.0)
@@ -310,7 +342,17 @@ def compute_indoor(
                              if t_in_formula is not None else None),
             "t_in_prev": (round(t_in_prev, 1) if t_in_prev is not None else None),
             "prev_age_h": (round(prev_age_h, 1) if prev_age_h is not None else None),
+            # 2026-09-23 복사·잔차
+            "wall_measured": (round(wall_measured, 1) if wall_measured is not None else None),
+            "radiant_measured": (round(radiant_measured, 1) if radiant_measured is not None else None),
+            "t_radiant": (round(t_rad, 1) if t_rad is not None else None),
+            "t_operative": round(t_op, 1),
+            "occupied": occupied,
+            "residual": (round(residual, 2) if residual is not None else None),
+            "residual_bias_applied": (round(residual_bias, 2)
+                                      if (residual_bias is not None and not measured) else None),
         },
         ventilation=ventilation,
         actions=actions or None,
+        residual=residual,
     )

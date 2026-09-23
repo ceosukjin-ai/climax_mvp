@@ -93,6 +93,8 @@ router = APIRouter(prefix="/api/v1", tags=["vpti"])
 # 실내 열 기억 (2026-08-16) — (lat, lon, floor) → (시각, 마지막 실내온도).
 # 급변 날씨에서 방이 즉시 리셋되는 문제 방지 (indoor.py ⑤ 참조).
 _INDOOR_MEMORY: dict[tuple[float, float, int], tuple[float, float]] = {}
+# 실내 잔차 (2026-09-23) — (lat, lon, floor) → (시각, 실측−외부부하 지수평균). 워커별 인메모리.
+_INDOOR_RESIDUAL: dict[tuple[float, float, int], tuple[float, float]] = {}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -1557,6 +1559,10 @@ async def building_risk_at(
         None, ge=0.0, le=360.0,
         description="창문이 향하는 방위각(0=북,90=동) — 온보딩에서 받으면 건물 방위 추정보다 우선",
     ),
+    wall: float | None = Query(None, ge=-30.0, le=80.0, description="벽 표면온도 실측(°C) — MLX90614"),
+    radiant: float | None = Query(
+        None, ge=-30.0, le=80.0, description="방 복사온도 실측(°C) — 8x8 배경 평균(사람 제외)"),
+    occupied: bool | None = Query(None, description="8x8 재실 여부"),
 ) -> dict:
     """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
@@ -1678,6 +1684,13 @@ async def building_risk_at(
                 if age_h < 48.0:
                     t_in_prev, prev_age_h = prev_rec[1], age_h
 
+            # 잔차 학습 (2026-09-23) — 실측 − 외부부하 추정을 집(좌표·층)별 지수평균.
+            #   센서가 있으면 갱신만, 없으면(끊김·다른 방) 7일 안의 값을 추정에 더한다.
+            res_rec = _INDOOR_RESIDUAL.get(mem_key)
+            residual_bias = None
+            if res_rec is not None and (_time.time() - res_rec[0]) < 7 * 86400:
+                residual_bias = res_rec[1]
+
             ind = compute_indoor(
                 t_out_now=obs.temperature_c,
                 t_mean_today=t_mean,
@@ -1697,7 +1710,16 @@ async def building_risk_at(
                 facade_note=facade_note,
                 t_in_prev=t_in_prev,
                 prev_age_h=prev_age_h,
+                wall_measured=wall,
+                radiant_measured=radiant,
+                occupied=occupied,
+                residual_bias=residual_bias,
             )
+            if ind.residual is not None:
+                ema = ind.residual if res_rec is None else 0.8 * res_rec[1] + 0.2 * ind.residual
+                if len(_INDOOR_RESIDUAL) > 10_000:
+                    _INDOOR_RESIDUAL.clear()
+                _INDOOR_RESIDUAL[mem_key] = (_time.time(), ema)
             if len(_INDOOR_MEMORY) > 10_000:      # 폭주 방지 — 오래된 것부터 비움
                 _INDOOR_MEMORY.clear()
             _INDOOR_MEMORY[mem_key] = (_time.time(), ind.t_in_est)
