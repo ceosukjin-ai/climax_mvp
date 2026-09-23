@@ -302,17 +302,28 @@ async def stations(lat: float, lon: float, radius: int = 1200,
             best[s["name"]] = s
     sts = sorted(best.values(), key=lambda x: x["meters"])[:6]
 
-    # 출구를 가장 가까운 역에 붙인다. 400 m 밖이면 어느 역 것인지 알 수 없으므로 버린다.
+    # 출구를 역에 붙인다. **이름이 먼저다** — 도쿄역 지하에는 오테마치 출구가 400 m 안에 있어
+    # 거리만 보면 남의 역 출구가 섞인다(9/23 확인: 東京 에 「大手町 B8b」 가 붙었다).
     for e in ents:
-        near_s, near_d = None, ENTRANCE_LINK_M
-        for s in sts:
-            d = _haversine(e["lat"], e["lon"], s["lat"], s["lon"])
-            if d < near_d:
-                near_s, near_d = s, d
+        ename = e["name"] or ""
+        near_s = None
+        for st in sts:
+            if st["name"] and st["name"] in ename:
+                near_s = st
+                break
+        if near_s is None and len(ename) > 3 and ("駅" in ename or "口" in ename):
+            continue          # 다른 역 이름이 박힌 출구 — 어느 역 것인지 단정하지 않는다
+        if near_s is None:
+            near_d = ENTRANCE_LINK_M
+            for st in sts:
+                d = _haversine(e["lat"], e["lon"], st["lat"], st["lon"])
+                if d < near_d:
+                    near_s, near_d = st, d
         if near_s is None:
             continue
         near_s["entrances"].append({
-            "label": e["ref"] or e["name"] or "",
+            # 이름도 번호도 없는 출구가 흔하다 — 화면에 빈칸이 뜨지 않게 기본말을 준다.
+            "label": e["ref"] or ename or {"ja": "出口", "ko": "출구"}.get(lang, "Exit"),
             "lat": round(e["lat"], 6), "lon": round(e["lon"], 6),
             "meters": round(_haversine(lat, lon, e["lat"], e["lon"])),
             "wheelchair": e["wheelchair"],
