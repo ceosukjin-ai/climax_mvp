@@ -613,6 +613,35 @@ async def poi_near(
 
 
 @router.get(
+    "/poi/stations",
+    summary="가까운 역과 출구 — 일본 일상 이동의 기준점",
+)
+async def poi_stations(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    radius: int = Query(1200, ge=200, le=1500, description="반경 m"),
+    lang: str = Query("ja", description="이름 우선 언어 (ja/en/ko)"),
+) -> JSONResponse:
+    """일본의 하루 이동은 역을 축으로 돈다(집→역, 역→직장·관광지). 그 기준점을 한 번에 준다.
+
+    출구(`entrances`)를 함께 주는 이유: 큰 역은 출구가 열 개가 넘고, 어느 출구로 나오느냐로
+    걷는 길이 통째로 달라진다. 출구마다 `/route/shade` 를 돌리면 **어느 출구가 시원한지**를
+    답할 수 있다 — 지도 앱이 답해 주지 않는 질문이다.
+    출구가 매핑돼 있지 않은 역은 `entrances` 가 빈 배열이다(없는 것을 지어내지 않는다).
+    출처: © OpenStreetMap contributors (ODbL).
+    """
+    from app.services import poi as _poi
+    try:
+        items = await _poi.stations(lat, lon, radius, lang=lang)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("poi/stations 실패: {}", e)
+        items = []
+    return JSONResponse({"ok": True, "count": len(items), "radius": radius,
+                         "items": items,
+                         "attribution": "© OpenStreetMap contributors"})
+
+
+@router.get(
     "/poi/along",
     summary="경로 위의 장소 — 가는 길에 뭐가 있나",
 )

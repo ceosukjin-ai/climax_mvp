@@ -217,3 +217,113 @@ async def along(path: list[tuple[float, float]], radius: int = 150,
         out.append(o)
     out.sort(key=lambda x: x["at_m"])
     return out[:40]
+
+
+# ── 역과 출구 (2026-09-23) ───────────────────────────────────
+# 왜: 일본의 하루 이동은 역을 중심으로 돈다. 집→역, 역→회사, 역→관광지가 대부분이고
+#     여름에 실제로 더운 구간도 여기다. 그런데 앱은 지도를 두 번 눌러야 경로가 나왔다.
+#
+# 출구까지 주는 이유: 큰 역은 출구가 열 개가 넘고, 어느 출구로 나오느냐에 따라
+#     걷는 길이 통째로 달라진다. "몇 번 출구가 시원한가" 는 지도 앱이 답해 주지 않는다.
+#     출구가 매핑돼 있지 않은 역은 역 중심점 하나만 돌려준다(없는 것을 지어내지 않는다).
+STATION_FILTER = 'railway~"^(station|halt)$"'
+ENTRANCE_FILTER = 'railway~"^(subway_entrance|train_station_entrance)$"'
+ENTRANCE_LINK_M = 400.0      # 이 거리 안의 출구만 그 역의 것으로 본다
+
+
+def _station_query(lat: float, lon: float, radius: int) -> str:
+    a = f"(around:{radius},{lat:.6f},{lon:.6f})"
+    return ("[out:json][timeout:40];("
+            f"node[{STATION_FILTER}]{a};way[{STATION_FILTER}]{a};"
+            f"node[{ENTRANCE_FILTER}]{a};"
+            ");out center tags qt 300;")
+
+
+async def stations(lat: float, lon: float, radius: int = 1200,
+                   lang: str = "ja") -> list[dict[str, Any]]:
+    """가까운 역 + 그 역의 출구. 가까운 순. 실패하면 빈 목록."""
+    radius = max(200, min(int(radius), MAX_RADIUS_M))
+    key = f"st:{round(lat, 3)}:{round(lon, 3)}:{radius}:{lang}"
+    hit = _CACHE.get(key)
+    if hit and time.time() - hit[0] < _TTL_S:
+        return hit[1]
+
+    q = _station_query(lat, lon, radius)
+    timeout = httpx.Timeout(connect=5.0, read=45.0, write=15.0, pool=5.0)
+    els: list[dict] | None = None
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for url in OVERPASS_ENDPOINTS:
+            try:
+                async with _SLOTS:
+                    resp = await client.post(url, data={"data": q}, headers=_UA)
+                if resp.status_code != 200:
+                    logger.warning("[poi/station] {} HTTP {}", url, resp.status_code)
+                    continue
+                data = resp.json()
+                if isinstance(data.get("elements"), list):
+                    els = data["elements"]
+                    break
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[poi/station] {} 실패: {}", url, e)
+    if els is None:
+        return []
+
+    sts: list[dict[str, Any]] = []
+    ents: list[dict[str, Any]] = []
+    for el in els:
+        t = el.get("tags") or {}
+        la = el.get("lat") or (el.get("center") or {}).get("lat")
+        lo = el.get("lon") or (el.get("center") or {}).get("lon")
+        if la is None or lo is None:
+            continue
+        la, lo = float(la), float(lo)
+        name = (t.get(f"name:{lang}") or t.get("name") or t.get("name:ja")
+                or t.get("name:en") or "").strip()
+        if t.get("railway") in ("subway_entrance", "train_station_entrance"):
+            ents.append({"name": name or (t.get("ref") or "").strip(),
+                         "ref": (t.get("ref") or "").strip() or None,
+                         "lat": la, "lon": lo,
+                         "wheelchair": t.get("wheelchair") or None})
+            continue
+        if not name:
+            continue
+        sts.append({"name": name,
+                    "name_en": (t.get("name:en") or "").strip() or None,
+                    "lat": la, "lon": lo,
+                    "operator": (t.get("operator") or "").strip() or None,
+                    "meters": round(_haversine(lat, lon, la, lo)),
+                    "entrances": []})
+
+    # 같은 역이 node·way 로 두 번 잡힌다 — 이름으로 합치고 가까운 쪽을 남긴다.
+    best: dict[str, dict[str, Any]] = {}
+    for s in sts:
+        cur = best.get(s["name"])
+        if cur is None or s["meters"] < cur["meters"]:
+            best[s["name"]] = s
+    sts = sorted(best.values(), key=lambda x: x["meters"])[:6]
+
+    # 출구를 가장 가까운 역에 붙인다. 400 m 밖이면 어느 역 것인지 알 수 없으므로 버린다.
+    for e in ents:
+        near_s, near_d = None, ENTRANCE_LINK_M
+        for s in sts:
+            d = _haversine(e["lat"], e["lon"], s["lat"], s["lon"])
+            if d < near_d:
+                near_s, near_d = s, d
+        if near_s is None:
+            continue
+        near_s["entrances"].append({
+            "label": e["ref"] or e["name"] or "",
+            "lat": round(e["lat"], 6), "lon": round(e["lon"], 6),
+            "meters": round(_haversine(lat, lon, e["lat"], e["lon"])),
+            "wheelchair": e["wheelchair"],
+        })
+    for s in sts:
+        s["entrances"].sort(key=lambda x: x["meters"])
+        s["entrances"] = s["entrances"][:8]
+        s["lat"], s["lon"] = round(s["lat"], 6), round(s["lon"], 6)
+
+    if len(_CACHE) > _CACHE_MAX:
+        for kk in list(_CACHE)[: _CACHE_MAX // 2]:
+            _CACHE.pop(kk, None)
+    _CACHE[key] = (time.time(), sts)
+    return sts
