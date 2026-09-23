@@ -168,8 +168,8 @@ IN = [rows_of("360° panoramas", "91 panoramas at 80 sites",
               "emissivity 0.93–0.95"),
       rows_of("360° panoramas", "the same panoramas",
               "read for the direct beam"),
-      rows_of("Buildings and canopy", "305,621 polygons",
-              "Meta/WRI canopy height")]
+      rows_of("Buildings, canopy, trees", "305,621 polygons",
+              "canopy height and street trees")]
 PR = [rows_of("Semantic segmentation", "sky, tree, building, ground",
               "Steyn 36-ring integration"),
       rows_of("Temperature retrieval", "raw radiance and the",
@@ -183,15 +183,15 @@ CK = [[("Verification", True, MUTED), ("difference from the analytic", False, No
       [("Verification", True, MUTED), ("radiance linear in T$^4$", False, None),
        ("324 of 328 images passed", False, None)],
       [("Verification", True, MUTED), ("globe-temperature rise separates", False, None),
-       ("the groups: 21.8 K sunlit against", False, None),
-       ("9.8 K shaded, $p$ < 0.001;", False, None),
+       ("the groups: 21.8 °C sunlit against", False, None),
+       ("9.8 °C shaded, $p$ < 0.001;", False, None),
        ("two sites disagreed", False, None)],
       [("Verification", True, MUTED), ("geometric SVF vs. 79 field", False, None),
-       ("panoramas: MAE 0.108,", False, None),
-       ("bias +0.022, r 0.69", False, None)]]
+       ("panoramas: MAE 0.112,", False, None),
+       ("bias +0.046, r 0.70", False, None)]]
 OU = [rows_of("View factors", "sky, tree and building"),
       rows_of("Surface temperature", "pavement and wall separated",
-              "mean offset +9.3 K"),
+              "mean offset +9.3 °C"),
       rows_of("Sun or shade", "at the reading time"),
       rows_of("View factors", "without street view")]
 
@@ -259,7 +259,7 @@ ax.add_patch(Rectangle((68.0, LY - 1.5), 9.2, 3.0, facecolor=CHECK,
 ax.text(79.0, LY, "verification", fontsize=6.6, va="center", color=INK)
 
 ax.text(50.0, 2.6,
-        "All values verified against the deployed engine, 2026-09-20. The "
+        "All values verified against the deployed engine, 2026-09-23. The "
         "street-view learning layer is not part of this pipeline: its labels "
         "derive from Street View\npanoramas, which the platform terms exclude "
         "from training and validation alike. The imagery-free view factors "
@@ -267,6 +267,8 @@ ax.text(50.0, 2.6,
         fontsize=6.2, color=MUTED, ha="center", va="center", linespacing=1.6)
 
 fit_all()
-fig.savefig("/tmp/claude-0/SCS_Fig_flowchart.pdf", bbox_inches="tight", pad_inches=0.03)
-fig.savefig("/tmp/claude-0/SCS_Fig_flowchart.png", bbox_inches="tight", pad_inches=0.03)
+import sys, os
+OUT = sys.argv[1] if len(sys.argv) > 1 else "docs/figs"
+fig.savefig(f"{OUT}/SCS_Fig_flowchart.pdf", bbox_inches="tight", pad_inches=0.03)
+fig.savefig(f"{OUT}/SCS_Fig_flowchart.png", bbox_inches="tight", pad_inches=0.03)
 print("saved")
