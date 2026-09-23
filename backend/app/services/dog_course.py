@@ -548,6 +548,13 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
     known_m = 0.0
     lane_m = 0.0                 # 자전거 전용·지정 구간 (표시용)
     side_m = 0.0                 # 보도 구간 (표시용)
+    # 경로 전체의 **체감기후**(2026-09-23). 구간마다 PET 를 이미 내고 있었는데 경로 수준에서는
+    # 그늘 비율만 내보내고 있었다. 길을 고를 때 사람이 실제로 느끼는 것은 그늘 비율이 아니라
+    # 체감온도다 — 그늘이 적어도 바람이 통하고 노면이 찬 길이 더 시원할 수 있다.
+    # 거리로 가중한 평균과 최대값을 함께 준다(가장 더운 구간이 곧 견디기의 한계다).
+    pet_m = 0.0                  # PET 를 계산할 수 있었던 거리
+    pet_wsum = 0.0
+    max_pet = None
     # 구간별 값도 함께 내보낸다 (2026-09-12). 여기서 이미 전부 계산돼 있는데 평균만 내고
     # 버리고 있었다 → 경로 위에서 "어느 골목이 더운지"를 보여주려면 이 값이 필요하다.
     # 추가 계산도, 추가 API 호출도 없다. 기존 클라이언트는 이 필드를 안 읽으면 그만이다.
@@ -588,6 +595,9 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
             pet = _seg_pet(g.cond, mrt_h)
             if pet is not None:
                 seg["pet"] = round(pet, 1)    # 체감기후 ℃ — 간이 MRT 기반 개략치
+                pet_m += meters
+                pet_wsum += pet * meters
+                max_pet = pet if max_pet is None else max(max_pet, pet)
         segments.append(seg)
     if total_m <= 0:
         return {}
@@ -601,6 +611,11 @@ def _summarize(g: Graph, nodes: list[int], bearing: float) -> dict[str, Any]:
         "mean_cost": round(weighted_cost / total_m, 2),
         "max_surface_temp_c": round(max_ts, 1),
         "shade_ratio": round(shaded_m / total_m, 3),
+        # 개략치다(간이 MRT). 절대값은 점 조회의 정식 VPTI 와 ±2~3 ℃ 어긋난다 —
+        # 경로 **사이의 비교**에 쓸 값이다. pet_cover 는 계산이 된 구간의 거리 비율.
+        "mean_pet_c": (round(pet_wsum / pet_m, 1) if pet_m > 0 else None),
+        "max_pet_c": (round(max_pet, 1) if max_pet is not None else None),
+        "pet_cover": (round(pet_m / total_m, 3) if total_m > 0 else 0.0),
         "surface_known_ratio": round(known_m / total_m, 3),
         "bearing_deg": bearing,
         # 자전거 모드에서만 의미가 있다. **경로 선택에는 안 쓰였고 표시용이다.**

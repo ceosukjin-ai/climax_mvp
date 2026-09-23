@@ -38,6 +38,7 @@
   .fab2{bottom:calc(70px + var(--sab));font-size:20px}
   .fab3{bottom:calc(124px + var(--sab));font-size:20px}
   .fab4{bottom:calc(178px + var(--sab));font-size:20px}
+  .fab5{bottom:calc(232px + var(--sab));font-size:20px}
   /* 대시보드(home.html)에서 넘어온 경우에만 보인다 — 돌아갈 길 (2026-09-18) */
   .homeBtn{position:absolute;z-index:1000;left:14px;top:calc(14px + var(--sat));height:38px;padding:0 14px;
     border-radius:19px;border:0;background:rgba(255,255,255,.94);color:#1c1c1e;font:inherit;font-size:14px;
@@ -123,6 +124,7 @@
 </div>
 <div class="hint" id="hint">地図をタップ、または ◎ で現在地</div>
 <button class="homeBtn" id="homeBtn" onclick="location.href='./home.html'">&#8592; <span id="homeTxt">ホーム</span></button>
+<button class="fab fab5" id="stBtn" title="最寄り駅">🚉</button>
 <button class="fab fab4" id="dogBtn" title="犬の散歩">🐕</button>
 <button class="fab fab3" id="poiBtn" title="周辺">🍜</button>
 <button class="fab fab2" id="routeBtn" title="日陰ルート">🚶</button>
@@ -758,6 +760,128 @@ dogBtn.onclick=()=>{
   loadDog();
 };
 
+// ─── 역까지 가는 길 (2026-09-23) ─────────────────────────────
+// 왜: 일본의 하루 이동은 역을 축으로 돈다(집→역, 역→직장·관광지). 여름에 실제로 더운 구간도
+//     여기다. 그런데 지금까지는 지도를 두 번 눌러야 경로가 나왔다 — 매일 쓰는 길인데.
+// 출구까지 비교하는 이유: 큰 역은 출구가 열 개가 넘고, 어느 출구로 가느냐로 걷는 길이 통째로
+//     달라진다. "몇 번 출구가 시원한가" 는 지도 앱이 답해 주지 않는 질문이고, 우리는 답할 수 있다.
+//     출구 후보 3곳까지만 본다 — 경로 계산이 한 번에 몇 초라 네 개부터는 기다림이 길어진다.
+const ST_API="/api/v1/poi/stations";
+const ST_T={
+ ja:{load:"近くの駅を探しています…",pick:"タップで駅までの日陰ルート",none:"近くに駅が見つかりません。地図を動かしてお試しください。",
+     exits:"出口",calc:"出口ごとに日陰を比べています…",best:"が涼しい",other:"他の出口",noExit:"出口の登録なし（駅の中心まで）",min:"分",fail:"経路が見つかりません"},
+ en:{load:"Looking for stations nearby…",pick:"Tap one for a shade route to the station",none:"No station nearby. Move the map and try again.",
+     exits:"exits",calc:"Comparing shade at each exit…",best:" is the coolest",other:"Other exits",noExit:"No exits mapped (routing to the station point)",min:"min",fail:"No route found"},
+ ko:{load:"가까운 역을 찾는 중…",pick:"누르면 역까지 그늘 경로",none:"근처에 역이 없습니다. 지도를 옮겨 다시 해보세요.",
+     exits:"출구",calc:"출구별로 그늘을 비교하는 중…",best:"가 시원합니다",other:"다른 출구",noExit:"출구 정보 없음(역 중심까지)",min:"분",fail:"경로를 찾지 못했습니다"}};
+function ST(){ return ST_T[L_]||ST_T.ja; }
+const stBtn=document.getElementById('stBtn');
+let stLayers=[], stList=[];
+function clearSt(){ stLayers.forEach(l=>l.remove()); stLayers=[]; }
+
+async function loadStations(){
+  const o=poiOrigin();
+  clearSt(); stBtn.classList.add('on');
+  sheet.classList.remove('hidden');
+  setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+ST().load+'</div>');
+  let items=[];
+  try{
+    const r=await fetch(ST_API+'?lat='+o.la.toFixed(5)+'&lon='+o.lo.toFixed(5)+'&radius=1200&lang='+L_);
+    const d=await r.json(); items=d.items||[];
+  }catch(e){ items=[]; }
+  stList=items;
+  if(!items.length){ setSheet('<div style="font-size:13px;color:var(--muted)">'+ST().none+'</div>'); return; }
+  items.forEach((st,i)=>{
+    const m=L.circleMarker([st.lat,st.lon],{radius:7,color:"#fff",weight:2,
+      fillColor:"#4d7fa8",fillOpacity:.95}).addTo(map);
+    m.on('click',()=>routeToStation(i));
+    stLayers.push(m);
+  });
+  setSheet('<div style="font-size:12px;color:var(--muted);margin-bottom:6px">'+ST().pick+'</div>'
+    + items.map((st,i)=>
+      '<div class="poiRow" data-st="'+i+'" style="display:flex;justify-content:space-between;gap:8px;'
+      +'padding:9px 2px;border-top:1px solid var(--line);cursor:pointer">'
+      +'<div><b>\u{1F689} '+esc(st.name)+'</b>'
+      +(st.operator?'<small style="color:var(--muted)"> · '+esc(st.operator)+'</small>':'')
+      +'<div style="font-size:11.5px;color:var(--muted)">'
+      +(st.entrances.length? st.entrances.length+' '+ST().exits : ST().noExit)+'</div></div>'
+      +'<div style="font-size:12px;color:var(--muted);white-space:nowrap">'+st.meters+' m</div></div>').join(''));
+  sheet.querySelectorAll('[data-st]').forEach(el=>{
+    el.onclick=(ev)=>{ ev.stopPropagation(); routeToStation(+el.dataset.st); };
+  });
+}
+
+async function routeToStation(idx){
+  const st=stList[idx]; if(!st) return;
+  const o=poiOrigin();
+  // 출구가 매핑돼 있으면 가까운 3곳, 없으면 역 중심점 하나.
+  const cands = (st.entrances && st.entrances.length)
+      ? st.entrances.slice(0,3).map(e=>({label:e.label, lat:e.lat, lon:e.lon}))
+      : [{label:null, lat:st.lat, lon:st.lon}];
+  rOrigin={la:o.la, lo:o.lo};
+  clearRoutes(); clearSt(); stBtn.classList.remove('on');
+  sheet.classList.remove('hidden');
+  setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+ST().calc+'</div>');
+  const q=(c)=>ROUTE_API+'?from_lat='+o.la.toFixed(5)+'&from_lon='+o.lo.toFixed(5)
+          +'&to_lat='+c.lat.toFixed(5)+'&to_lon='+c.lon.toFixed(5)+'&mode='+travelMode;
+  let res=[];
+  try{
+    res=await Promise.all(cands.map(async c=>{
+      try{ const r=await fetch(q(c)); const d=await r.json();
+           return (d && d.ok && d.comfort) ? {c, d} : null; }
+      catch(e){ return null; }
+    }));
+  }catch(e){ res=[]; }
+  res=res.filter(Boolean);
+  if(!res.length){ nocov(ST().fail); return; }
+  // 고르는 기준은 **체감기후(PET)** 다 (2026-09-23 정정).
+  // 처음엔 그늘 비율로 골랐는데, 사람이 느끼는 것은 그늘의 양이 아니라 체감온도다 —
+  // 그늘이 적어도 바람이 통하고 노면이 찬 길이 더 시원할 수 있다. 서버가 경로마다
+  // 거리가중 평균 PET(mean_pet_c)를 주므로 그 낮은 쪽을 고른다.
+  // 값이 없으면(옛 서버·계산 불가) 그늘 비율로 물러선다. 같으면 짧은 쪽.
+  const petOf=r=>(r.d.comfort.mean_pet_c==null?null:r.d.comfort.mean_pet_c);
+  const havePet=res.every(r=>petOf(r)!=null);
+  res.sort((a,b)=> havePet ? (petOf(a)-petOf(b)) || (a.d.comfort.seconds-b.d.comfort.seconds)
+                           : (b.d.comfort.shade_ratio-a.d.comfort.shade_ratio)
+                             || (a.d.comfort.seconds-b.d.comfort.seconds));
+  const best=res[0], d=best.d;
+  rDest={la:best.c.lat, lo:best.c.lon};
+  lastRoute=d.comfort; baseRoute=d.comfort;
+  drawRoute(d.shortest,"#8899a6","6 6",4);
+  if(!drawSegments(d.comfort)) drawRoute(d.comfort,"#2e9e6b",null,6);
+  rLayers.push(L.circleMarker([best.c.lat,best.c.lon],{radius:7,color:"#fff",weight:2,
+    fillColor:"#2e9e6b",fillOpacity:.95}).addTo(map));
+  map.fitBounds(L.latLngBounds(d.comfort.coords.map(p=>[p.lat,p.lon])),{padding:[40,120]});
+  toggleMini(false);
+  const t=T(), s=ST();
+  const pct=v=>Math.round((v||0)*100), mn=v=>Math.max(1,Math.round((v||0)/60));
+  const bestMin=mn(d.comfort.seconds);
+  const others=res.slice(1).map(r=>{
+    const dt=mn(r.d.comfort.seconds)-bestMin;
+    const p=r.d.comfort.mean_pet_c;
+    return esc(r.c.label||'')+' '+(p!=null? t.feelS+' '+p.toFixed(1)+'°C'
+                                          : t.shadeW+' '+pct(r.d.comfort.shade_ratio)+'%')
+         + (dt>0?' (+'+dt+s.min+')':'');
+  }).join(' · ');
+  setSheet(
+    '<div style="font-size:13px"><b>\u{1F689} '+esc(st.name)+'</b> · '+bestMin+s.min+' · '+d.comfort.meters+'m</div>'
+    + (best.c.label
+        ? '<div class="act" style="background:#2e9e6b1a;border:1px solid #2e9e6b44;color:#2e9e6b;margin-top:6px">'
+          +'<b>'+esc(best.c.label)+'</b>'+s.best
+          +' <small style="color:var(--txt)">'
+          +(d.comfort.mean_pet_c!=null? t.feelS+' '+d.comfort.mean_pet_c.toFixed(1)+'°C · ':'')
+          +t.shadeW+' '+pct(d.comfort.shade_ratio)+'% · '
+          +t.paw+' '+Math.round(d.comfort.max_surface_temp_c)+'°C</small></div>'
+        : '<div style="font-size:12px;color:var(--muted);margin-top:6px">'+s.noExit+'</div>')
+    + (others?'<div style="font-size:11.5px;color:var(--muted);margin-top:6px">'+s.other+': '+others+'</div>':'')
+    + '<button id="navBtn" class="navstart">\u{1F9ED} '+t.navStart+'</button>'
+    + '<div class="foot"><span>'+t.foot+'</span><span>'+(d.weather?d.weather.ta+'°C':'')+'</span></div>');
+}
+stBtn.onclick=()=>{
+  if(stLayers.length){ clearSt(); stBtn.classList.remove('on'); sheet.classList.add('hidden'); return; }
+  loadStations();
+};
+
 // ─── 턴바이턴 안내 (2026-09-13) ──────────────────────────────
 // 상수는 아이폰 DogNavEngine·안드로이드 TrailMap 과 **같은 값**이다 (2026-08-30 문서).
 // 웹만 다르게 굴면 같은 회사 앱이 서로 다른 말을 하게 된다.
@@ -929,6 +1053,7 @@ applyLang();
       if(mode === 'route') routeBtn.onclick();
       else if(mode === 'poi') poiBtn.onclick();
       else if(mode === 'dog') dogBtn.onclick();
+      else if(mode === 'station') stBtn.onclick();
     }catch(e){}
   }, 350);
 })();
