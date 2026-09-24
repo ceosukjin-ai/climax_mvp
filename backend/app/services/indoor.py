@@ -356,3 +356,114 @@ def compute_indoor(
         actions=actions or None,
         residual=residual,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-09-24 — 실내 체감 시간대 예보 (새벽·오전·오후·저녁)
+#
+#   외부부하 모델은 "바깥 날씨가 이러면 방이 몇 도"를 낸다. 기상청 단기예보를 시간별로
+#   넣으면 앞으로의 외부부하 추정이 나온다. 여기에 이 방의 실측을 이렇게 붙인다:
+#
+#     예보(h) = 외부부하(h) + b + (r_now − b)·exp(−Δh/τr)
+#       r_now = 지금 실측 − 지금 외부부하        (지금의 잔차 — 냉방·재실·환기 포함)
+#       b     = 이 집(센서)의 학습된 잔차 평균    (단열·생활 습관)
+#       τr    = 12h  ⚠️ 가정값 — 지금의 특수 상태(에어컨 켬 등)가 반나절에 걸쳐
+#               평소 수준으로 돌아간다고 본다. 파일럿 실측(예보 vs 실측)으로 교정할 것.
+#     → Δh=0 이면 정확히 지금 실측과 같고, 멀어질수록 "이 집의 평소 오차"로 수렴.
+#
+#   습도: 방의 수증기압은 몇 시간 안에 크게 안 변한다고 보고 지금 실측 수증기압을 유지,
+#         예보 기온에서 상대습도를 다시 계산한다. 센서가 없으면 외기 예보 습도를 변환.
+#   복사: 지금의 (복사 − 공기) 차이를 유지한다.  ⚠️ 가정값 — 낮/밤 벽 온도 변화 미반영.
+# ─────────────────────────────────────────────────────────────────────────────
+_PERIODS = (("새벽", 0, 6), ("오전", 6, 12), ("오후", 12, 18), ("저녁", 18, 24))
+_TAU_RESID_H = 12.0
+
+
+def _period_of(hour: int) -> int:
+    return min(3, hour // 6)
+
+
+def forecast_indoor_periods(
+    *,
+    now: datetime,
+    hours: list[tuple[datetime, float, float, float]],  # (시각, 외기온, 외기습도, 구름 0~1)
+    t_mean_by_date: dict,                 # date → 그날 평균기온 ((최고+최저)/2)
+    base: dict,                           # building_score, structure, age, conditions,
+                                          # floor, total_floors, lat, lon
+    gain_at,                              # callable(datetime) -> facade_gain
+    formula_now: float | None,            # 지금 외부부하 추정 (t_in_formula)
+    t_in_now: float | None,               # 지금 실측 공기온도 (센서 없으면 None)
+    rh_in_now: float | None,              # 지금 실측 습도
+    rad_offset: float | None,             # 지금 (복사 − 공기)
+    residual_bias: float | None,          # 학습된 잔차
+    n_periods: int = 4,
+) -> list[dict]:
+    from datetime import timedelta
+
+    measured = t_in_now is not None and formula_now is not None
+    r_now = (t_in_now - formula_now) if measured else None
+    e_in = None
+    if measured and rh_in_now is not None:
+        e_in = (rh_in_now / 100.0) * _saturation_vapor_pressure(t_in_now)
+
+    # 지금 시간대부터 n개 시간대의 (날짜, 인덱스)
+    slots = []
+    d0, p0 = now.date(), _period_of(now.hour)
+    for k in range(n_periods):
+        p = p0 + k
+        slots.append((d0 + timedelta(days=p // 4), p % 4))
+    horizon_end = datetime.combine(
+        slots[-1][0], datetime.min.time(), tzinfo=now.tzinfo
+    ) + timedelta(hours=_PERIODS[slots[-1][1]][2])
+
+    per: dict[tuple, list[tuple[float, float, str]]] = {s: [] for s in slots}
+    for dt, t_out, rh_out, cloud in hours:
+        if dt < now - timedelta(minutes=30) or dt >= horizon_end:
+            continue
+        key = (dt.date(), _period_of(dt.hour))
+        if key not in per:
+            continue
+        t_mean = t_mean_by_date.get(dt.date(), t_out)
+        dh = max(0.0, (dt - now).total_seconds() / 3600.0)
+        if measured:
+            b = residual_bias if residual_bias is not None else r_now
+            bias_h = b + (r_now - b) * math.exp(-dh / _TAU_RESID_H)
+        else:
+            bias_h = residual_bias
+        kw = dict(
+            t_out_now=t_out, t_mean_today=t_mean, humidity_pct=rh_out,
+            cloud_fraction=cloud, now=dt, facade_gain=gain_at(dt),
+            residual_bias=bias_h, **base,
+        )
+        first = compute_indoor(**kw)
+        t_in = first.t_in_est
+        rh = None
+        if e_in is not None:
+            rh = min(100.0, e_in / _saturation_vapor_pressure(t_in) * 100.0)
+        rad = (t_in + rad_offset) if rad_offset is not None else None
+        if rh is not None or rad is not None:
+            second = compute_indoor(**kw, humidity_measured=rh, radiant_measured=rad)
+        else:
+            second = first
+        per[key].append((second.t_in_est, second.indoor_pvpti, second.indoor_risk))
+
+    out = []
+    for (d, p) in slots:
+        vals = per[(d, p)]
+        if not vals:
+            continue
+        hot = max(vals, key=lambda v: v[1])
+        out.append({
+            "label": _PERIODS[p][0],
+            "date": d.isoformat(),
+            "is_today": d == now.date(),
+            "start_hour": _PERIODS[p][1],
+            "end_hour": _PERIODS[p][2],
+            "t_in_min": round(min(v[0] for v in vals), 1),
+            "t_in_max": round(max(v[0] for v in vals), 1),
+            "feel_min": round(min(v[1] for v in vals), 1),
+            "feel_max": round(hot[1], 1),
+            "risk": hot[2],
+            "hours": len(vals),
+        })
+    return out

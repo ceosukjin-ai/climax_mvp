@@ -1563,6 +1563,9 @@ async def building_risk_at(
     radiant: float | None = Query(
         None, ge=-30.0, le=80.0, description="방 복사온도 실측(°C) — 8x8 배경 평균(사람 제외)"),
     occupied: bool | None = Query(None, description="8x8 재실 여부"),
+    sensor_id: str | None = Query(
+        None, max_length=64,
+        description="방 센서 식별자 — 있으면 잔차를 좌표 대신 센서별로 학습 (집·연구실 구분, 2026-09-24)"),
 ) -> dict:
     """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
@@ -1572,7 +1575,7 @@ async def building_risk_at(
     데이터: V-World + 건축물대장 + 기상청 — 공개 데이터만, 좌표·생체 미저장.
     """
     from app.services.building import building_risk, to_dict
-    from app.services.indoor import compute_indoor
+    from app.services.indoor import compute_indoor, forecast_indoor_periods
 
     b = await building_risk(lat, lon)
     # 2026-08-18 — 건물 정보가 없다고 **404로 끊지 않는다.**
@@ -1613,6 +1616,8 @@ async def building_risk_at(
             #    이미 지나간 시간대를 대표하도록 **현재 관측값을 후보에 포함**한다
             #    (새벽이면 현재값이 그날 최저에 가깝다).
             t_mean = obs.temperature_c
+            fcst = None
+            geom = None
             try:
                 fcst = await orchestrator.kma.get_short_term_forecast(lat, lon)
                 today = [
@@ -1686,7 +1691,10 @@ async def building_risk_at(
 
             # 잔차 학습 (2026-09-23) — 실측 − 외부부하 추정을 집(좌표·층)별 지수평균.
             #   센서가 있으면 갱신만, 없으면(끊김·다른 방) 7일 안의 값을 추정에 더한다.
-            res_rec = _INDOOR_RESIDUAL.get(mem_key)
+            # 2026-09-24: 센서 식별자가 오면 센서별로 학습 — 같은 폰이 집·연구실 센서를
+            #   오가도 서로의 잔차가 섞이지 않는다 (좌표는 GPS 흔들림에도 약하다).
+            res_key = ("sensor", sensor_id) if sensor_id else mem_key
+            res_rec = _INDOOR_RESIDUAL.get(res_key)
             residual_bias = None
             if res_rec is not None and (_time.time() - res_rec[0]) < 7 * 86400:
                 residual_bias = res_rec[1]
@@ -1719,7 +1727,7 @@ async def building_risk_at(
                 ema = ind.residual if res_rec is None else 0.8 * res_rec[1] + 0.2 * ind.residual
                 if len(_INDOOR_RESIDUAL) > 10_000:
                     _INDOOR_RESIDUAL.clear()
-                _INDOOR_RESIDUAL[mem_key] = (_time.time(), ema)
+                _INDOOR_RESIDUAL[res_key] = (_time.time(), ema)
             if len(_INDOOR_MEMORY) > 10_000:      # 폭주 방지 — 오래된 것부터 비움
                 _INDOOR_MEMORY.clear()
             _INDOOR_MEMORY[mem_key] = (_time.time(), ind.t_in_est)
@@ -1728,6 +1736,61 @@ async def building_risk_at(
             result["indoor_risk"] = ind.indoor_risk
             result["indoor_measured"] = ind.measured
             result["indoor_basis"] = ind.basis
+
+            # 실내 체감 시간대 예보 (2026-09-24) — 외부부하 예보 + 이 방 실측 잔차
+            try:
+                if fcst:
+                    _sky = {"맑음": 0.1, "구름많음": 0.6, "흐림": 0.9}
+                    hours = [
+                        (f.forecast_for, f.temperature_c,
+                         f.humidity_pct if f.humidity_pct is not None else obs.humidity_pct,
+                         _sky.get(f.sky_condition or "", 0.5))
+                        for f in fcst if f.temperature_c is not None
+                    ]
+                    by_date: dict = {}
+                    for f in fcst:
+                        if f.temperature_c is not None:
+                            by_date.setdefault(f.forecast_for.date(), []).append(f.temperature_c)
+                    by_date.setdefault(datetime.now(KST).date(), []).append(obs.temperature_c)
+                    t_mean_by_date = {d: (max(v) + min(v)) / 2.0 for d, v in by_date.items()}
+
+                    def _gain_at(dt, _geom=geom):
+                        if _geom is None:
+                            return facade_gain
+                        try:
+                            from app.core.smti import compute_solar_position
+                            from app.services.geo import facade_solar_gain, shading_factor
+                            s_ = compute_solar_position(lat, lon, dt)
+                            g_, _n = facade_solar_gain(
+                                s_.azimuth_deg, s_.elevation_deg, _geom, facing_deg=facing)
+                            sh_, _n2 = shading_factor(s_.azimuth_deg, s_.elevation_deg, _geom, floor)
+                            return g_ * sh_
+                        except Exception:  # noqa: BLE001
+                            return facade_gain
+
+                    bs = ind.basis
+                    rad_off = (bs["t_radiant"] - ind.t_in_est) if bs.get("t_radiant") is not None else None
+                    result["indoor_forecast"] = forecast_indoor_periods(
+                        now=datetime.now(KST),
+                        hours=hours,
+                        t_mean_by_date=t_mean_by_date,
+                        base=dict(
+                            building_score=b.score if b else 0,
+                            structure=b.structure if b else None,
+                            age=age,
+                            conditions=conditions.split(",") if conditions else None,
+                            floor=floor, total_floors=b.floors if b else None,
+                            lat=lat, lon=lon,
+                        ),
+                        gain_at=_gain_at,
+                        formula_now=bs.get("t_in_formula"),
+                        t_in_now=ambient,
+                        rh_in_now=humidity,
+                        rad_offset=rad_off,
+                        residual_bias=residual_bias,
+                    )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"indoor forecast failed ({type(e).__name__}): {e}")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"indoor pvpti failed: {e}")
     return result
