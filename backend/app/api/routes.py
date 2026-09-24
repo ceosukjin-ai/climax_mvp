@@ -1568,6 +1568,9 @@ async def building_risk_at(
         description="방 센서 식별자 — 있으면 잔차를 좌표 대신 센서별로 학습 (집·연구실 구분, 2026-09-24)"),
     wall_exterior: bool = Query(
         False, description="벽면센서가 외벽 안쪽 면을 측정하는가 — 참이면 외피 표면온도 잔차 산출"),
+    envelope_surface: float | None = Query(
+        None, ge=-30.0, le=80.0, description="외피(창·외벽) 안쪽 표면 실측(°C) — 8x8 선택 칸 평균"),
+    envelope_type: str | None = Query(None, pattern="^(glass|wall)$", description="glass / wall"),
 ) -> dict:
     """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
@@ -1742,6 +1745,8 @@ async def building_risk_at(
                 wind_ms=obs.wind_speed_ms,
                 wind_dir_deg=obs.wind_direction_deg,
                 wall_exterior=wall_exterior,
+                envelope_surface=envelope_surface,
+                envelope_type=envelope_type,
             )
             if ind.residual is not None:
                 ema = ind.residual if res_rec is None else 0.8 * res_rec[1] + 0.2 * ind.residual

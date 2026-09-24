@@ -192,6 +192,8 @@ def compute_indoor(
     wind_ms: float | None = None,           # 기상 풍속(10m) — FWI
     wind_dir_deg: float | None = None,      # 풍향(불어오는 방향)
     wall_exterior: bool = False,            # 벽면센서가 외벽 안쪽 면을 보는가 (외피 표면 잔차)
+    envelope_surface: float | None = None,  # 외피 안쪽 표면 실측 (8x8 창·외벽 선택 칸 평균)
+    envelope_type: str | None = None,       # "glass" / "wall"
 ) -> IndoorResult:
     now = now or datetime.now(KST)
     sf = _solar_factor(now, lat, lon)
@@ -302,11 +304,22 @@ def compute_indoor(
     # 외피 표면온도 잔차 (2026-09-24) — 벽면센서가 외벽 안쪽 면을 볼 때만 의미가 있다.
     #   예측 벽면 = BTLI 축열 지연 sol-air 를 관류로 전달한 값. 잔차 = 실측 − 예측.
     t_si_pred = surface_residual = None
+    surface_src = None
     if zone is not None and fl_lag is not None:
-        from app.services.btli_zone import interior_surface_pred
-        t_si_pred = interior_surface_pred(zone, t_in, fl_lag.t_sa)
-        if wall_measured is not None and wall_exterior:
-            surface_residual = wall_measured - t_si_pred
+        from app.services.btli_zone import glass_surface_pred, interior_surface_pred
+        if envelope_surface is not None and envelope_type == "glass":
+            # 8x8 로 본 창 유리 — 유리 표면 예측과 비교
+            t_si_pred = glass_surface_pred(t_in, t_out_now, fl)
+            surface_residual = envelope_surface - t_si_pred
+            surface_src = "8x8 창(유리)"
+        else:
+            t_si_pred = interior_surface_pred(zone, t_in, fl_lag.t_sa)
+            if envelope_surface is not None:
+                surface_residual = envelope_surface - t_si_pred
+                surface_src = "8x8 외벽"
+            elif wall_measured is not None and wall_exterior:
+                surface_residual = wall_measured - t_si_pred
+                surface_src = "MLX 외벽"
     state = indoor_state(residual if measured else None, surface_residual)
 
     # ⑤ 위험 등급 (야외와 동일 등급표) + 취약군 앞당김 (레벨당 1.0°C, 상한 3.0)
@@ -407,6 +420,9 @@ def compute_indoor(
             "wall_exterior": wall_exterior,
             "t_si_pred": (round(t_si_pred, 2) if t_si_pred is not None else None),
             "surface_residual": (round(surface_residual, 2) if surface_residual is not None else None),
+            "envelope_surface": (round(envelope_surface, 2) if envelope_surface is not None else None),
+            "envelope_type": envelope_type,
+            "surface_source": surface_src,
             "indoor_state": state,
         },
         ventilation=ventilation,

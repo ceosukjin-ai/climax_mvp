@@ -235,6 +235,19 @@ def face_load(
                     t_sa=t_sa, btli=t_sa - t_out)
 
 
+# 유리(창) — 복층유리 가정 ⚠️ UNCONFIRMED: U_g 2.8 W/m²K, 유리 자체 일사 흡수율 0.15
+U_GLASS = 2.8
+ALPHA_GLASS = 0.15
+
+
+def glass_surface_pred(t_in: float, t_out: float, fl: FaceLoad) -> float:
+    """창 유리 실내 표면온도 예측 — 열용량이 작아 지연 없음.
+    T_si = T_in + (U_g/h_in)·(T_sa,g − T_in),  T_sa,g = T_out + α_g·I_face/h_out.
+    ⚠️ 비확장 발코니(완충 공간)가 있으면 실제 바깥쪽 온도는 외기보다 높다 — 미반영."""
+    t_sa_g = t_out + ALPHA_GLASS * fl.i_face / fl.h_out
+    return t_in + (U_GLASS / H_IN) * (t_sa_g - t_in)
+
+
 def interior_surface_pred(z: ZoneContext, t_in: float, t_sa_lag: float) -> float:
     """외벽 실내 표면온도 예측 (정상상태 관류 + 축열 지연된 sol-air).
     T_si = T_in + (U/h_in)·(T_sa(t−lag) − T_in)."""
