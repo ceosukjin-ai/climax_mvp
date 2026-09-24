@@ -1895,8 +1895,13 @@ async def indoor_sensor_log(
     cols = archive.INDOOR_COLS if archive is not None else ()
     w = _csv.writer(buf)
     w.writerow(cols)
+    # 시각은 한국 시간(KST, +09:00)으로 내보낸다 (2026-09-24). DB 저장은 UTC 그대로.
+    def _cell(v):
+        if isinstance(v, datetime):
+            return (v.astimezone(KST) if v.tzinfo else v).isoformat(timespec="seconds")
+        return v
     for r in rows:
-        w.writerow([r[c].isoformat() if hasattr(r[c], "isoformat") else r[c] for c in cols])
+        w.writerow([_cell(r[c]) for c in cols])
     fn = f"indoor_sensor_{(sensor_id or 'all')[:8]}_{hours}h.csv"
     return _Resp(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
                  headers={"Content-Disposition": f'attachment; filename="{fn}"'})
