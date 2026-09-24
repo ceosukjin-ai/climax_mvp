@@ -1763,6 +1763,29 @@ async def building_risk_at(
             result["indoor_basis"] = ind.basis
             result["indoor_state"] = ind.basis.get("indoor_state")
 
+            # 벽면센서 실측 기록 (2026-09-24) — 실측이 있을 때만. 실패해도 응답엔 영향 없음.
+            _arch = getattr(request.app.state, "archive", None)
+            if _arch is not None and ambient is not None:
+                try:
+                    bs0 = ind.basis
+                    bt = bs0.get("btli") or {}
+                    st = bs0.get("indoor_state") or {}
+                    _arch.record_indoor(
+                        sensor_id=sensor_id, lat=lat, lon=lon, floor=floor, facing=facing,
+                        air_c=ambient, rh=humidity, wall_c=wall, radiant_c=radiant,
+                        envelope_c=envelope_surface, envelope_type=envelope_type,
+                        occupied=occupied, t_out=obs.temperature_c, rh_out=obs.humidity_pct,
+                        wind_ms=obs.wind_speed_ms, cloud=cloud,
+                        t_in_formula=bs0.get("t_in_formula"), btli_k=bt.get("btli_k"),
+                        i_face=bt.get("i_face_wm2"), h_out=bt.get("fwi_h_out"),
+                        t_si_pred=bs0.get("t_si_pred"), residual=bs0.get("residual"),
+                        surface_resid=bs0.get("surface_residual"),
+                        t_operative=bs0.get("t_operative"), feel=ind.indoor_pvpti,
+                        risk=ind.indoor_risk, state=st.get("code"), basis=bs0,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"indoor archive skipped ({type(e).__name__}): {e}")
+
             # 실내 체감 시간대 예보 (2026-09-24) — 외부부하 예보 + 이 방 실측 잔차
             try:
                 if fcst:
@@ -1826,6 +1849,41 @@ async def building_risk_at(
         except Exception as e:  # noqa: BLE001
             logger.warning(f"indoor pvpti failed: {e}")
     return result
+
+
+@router.get("/indoor/sensors", summary="벽면센서 목록·기록 수 (관리자용)")
+async def indoor_sensors(request: Request, x_field_key: str | None = Header(None)) -> dict:
+    _require_field_key(x_field_key)
+    archive = getattr(request.app.state, "archive", None)
+    if archive is None:
+        return {"enabled": False, "sensors": []}
+    return {"enabled": True, "sensors": await archive.indoor_sensors()}
+
+
+@router.get("/indoor/sensor-log", summary="벽면센서 실측+BTLI 기록 CSV (관리자용)")
+async def indoor_sensor_log(
+    request: Request,
+    sensor_id: str | None = Query(None, max_length=64),
+    hours: int = Query(24 * 7, ge=1, le=24 * 365),
+    x_field_key: str | None = Header(None),
+    key: str | None = Query(None, description="브라우저 내려받기용 — 헤더 대신"),
+):
+    """논문·교정용 원자료. 헤더 X-Field-Key 또는 ?key= 로 인증."""
+    _require_field_key(x_field_key or key)
+    archive = getattr(request.app.state, "archive", None)
+    rows = await archive.indoor_log(sensor_id, hours) if archive is not None else []
+    import csv as _csv
+    import io as _io
+    from fastapi.responses import Response as _Resp
+    buf = _io.StringIO()
+    cols = archive.INDOOR_COLS if archive is not None else ()
+    w = _csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([r[c].isoformat() if hasattr(r[c], "isoformat") else r[c] for c in cols])
+    fn = f"indoor_sensor_{(sensor_id or 'all')[:8]}_{hours}h.csv"
+    return _Resp(content="\ufeff" + buf.getvalue(), media_type="text/csv; charset=utf-8",
+                 headers={"Content-Disposition": f'attachment; filename="{fn}"'})
 
 
 def _require_field_key(x_field_key: str | None) -> None:

@@ -83,6 +83,44 @@ CREATE TABLE IF NOT EXISTS field_check (
     note         TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_field_check_time ON field_check (observed_at DESC);
+
+-- 벽면센서 실측 + BTLI 예측 짝 (2026-09-24) — 실내 엔진 교정·논문 데이터.
+-- 앱이 실내에서 5분마다 /building/risk 를 부를 때 센서 실측이 있으면 한 줄.
+-- ⚠️ 센서 스캔은 개발(DEBUG) 빌드에만 있어 현재는 내부 시험 데이터만 쌓인다.
+--    일반 사용자 수집 전 동의·처리방침 개정 필요(좌표 11m 격자 + 센서 식별자).
+CREATE TABLE IF NOT EXISTS indoor_sensor (
+    id             BIGSERIAL PRIMARY KEY,
+    observed_at    TIMESTAMPTZ NOT NULL,
+    sensor_id      TEXT,
+    lat            DOUBLE PRECISION,
+    lon            DOUBLE PRECISION,
+    floor          INTEGER,
+    facing         REAL,
+    air_c          REAL,      -- SHT31 공기
+    rh             REAL,      -- SHT31 습도
+    wall_c         REAL,      -- MLX 벽면
+    radiant_c      REAL,      -- 8x8 배경(복사)
+    envelope_c     REAL,      -- 8x8 선택 칸(창·외벽) 외피 안쪽 표면
+    envelope_type  TEXT,
+    occupied       BOOLEAN,
+    t_out          REAL,
+    rh_out         REAL,
+    wind_ms        REAL,
+    cloud          REAL,
+    t_in_formula   REAL,      -- 외부부하(BTLI)만으로 낸 실내 공기 추정
+    btli_k         REAL,      -- sol-air 초과온도
+    i_face         REAL,      -- 면 입사 일사 W/m²
+    h_out          REAL,      -- FWI 외표면 열전달계수
+    t_si_pred      REAL,      -- 외피 안쪽 표면 예측
+    residual       REAL,      -- 공기 잔차
+    surface_resid  REAL,      -- 외피 표면 잔차
+    t_operative    REAL,
+    feel           REAL,
+    risk           TEXT,
+    state          TEXT,
+    basis          JSONB
+);
+CREATE INDEX IF NOT EXISTS ix_indoor_sensor ON indoor_sensor (sensor_id, observed_at DESC);
 """
 
 # 이미 만들어진 테이블에 컬럼을 덧붙이는 변경분. DDL 과 분리해 둔다 —
@@ -157,6 +195,58 @@ class Archive:
         if not self._ready:
             return
         asyncio.create_task(self._insert_field_check(kw))
+
+    def record_indoor(self, **kw) -> None:
+        """벽면센서 실측 + BTLI 예측 한 줄 (2026-09-24)."""
+        if not self._ready:
+            return
+        asyncio.create_task(self._insert_indoor(kw))
+
+    INDOOR_COLS = ("observed_at", "sensor_id", "lat", "lon", "floor", "facing", "air_c", "rh",
+                   "wall_c", "radiant_c", "envelope_c", "envelope_type", "occupied", "t_out",
+                   "rh_out", "wind_ms", "cloud", "t_in_formula", "btli_k", "i_face", "h_out",
+                   "t_si_pred", "residual", "surface_resid", "t_operative", "feel", "risk",
+                   "state")
+
+    async def _insert_indoor(self, kw: dict) -> None:
+        import json as _json
+        kw.setdefault("observed_at", datetime.now(timezone.utc))
+        for k in ("lat", "lon"):
+            if kw.get(k) is not None:
+                kw[k] = round(float(kw[k]), COORD_PRECISION)
+        vals = {c: kw.get(c) for c in self.INDOOR_COLS}
+        vals["basis"] = _json.dumps(kw.get("basis") or {}, ensure_ascii=False, default=str)
+        cols = self.INDOOR_COLS + ("basis",)
+        ph = [":" + c for c in self.INDOOR_COLS] + ["CAST(:basis AS JSONB)"]
+        sql = f"INSERT INTO indoor_sensor ({', '.join(cols)}) VALUES ({', '.join(ph)})"
+        await self._run(sql, vals, "indoor_sensor")
+
+    async def indoor_log(self, sensor_id: str | None, hours: int) -> list[dict]:
+        """벽면센서 기록 조회 — CSV 내려받기용."""
+        if not self._ready:
+            return []
+        where = "observed_at > NOW() - make_interval(hours => :h)"
+        params: dict = {"h": int(hours)}
+        if sensor_id:
+            where += " AND sensor_id = :sid"
+            params["sid"] = sensor_id
+        sql = (f"SELECT {', '.join(self.INDOOR_COLS)} FROM indoor_sensor "
+               f"WHERE {where} ORDER BY observed_at")
+        async with self._session() as s:
+            r = await s.execute(text(sql), params)
+            return [dict(zip(self.INDOOR_COLS, row)) for row in r]
+
+    async def indoor_sensors(self) -> list[dict]:
+        if not self._ready:
+            return []
+        sql = ("SELECT sensor_id, COUNT(*), MIN(observed_at), MAX(observed_at), "
+               "AVG(lat), AVG(lon) FROM indoor_sensor GROUP BY sensor_id ORDER BY MAX(observed_at) DESC")
+        async with self._session() as s:
+            r = await s.execute(text(sql))
+            return [{"sensor_id": row[0], "rows": int(row[1]),
+                     "first": row[2].isoformat() if row[2] else None,
+                     "last": row[3].isoformat() if row[3] else None,
+                     "lat": row[4], "lon": row[5]} for row in r]
 
     async def _insert_measurement(self, kw: dict) -> None:
         kw.setdefault("observed_at", datetime.now(timezone.utc))
