@@ -97,6 +97,21 @@ _INDOOR_MEMORY: dict[tuple[float, float, int], tuple[float, float]] = {}
 _INDOOR_RESIDUAL: dict[tuple[float, float, int], tuple[float, float]] = {}
 
 
+def _indoor_note(measured: bool, basis: dict | None) -> str:
+    """실내 체감기후 근거 한 줄 (2026-09-24 대표 지시) — 앱은 이 문구를 그대로 보여준다.
+
+    ① 센서 실측 중 ② 센서 끊김(학습 잔차 적용) ③ 센서 기록 없음(외피 열부하만)
+    """
+    bs = basis or {}
+    if measured:
+        return "센서 실측 + VPTI 엔진 기반 실내 체감기후예요"
+    if bs.get("residual_bias_applied") is not None:
+        return "이 집 센서 기록으로 보정한 VPTI 엔진 예측이에요"
+    if bs.get("external_load_model") == "BTLI":
+        return "VPTI 엔진이 계산한 이 건물 외피 열부하로 예측했어요"
+    return "VPTI 엔진이 건물 정보와 기상청 실황으로 예측했어요"
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
     """기본 헬스체크. 배포·모니터링용."""
@@ -1762,6 +1777,7 @@ async def building_risk_at(
             result["indoor_measured"] = ind.measured
             result["indoor_basis"] = ind.basis
             result["indoor_state"] = ind.basis.get("indoor_state")
+            result["indoor_note"] = _indoor_note(ind.measured, ind.basis)
 
             # 벽면센서 실측 기록 (2026-09-24) — 실측이 있을 때만. 실패해도 응답엔 영향 없음.
             _arch = getattr(request.app.state, "archive", None)

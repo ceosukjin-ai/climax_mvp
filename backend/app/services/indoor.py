@@ -558,11 +558,14 @@ def forecast_indoor_periods(
         if not vals:
             continue
         hot = max(vals, key=lambda v: v[1])
+        # 예보는 "지금부터" (2026-09-24) — 지금 시간대는 남은 시간만 (시작 = 현재 시각)
+        is_now = (d, p) == (d0, p0)
         out.append({
             "label": _PERIODS[p][0],
             "date": d.isoformat(),
             "is_today": d == now.date(),
-            "start_hour": _PERIODS[p][1],
+            "is_now": is_now,
+            "start_hour": now.hour if is_now else _PERIODS[p][1],
             "end_hour": _PERIODS[p][2],
             "t_in_min": round(min(v[0] for v in vals), 1),
             "t_in_max": round(max(v[0] for v in vals), 1),
