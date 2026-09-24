@@ -471,7 +471,15 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
             elif in_green(mla, mlo):
                 why = "green"            # 공원·녹지 안
             shaded = why != "sun"
-            cell = skyline.get(f"{round(mla, 4):.4f}:{round(mlo, 4):.4f}") if skyline else None
+            # 격자 칸 번호는 skyline.cell_id(스냅) 규칙으로 만들어진다 (2026-09-24 수정).
+            # 예전엔 가운데점을 소수 넷째 자리로 **반올림만** 해서 찾았다. 격자 간격(GRID_DEG)의
+            # 배수가 아닌 좌표는 칸을 못 찾아, 건물 그림자가 경로 구간의 약 1/4 에만 들어가고 있었다.
+            # get_cells 가 cell_id 로 불러왔으니 찾을 때도 같은 규칙이어야 한다.
+            if skyline:
+                from app.services.skyline import cell_id as _cid
+                cell = skyline.get(_cid(mla, mlo))
+            else:
+                cell = None
             if not shaded and cell is not None and sun is not None:
                 if cell.is_sun_blocked(sun[0], sun[1]):
                     shaded = True
