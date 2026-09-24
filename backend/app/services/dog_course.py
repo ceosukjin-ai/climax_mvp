@@ -253,7 +253,11 @@ def _mrt_physical(c: "Conditions", svf: float, shaded: bool, surface: str,
         from vpti_core.mrt import compute_mrt
         # 사용자가 ghi 를 직접 준 경우(시험·예보) 직달·산란을 같은 비율로 맞춘다.
         g0 = float(getattr(sol, "ghi", 0.0) or 0.0)
-        k = (c.ghi / g0) if g0 > 1.0 else 0.0
+        # 태양이 지평선 아래인데 ghi 가 들어온 경우(밤에 낮 조건으로 시험) — 직달·산란을
+        # 나눌 근거가 없다. 지어내지 않고 간이식으로 물러선다.
+        if g0 <= 1.0 or float(getattr(sol, "solar_elevation_deg", 0.0)) <= 0.0:
+            return None
+        k = c.ghi / g0
         s2 = _rep(sol, ghi=c.ghi, dni=sol.dni * k, dhi=sol.dhi * k)
         alb = SURFACES.get(surface, SURFACES["asphalt"])[0]
         r = compute_mrt(s2, c.air_c, c.rh, max(0.0, min(1.0, svf)), 0.0, alb, 0.95,

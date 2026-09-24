@@ -720,6 +720,8 @@ async def route_shade(
     via_lat: float | None = Query(None, ge=-90.0, le=90.0,
                                   description="경유지. 주면 출발→경유→도착을 한 번에 계산"),
     via_lon: float | None = Query(None, ge=-180.0, le=180.0),
+    at: str | None = Query(None, description="출발 시각 ISO 8601 (예: 2026-08-01T12:00+09:00). "
+                                             "생략하면 지금. 태양 위치·일사를 이 시각으로 계산한다"),
 ) -> JSONResponse:
     """출발→목적지 편도. **산책 코스와 같은 비용 함수**(그늘·노면온도·WBGT)를 쓰고 모양만 편도다.
 
@@ -772,13 +774,24 @@ async def route_shade(
     except RoadNetError as e:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
+    # 출발 시각 (2026-09-24). 지금까지 태양 위치를 늘 서버의 「지금」으로 잡았다.
+    # 그러면 밤에 한낮 조건(ghi=850)을 넣어 시험하면 해가 지평선 아래라 직달이 0 이 되고,
+    # 「몇 시에 나가면 시원한가」(출발 시각 비교)도 만들 수 없다.
+    from datetime import datetime as _dtw, timezone as _tzw
+    try:
+        _when = _dtw.fromisoformat(at) if at else _dtw.now(_tzw.utc)
+        if _when.tzinfo is None:
+            _when = _when.replace(tzinfo=_tzw.utc)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=f"at 형식 오류: {at}") from e
+
     # 날씨 미지정이면 서버가 조회(앱이 날씨를 따로 부르지 않게)
     if air_c is None or rh is None or wind_ms is None or ghi is None:
-        from datetime import datetime as _dt2, timezone as _tz2
         from app.services.open_meteo import get_current_observation
         from vpti_core import estimate_solar as _es2, DEFAULT_CONFIG as _CFG
         obs = await get_current_observation(c_lat, c_lon)
-        sol = _es2(c_lat, c_lon, _dt2.now(_tz2.utc), config=_CFG.solar)
+        sol = _es2(c_lat, c_lon, _when, config=_CFG.solar)
         air_c = obs.temperature_c if air_c is None else air_c
         rh = obs.humidity_pct if rh is None else rh
         wind_ms = obs.wind_speed_ms if wind_ms is None else wind_ms
@@ -792,7 +805,7 @@ async def route_shade(
         from datetime import datetime as _dt, timezone as _tz
         from vpti_core import estimate_solar as _es
         from app.services import skyline as _sky
-        _s = _es(c_lat, c_lon, _dt.now(_tz.utc))
+        _s = _es(c_lat, c_lon, _when)
         cond.sol = _s        # 정식 MRT 용 (2026-09-24) — 직달·산란 분해와 태양 위치
         if _s.solar_elevation_deg > 0:
             _sun = (_s.solar_azimuth_deg, _s.solar_elevation_deg)
