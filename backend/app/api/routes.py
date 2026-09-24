@@ -793,6 +793,7 @@ async def route_shade(
         from vpti_core import estimate_solar as _es
         from app.services import skyline as _sky
         _s = _es(c_lat, c_lon, _dt.now(_tz.utc))
+        cond.sol = _s        # 정식 MRT 용 (2026-09-24) — 직달·산란 분해와 태양 위치
         if _s.solar_elevation_deg > 0:
             _sun = (_s.solar_azimuth_deg, _s.solar_elevation_deg)
             _sky_cells = await _sky.get_cells(dc.edge_midpoints(roads.get("elements", [])))
@@ -894,6 +895,7 @@ async def dog_course(
         from vpti_core import estimate_solar as _es
         from app.services import skyline as _sky
         _s = _es(lat, lon, _dt.now(_tz.utc))
+        cond.sol = _s        # 정식 MRT 용 (2026-09-24)
         if _s.solar_elevation_deg > 0:
             _sun = (_s.solar_azimuth_deg, _s.solar_elevation_deg)
             _sky_cells = await _sky.get_cells(dc.edge_midpoints(roads.get("elements", [])))

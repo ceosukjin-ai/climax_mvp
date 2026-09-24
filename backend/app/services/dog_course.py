@@ -187,6 +187,9 @@ class Conditions:
     mode: str = "walk"              # "walk" | "bike"
     speed_kmh: float = 0.0          # 0 이면 mode 기본값(BIKE_SPEED_KMH / WALK_SPEED_KMH)
     met: float | None = None        # None 이면 mode 기본값
+    # 정식 MRT (2026-09-24). vpti_core.SolarResult — 있으면 구간마다 점 조회와 **같은 6방향 복사식**
+    # (VDI 3787)으로 MRT 를 계산한다. 없으면 예전 간이식(기온 + 일사/900×12)으로 물러선다.
+    sol: object | None = None
 
     def rider_ms(self) -> float:
         """주행으로 생기는 맞바람 [m/s]. 보행은 0.4 m/s 남짓이라 무시한다."""
@@ -233,8 +236,35 @@ def _underground(tags: dict) -> bool:
     return False
 
 
+def _mrt_physical(c: "Conditions", svf: float, shaded: bool, surface: str,
+                  wind_ms: float) -> float | None:
+    """점 조회와 같은 6방향 복사 MRT (2026-09-24). 실패하면 None — 호출부가 간이식으로 물러선다.
+
+    왜 바꾸나: 간이식 `기온 + 일사/900×12` 는 그늘 효과를 최대 12 ℃ 로 묶어 둔다. 여름 한낮 도쿄
+    1 km 경로에서 그늘 경로와 최단 경로의 체감 차가 0.4 ℃ 로 나왔다 — 부산 실측의 볕/그늘 차는
+    5.4 ℃ 다. 이 값으로는 "어느 출구가 시원한가"가 거의 갈리지 않는다.
+    SVF 는 격자(가로수·수관·건물 반영)에서, 직달 차폐는 이미 판정한 그늘 여부에서 온다.
+    """
+    sol = c.sol
+    if sol is None:
+        return None
+    try:
+        from dataclasses import replace as _rep
+        from vpti_core.mrt import compute_mrt
+        # 사용자가 ghi 를 직접 준 경우(시험·예보) 직달·산란을 같은 비율로 맞춘다.
+        g0 = float(getattr(sol, "ghi", 0.0) or 0.0)
+        k = (c.ghi / g0) if g0 > 1.0 else 0.0
+        s2 = _rep(sol, ghi=c.ghi, dni=sol.dni * k, dhi=sol.dhi * k)
+        alb = SURFACES.get(surface, SURFACES["asphalt"])[0]
+        r = compute_mrt(s2, c.air_c, c.rh, max(0.0, min(1.0, svf)), 0.0, alb, 0.95,
+                        wind_ms=wind_ms, direct_shade=(0.0 if shaded else 1.0))
+        return float(r.tmrt)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def edge_cost(surface: str, shaded: bool, c: Conditions,
-              underground: bool = False) -> tuple[float, float, float]:
+              underground: bool = False, svf: float | None = None) -> tuple[float, float, float]:
     """한 구간의 비용. **WalkWindow 와 같은 식**이다.
 
     사람 기준 MRT(`mrt_h`)도 함께 돌려준다 (2026-09-12). 지금까지 여기서 계산해 놓고
@@ -250,6 +280,11 @@ def edge_cost(surface: str, shaded: bool, c: Conditions,
     ts = surface_temp_c(c.air_c, _ghi, _wind, surface, shaded or underground, c.rain)
     ghi_mrt = 0.0 if underground else (c.ghi * 0.15 if shaded else c.ghi)
     mrt_h = c.air_c + ghi_mrt / 900.0 * 12.0
+    # 정식 MRT — 태양 정보가 있고 지하가 아니면. SVF 를 모르면(격자 밖) 도심 보행로 중앙값 0.6 을 쓴다.
+    if not underground and c.sol is not None and c.ghi > 5.0:
+        _m = _mrt_physical(c, 0.6 if svf is None else svf, shaded, surface, _wind)
+        if _m is not None:
+            mrt_h = _m
     # 자전거는 사람 높이 그대로 — 개처럼 노면 쪽으로 내리지 않는다.
     mrt_d = mrt_h if c.mode == "bike" else mrt_at_dog_height(mrt_h, ts, c.withers_cm)
     w = wbgt_outdoor(c.air_c, c.rh, _wind, mrt_d)
@@ -432,14 +467,15 @@ def build_graph(elements: Iterable[dict[str, Any]], cond: Conditions,
             elif in_green(mla, mlo):
                 why = "green"            # 공원·녹지 안
             shaded = why != "sun"
-            if not shaded and skyline and sun is not None:
-                cell = skyline.get(f"{round(mla, 4):.4f}:{round(mlo, 4):.4f}")
-                if cell is not None and cell.is_sun_blocked(sun[0], sun[1]):
+            cell = skyline.get(f"{round(mla, 4):.4f}:{round(mlo, 4):.4f}") if skyline else None
+            if not shaded and cell is not None and sun is not None:
+                if cell.is_sun_blocked(sun[0], sun[1]):
                     shaded = True
                     why = "bldg"         # 스카이라인 격자 — 건물이 태양을 막았다
                     g.skyline_shaded_edges += 1
             # 비용에는 **순수 재질**을 넘긴다. 자전거도로 우대는 비용에 안 넣는다(_bike_class 주석).
-            cost, ts, mrt_h = edge_cost(surface, shaded, cond, underground=under)
+            cost, ts, mrt_h = edge_cost(surface, shaded, cond, underground=under,
+                                        svf=(cell.svf if cell is not None else None))
             a, b = node(p["lat"], p["lon"]), node(q["lat"], q["lon"])
             g.adj[a].append((b, d, cost, ts, shaded, tagged is not None, mrt_h, why, surf_out))
             g.adj[b].append((a, d, cost, ts, shaded, tagged is not None, mrt_h, why, surf_out))
