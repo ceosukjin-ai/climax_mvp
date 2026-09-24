@@ -65,6 +65,15 @@ class IndoorResult:
     actions: list[str] | None = None  # 등급별 행동 사다리 (위 항목부터 우선)
     # 2026-09-23 — 실측·외부부하 잔차. 실측이 있을 때만 값이 있다(라우터가 집별로 학습).
     residual: float | None = None
+    # 2026-09-24 — 외피(벽) 표면온도 잔차 = 실측 벽면 − BTLI 예측 벽면 (외벽에 설치된 경우만)
+    surface_residual: float | None = None
+
+
+# BTLI → 실내 전달 계수 (2026-09-24) ⚠️ UNCONFIRMED — 외피 sol-air 초과온도 중 실내 공기로
+#   전달되는 비율. 기존 휴리스틱 일사항과 같은 크기(한낮 남향 ≈ +2~2.5 K)가 되도록 초기값을
+#   잡았다. 벽면센서 잔차로 집(센서)별 동정 예정.
+K_BTLI = 0.08
+K_NIGHT_HC = 1.0   # 야간 축열 방출: 1 + K·(hc / 콘크리트 hc)
 
 
 def _damping(structure: str | None) -> float:
@@ -178,6 +187,11 @@ def compute_indoor(
     radiant_measured: float | None = None,  # 방 복사온도 실측 (8x8 배경 평균, 사람 칸 제외)
     occupied: bool | None = None,           # 8x8 재실 여부
     residual_bias: float | None = None,     # 이 집의 학습된 잔차 (실측 − 외부부하 추정)
+    # ── 2026-09-24 BTLI 존 외부부하 (VPTI 엔진) ──
+    zone=None,                              # btli_zone.ZoneContext — 있으면 외부부하를 BTLI로
+    wind_ms: float | None = None,           # 기상 풍속(10m) — FWI
+    wind_dir_deg: float | None = None,      # 풍향(불어오는 방향)
+    wall_exterior: bool = False,            # 벽면센서가 외벽 안쪽 면을 보는가 (외피 표면 잔차)
 ) -> IndoorResult:
     now = now or datetime.now(KST)
     sf = _solar_factor(now, lat, lon)
@@ -185,6 +199,7 @@ def compute_indoor(
     fd = _floor_delta(floor, total_floors, sf, cloud_fraction)
 
     night_w = 0.0
+    fl = fl_lag = None                      # BTLI 면 부하 (지금 / 축열 지연)
     t_in_formula: float | None = None
     residual: float | None = None
     # 2026-09-23 — 외부부하(①~④)는 **실측이 있어도 항상 계산**한다.
@@ -198,13 +213,29 @@ def compute_indoor(
         #    2026-08-14 — **건물 방위 반영**(facade_gain). 같은 아파트 같은 층이라도
         #    서향 세대는 여름 저녁에 외피가 달궈지고 북향은 거의 안 받는다. 지금까지는
         #    이 둘을 완전히 같게 봤다. 방위를 못 구하면 1.0이라 기존과 동일하다.
-        t_in += sf * (1.0 - cloud_fraction) * (0.8 + 0.25 * building_score) * facade_gain
+        if zone is not None:
+            # 2026-09-24 — ② 를 **BTLI(VPTI 엔진)** 로 대체.
+            #   면별 천공노출(FSI)·외피재질(EMTI)·외피풍환경(FWI)·음영·일사로 그 존 외피의
+            #   sol-air 초과온도(BTLI, K)를 구하고, 그중 실내로 전달되는 비율 K_BTLI 를 곱한다.
+            from datetime import timedelta as _td
+            from app.services.btli_zone import face_load
+            fl = face_load(zone, now, t_out=t_out_now, cloud=cloud_fraction,
+                           wind_ms=wind_ms, wind_dir_deg=wind_dir_deg)
+            fl_lag = face_load(zone, now - _td(hours=zone.lag_h), t_out=t_out_now,
+                               cloud=cloud_fraction, wind_ms=wind_ms, wind_dir_deg=wind_dir_deg)
+            t_in += K_BTLI * fl.btli
+        else:
+            t_in += sf * (1.0 - cloud_fraction) * (0.8 + 0.25 * building_score) * facade_gain
         # ③ 야간 축열 방출: 해가 진 뒤 낮에 머금은 열 (+1.0 ~ +2.75)
         #    2026-08-14 수정 — 전에는 `sf == 0.0` 일 때만 붙여서 일출 직후 1분 사이에
         #    1.25°C가 절벽처럼 사라졌다(05:59 +1.25 → 06:01 +0.00). 새벽에 앱을 두 번
         #    보면 값이 튀는 원인. 해가 뜬 뒤 서서히 빠지도록 선형 감쇠로 바꾼다.
         night_w = max(0.0, 1.0 - sf / 0.25)   # sf 0 → 1.0, sf 0.25(약 07시) → 0
-        t_in += night_w * (1.0 + 0.25 * building_score)
+        if zone is not None:
+            # 축열 방출을 EMTI 축열 잠재력(외피 면적열용량)으로 — 콘크리트 +2.0, 목조 +1.2
+            t_in += night_w * (1.0 + K_NIGHT_HC * zone.hc / 237000.0)
+        else:
+            t_in += night_w * (1.0 + 0.25 * building_score)
         # ④ 층 위치 보정 (최상층 지붕 일사 / 중간층 완충)
         t_in += fd
 
@@ -267,6 +298,16 @@ def compute_indoor(
         t_rad = None
     t_op = (t_in + t_rad) / 2.0 if t_rad is not None else t_in
     feel = t_op + dh + still_air
+
+    # 외피 표면온도 잔차 (2026-09-24) — 벽면센서가 외벽 안쪽 면을 볼 때만 의미가 있다.
+    #   예측 벽면 = BTLI 축열 지연 sol-air 를 관류로 전달한 값. 잔차 = 실측 − 예측.
+    t_si_pred = surface_residual = None
+    if zone is not None and fl_lag is not None:
+        from app.services.btli_zone import interior_surface_pred
+        t_si_pred = interior_surface_pred(zone, t_in, fl_lag.t_sa)
+        if wall_measured is not None and wall_exterior:
+            surface_residual = wall_measured - t_si_pred
+    state = indoor_state(residual if measured else None, surface_residual)
 
     # ⑤ 위험 등급 (야외와 동일 등급표) + 취약군 앞당김 (레벨당 1.0°C, 상한 3.0)
     shift = min(vulnerability_level(age, conditions) * 1.0, 3.0)
@@ -351,11 +392,52 @@ def compute_indoor(
             "residual": (round(residual, 2) if residual is not None else None),
             "residual_bias_applied": (round(residual_bias, 2)
                                       if (residual_bias is not None and not measured) else None),
+            # 2026-09-24 BTLI 존 외부부하 (VPTI 엔진)
+            "external_load_model": "BTLI" if zone is not None else "heuristic",
+            "btli": fl.as_dict() if fl is not None else None,
+            "btli_lag": (fl_lag.as_dict() if fl_lag is not None else None),
+            "zone": ({
+                "floor": zone.floor, "height_m": round(zone.height_m, 1),
+                "facing_deg": zone.facing_deg, "svf_h": round(zone.svf_h, 3),
+                "gvi": round(zone.gvi, 3), "bvi": round(zone.bvi, 3), "fsi": round(zone.fsi, 3),
+                "material": zone.material, "absorptance": round(zone.absorptance, 2),
+                "hc": zone.hc, "u_wall": zone.u_wall, "lag_h": round(zone.lag_h, 1),
+                "sources": zone.sources,
+            } if zone is not None else None),
+            "wall_exterior": wall_exterior,
+            "t_si_pred": (round(t_si_pred, 2) if t_si_pred is not None else None),
+            "surface_residual": (round(surface_residual, 2) if surface_residual is not None else None),
+            "indoor_state": state,
         },
         ventilation=ventilation,
         actions=actions or None,
         residual=residual,
+        surface_residual=surface_residual,
     )
+
+
+def indoor_state(air_residual: float | None, surface_residual: float | None) -> dict | None:
+    """잔차로 본 실내 상태 (2026-09-24).
+
+    외부부하(BTLI)로 설명되는 만큼을 뺀 나머지 = 거주자·설비가 만든 차이.
+      잔차 ≤ −1.5 K : 외부부하보다 차갑다 → 냉방·환기 중
+      잔차 ≥ +1.5 K : 외부부하보다 덥다   → 내부 발열(재실·조리·가전)·난방
+      그 사이        : 외부부하와 일치 → 자연 상태(설비 미가동)
+    ⚠️ ±1.5 K 는 가정값 — 센서 정확도(SHT31 ±0.3, MLX ±0.5)와 모델 오차를 합친 여유.
+       파일럿 일지(에어컨·창문 기록)로 판별 정확도를 검증해 조정한다.
+    벽면(외피) 잔차가 있으면 우선한다 — 공기보다 설비·문 개폐에 덜 흔들린다.
+    """
+    r = surface_residual if surface_residual is not None else air_residual
+    if r is None:
+        return None
+    basis = "외피 표면" if surface_residual is not None else "실내 공기"
+    if r <= -1.5:
+        label, code = "냉방·환기 중 (외부부하보다 차가움)", "cooling"
+    elif r >= 1.5:
+        label, code = "내부 발열·난방 (외부부하보다 더움)", "internal_gain"
+    else:
+        label, code = "자연 상태 (외부부하와 일치)", "free_running"
+    return {"code": code, "label": label, "residual": round(r, 2), "basis": basis}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -386,7 +468,7 @@ def _period_of(hour: int) -> int:
 def forecast_indoor_periods(
     *,
     now: datetime,
-    hours: list[tuple[datetime, float, float, float]],  # (시각, 외기온, 외기습도, 구름 0~1)
+    hours: list[tuple],   # (시각, 외기온, 외기습도, 구름 0~1[, 풍속, 풍향])
     t_mean_by_date: dict,                 # date → 그날 평균기온 ((최고+최저)/2)
     base: dict,                           # building_score, structure, age, conditions,
                                           # floor, total_floors, lat, lon
@@ -397,6 +479,7 @@ def forecast_indoor_periods(
     rad_offset: float | None,             # 지금 (복사 − 공기)
     residual_bias: float | None,          # 학습된 잔차
     n_periods: int = 4,
+    hourly_out: list | None = None,       # 넘기면 시간별 (시각, 실내, 체감, 등급, BTLI) 를 채운다
 ) -> list[dict]:
     from datetime import timedelta
 
@@ -417,7 +500,10 @@ def forecast_indoor_periods(
     ) + timedelta(hours=_PERIODS[slots[-1][1]][2])
 
     per: dict[tuple, list[tuple[float, float, str]]] = {s: [] for s in slots}
-    for dt, t_out, rh_out, cloud in hours:
+    for row in hours:
+        dt, t_out, rh_out, cloud = row[:4]
+        w_ms = row[4] if len(row) > 4 else None
+        w_dir = row[5] if len(row) > 5 else None
         if dt < now - timedelta(minutes=30) or dt >= horizon_end:
             continue
         key = (dt.date(), _period_of(dt.hour))
@@ -433,7 +519,7 @@ def forecast_indoor_periods(
         kw = dict(
             t_out_now=t_out, t_mean_today=t_mean, humidity_pct=rh_out,
             cloud_fraction=cloud, now=dt, facade_gain=gain_at(dt),
-            residual_bias=bias_h, **base,
+            residual_bias=bias_h, wind_ms=w_ms, wind_dir_deg=w_dir, **base,
         )
         first = compute_indoor(**kw)
         t_in = first.t_in_est
@@ -446,6 +532,9 @@ def forecast_indoor_periods(
         else:
             second = first
         per[key].append((second.t_in_est, second.indoor_pvpti, second.indoor_risk))
+        if hourly_out is not None:
+            b_ = (second.basis.get("btli") or {}).get("btli_k")
+            hourly_out.append((dt, second.t_in_est, second.indoor_pvpti, second.indoor_risk, b_))
 
     out = []
     for (d, p) in slots:
@@ -467,3 +556,39 @@ def forecast_indoor_periods(
             "hours": len(vals),
         })
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 존별 선제 공조 정보 (2026-09-24) — BTLI 명세서 "외부 열부하 증가 예측 시점 이전 예냉/예열"
+#   시간별 예보에서 앞으로 24시간 안의 체감 최고(더위)·실내 최저(추위)를 찾아,
+#   기준을 넘으면 그 시점 이전에 공조를 시작하라는 정보를 만든다.
+#   더위 기준: 체감 28°C(주의 등급 하한) / 추위 기준: 실내 18°C(WHO 주거 최저 권고)
+#   ⚠️ 선행 시간 PRE_H = 1h 는 가정값 — 실측(에어컨 켠 뒤 목표 도달 시간)으로 교정.
+# ─────────────────────────────────────────────────────────────────────────────
+PRE_H = 1.0
+
+
+def hvac_plan(hourly: list, now: datetime) -> dict | None:
+    from datetime import timedelta
+    rows = [r for r in hourly if now <= r[0] <= now + timedelta(hours=24)]
+    if not rows:
+        return None
+    hot = max(rows, key=lambda r: r[2])
+    cold = min(rows, key=lambda r: r[1])
+    peak_b = max(rows, key=lambda r: (r[4] if r[4] is not None else -99))
+    plan = {
+        "btli_peak_time": peak_b[0].isoformat() if peak_b[4] is not None else None,
+        "btli_peak_k": peak_b[4],
+        "feel_peak_time": hot[0].isoformat(), "feel_peak": hot[2],
+        "t_in_min_time": cold[0].isoformat(), "t_in_min": cold[1],
+        "action": "none", "start_time": None, "message": None,
+    }
+    if hot[2] >= 28.0:
+        st = max(now, hot[0] - timedelta(hours=PRE_H))
+        plan.update(action="precool", start_time=st.isoformat(),
+                    message=f"{hot[0].hour}시에 실내 체감 {hot[2]:.1f}°C 예상 — {st.hour}시부터 미리 냉방하세요")
+    elif cold[1] < 18.0:
+        st = max(now, cold[0] - timedelta(hours=PRE_H))
+        plan.update(action="preheat", start_time=st.isoformat(),
+                    message=f"{cold[0].hour}시에 실내 {cold[1]:.1f}°C 예상 — {st.hour}시부터 미리 난방하세요")
+    return plan

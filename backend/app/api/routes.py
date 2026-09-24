@@ -1566,6 +1566,8 @@ async def building_risk_at(
     sensor_id: str | None = Query(
         None, max_length=64,
         description="방 센서 식별자 — 있으면 잔차를 좌표 대신 센서별로 학습 (집·연구실 구분, 2026-09-24)"),
+    wall_exterior: bool = Query(
+        False, description="벽면센서가 외벽 안쪽 면을 측정하는가 — 참이면 외피 표면온도 잔차 산출"),
 ) -> dict:
     """좌표의 건물 정보 + **실내 체감기후(실내 pVPTI)** 를 반환.
 
@@ -1575,7 +1577,7 @@ async def building_risk_at(
     데이터: V-World + 건축물대장 + 기상청 — 공개 데이터만, 좌표·생체 미저장.
     """
     from app.services.building import building_risk, to_dict
-    from app.services.indoor import compute_indoor, forecast_indoor_periods
+    from app.services.indoor import compute_indoor, forecast_indoor_periods, hvac_plan
 
     b = await building_risk(lat, lon)
     # 2026-08-18 — 건물 정보가 없다고 **404로 끊지 않는다.**
@@ -1676,6 +1678,20 @@ async def building_risk_at(
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"facade gain skipped ({type(e).__name__}): {e}")
 
+            # BTLI 존 컨텍스트 (2026-09-24) — 외부부하를 VPTI 엔진(FSI·EMTI·FWI·음영)으로.
+            #   층 높이 SVF(GIS 광선투사) + VPTI 공간지표(GVI·BVI) + 외피 재질(구조) + 이웃 음영.
+            #   실패하면 None → 기존 휴리스틱 경로로 자동 폴백.
+            zone = None
+            try:
+                from app.services.btli_zone import build_zone_context
+                zone = await build_zone_context(
+                    lat=lat, lon=lon, floor=floor, facing_deg=facing,
+                    structure=b.structure if b else None, geom=geom,
+                    orchestrator=orchestrator,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"btli zone skipped ({type(e).__name__}): {e}")
+
             # 열 기억 (2026-08-16) — 좌표·층별 마지막 실내값을 기억해 급변 날씨에서
             # 방이 즉시 리셋되지 않게 한다. 실측(센서)이 있었으면 그 값이 기억되므로
             # 센서가 잠시 끊겨도 한동안 실측 수준을 유지한다.
@@ -1722,6 +1738,10 @@ async def building_risk_at(
                 radiant_measured=radiant,
                 occupied=occupied,
                 residual_bias=residual_bias,
+                zone=zone,
+                wind_ms=obs.wind_speed_ms,
+                wind_dir_deg=obs.wind_direction_deg,
+                wall_exterior=wall_exterior,
             )
             if ind.residual is not None:
                 ema = ind.residual if res_rec is None else 0.8 * res_rec[1] + 0.2 * ind.residual
@@ -1736,6 +1756,7 @@ async def building_risk_at(
             result["indoor_risk"] = ind.indoor_risk
             result["indoor_measured"] = ind.measured
             result["indoor_basis"] = ind.basis
+            result["indoor_state"] = ind.basis.get("indoor_state")
 
             # 실내 체감 시간대 예보 (2026-09-24) — 외부부하 예보 + 이 방 실측 잔차
             try:
@@ -1744,7 +1765,10 @@ async def building_risk_at(
                     hours = [
                         (f.forecast_for, f.temperature_c,
                          f.humidity_pct if f.humidity_pct is not None else obs.humidity_pct,
-                         _sky.get(f.sky_condition or "", 0.5))
+                         _sky.get(f.sky_condition or "", 0.5),
+                         f.wind_speed_ms if f.wind_speed_ms is not None else obs.wind_speed_ms,
+                         f.wind_direction_deg if f.wind_direction_deg is not None
+                         else obs.wind_direction_deg)
                         for f in fcst if f.temperature_c is not None
                     ]
                     by_date: dict = {}
@@ -1769,6 +1793,7 @@ async def building_risk_at(
                             return facade_gain
 
                     bs = ind.basis
+                    _hourly: list = []
                     rad_off = (bs["t_radiant"] - ind.t_in_est) if bs.get("t_radiant") is not None else None
                     result["indoor_forecast"] = forecast_indoor_periods(
                         now=datetime.now(KST),
@@ -1780,7 +1805,7 @@ async def building_risk_at(
                             age=age,
                             conditions=conditions.split(",") if conditions else None,
                             floor=floor, total_floors=b.floors if b else None,
-                            lat=lat, lon=lon,
+                            lat=lat, lon=lon, zone=zone,
                         ),
                         gain_at=_gain_at,
                         formula_now=bs.get("t_in_formula"),
@@ -1788,7 +1813,9 @@ async def building_risk_at(
                         rh_in_now=humidity,
                         rad_offset=rad_off,
                         residual_bias=residual_bias,
+                        hourly_out=_hourly,
                     )
+                    result["indoor_hvac_plan"] = hvac_plan(_hourly, datetime.now(KST))
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"indoor forecast failed ({type(e).__name__}): {e}")
         except Exception as e:  # noqa: BLE001
