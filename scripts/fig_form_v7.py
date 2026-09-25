@@ -31,7 +31,7 @@ DATA
   tier3_width_80.csv                    width_m, hw_ratio (geometric, from building rings)
 
 Sun = direct beam reaching the sensor, verified on the 360-degree panorama; cloud-diffuse
-counts as no beam. Sun 61 / shade 19. The five neighbourhoods are one per LCZ class
+counts as no beam. Sun 62 / shade 18 (2026-09-25; sun label read from scs_master_80.csv). The five neighbourhoods are one per LCZ class
 (LCZ 1-5, LCZ Generator; Demuzere et al. 2021), selected for density of older adults
 living alone.
 
@@ -101,10 +101,11 @@ wd.columns = [c.strip() for c in wd.columns]
 d = v7.merge(wd[["측정ID", "width_m", "hw_ratio"]], on="측정ID", how="left")
 # 2026-09-21: v7_photo 의 SVF 열은 9/15 폐기된 옛 파노라마 값이다. 정본(scs_master_80.csv,
 # 일관 정의 뷰팩터, 158번 결측)으로 바꾼다.
-_m = pd.read_csv(f"{BASE}/scs_master_80.csv", encoding="utf-8-sig")[["측정ID", "SVF"]]
+# 2026-09-25: 볕/그늘도 정본(scs_master sun, 62/18 — 부암제1동_05 재판독)에서 읽는다.
+_m = pd.read_csv(f"{BASE}/scs_master_80.csv", encoding="utf-8-sig")[["측정ID", "SVF", "sun"]]
 d = d.drop(columns=["SVF"]).merge(_m, on="측정ID", how="left")
 assert len(d) == 80, len(d)
-d["sun"] = d["볕"].astype(int)
+d["sun"] = d["sun"].astype(int)
 n_sun, n_shade = int(d["sun"].sum()), int((1 - d["sun"]).sum())
 print(f"sites {len(d)}  sun {n_sun}  shade {n_shade}  font -> {SERIF[0]} if present")
 
