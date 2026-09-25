@@ -35,12 +35,10 @@ d["sv"] = d["앱_유효"] == "유효"
 hot = d.PET >= THR; n_hot = int(hot.sum()); n = len(d)
 
 steps = [
-    ("Official\nwarning inputs", "tier1", n, "gridded weather,\nno radiation"),
-    ("+ street-view\nradiation", "run_A_PET", int(d.sv.sum()), "Tier 2, deployed"),
-    ("+ building\ngeometry", "run_B_PET", n, "Tier 3, no imagery"),
-    ("+ weather\nmeasured on site", "run_C_PET", n, "diagnostic run"),
-    ("+ sun/shade\nread on site", "run_E_PET", n, "diagnostic run"),
-    ("+ residual layer\n(deployed)", "물리+AI_LONO_PET", n, "leave-one-\nneighbourhood-out"),
+    ("Official heat warning\nstation network,\nsupercomputer forecast", "tier1", n, ""),
+    ("Street-view service\nimagery where\nit exists (2026)", "run_A_PET", int(d.sv.sum()), ""),
+    ("Satellite + building\ngeometry\nno imagery needed", "run_B_PET", n, ""),
+    ("+ AI residual layer\ndeployed engine", "물리+AI_LONO_PET", n, ""),
 ]
 mae = [float((d[c] - d.PET).abs().mean()) for _, c, _, _ in steps]
 hit = [int((hot & (d[c] >= THR)).sum()) for _, c, _, _ in steps]
@@ -49,10 +47,10 @@ for (lab, c, r, _), m_, h_ in zip(steps, mae, hit):
     print(f"{lab.replace(chr(10),' '):28s} MAE {m_:5.2f}  detected {h_}/{n_hot}  reach {r}/{n}")
 
 x = np.arange(len(steps))
-fig = plt.figure(figsize=(140 * MM, 95 * MM))
+fig = plt.figure(figsize=(120 * MM, 95 * MM))
 gs = fig.add_gridspec(2, 1, height_ratios=[1.0, 0.6], hspace=0.38, left=0.10, right=0.985, top=0.93, bottom=0.20)
 ax = fig.add_subplot(gs[0]); bx = fig.add_subplot(gs[1], sharex=ax)
-cols = [FAINT, FAINT, FAINT, ACC, ACC, INK]
+cols = [FAINT, FAINT, ACC, INK]
 
 # (a) accuracy
 ax.bar(x, mae, width=0.58, color=cols, edgecolor="none", zorder=3)
@@ -62,9 +60,9 @@ for xi, m_, h_ in zip(x, mae, hit):
 ax.set_ylim(0, 15.5); ax.set_yticks([0, 5, 10, 15])
 ax.set_ylabel("MAE of PET (°C)")
 ax.tick_params(labelbottom=False)
-ax.text(0.99, 0.95, f"number in bar: extreme sites detected, of {n_hot} measured at PET ≥ {THR:.0f} °C",
+ax.text(0.99, 0.95, f"in bar: extreme sites detected, of {n_hot} measured at PET ≥ {THR:.0f} °C",
         transform=ax.transAxes, ha="right", va="top", fontsize=6.8, color=MUTED)
-ax.text(-0.02, 1.02, "(a)  Accuracy against the globe reference (n = 80)", transform=ax.transAxes, ha="left", va="bottom", fontsize=8.5, fontweight="bold", color=INK)
+ax.text(-0.02, 1.02, "(a)  Accuracy at the pedestrian, against the globe reference (80 sites)", transform=ax.transAxes, ha="left", va="bottom", fontsize=8.5, fontweight="bold", color=INK)
 
 # (b) reach
 ax_r = bx
@@ -75,16 +73,17 @@ for xi, r, c_ in zip(x, reach, cols):
 sv_i = 1
 nb = d.groupby("권역").sv.agg(["sum", "count"]); worst = nb["sum"].div(nb["count"]).idxmin()
 ax_r.annotate(f"{n - reach[sv_i]} sites without street view —\nsubstituted from 43–110 m away, or failed\n(fewest in Buam 1: {int(nb.loc[worst,'sum'])} of {int(nb.loc[worst,'count'])})",
-              xy=(sv_i + 0.3, n - 10), xytext=(sv_i + 0.75, n + 44), fontsize=6.8, color=INK, ha="left", va="top", linespacing=1.25,
+              xy=(sv_i + 0.3, n - 10), xytext=(sv_i + 0.45, n + 56), fontsize=6.8, color=INK, ha="left", va="top", linespacing=1.25,
               arrowprops=dict(arrowstyle="-", lw=0.6, color=MUTED, shrinkA=0, shrinkB=2))
-ax_r.set_ylim(0, 128); ax_r.set_yticks([0, 40, 80])
-ax_r.set_ylabel("Sites with an\nestimate from\ntheir own location", fontsize=7.4)
-ax_r.set_xticks(x); ax_r.set_xticklabels([s[0] for s in steps], fontsize=7.2, linespacing=1.15)
-ax_r.text(-0.02, 1.04, "(b)  Reach", transform=ax_r.transAxes, ha="left", va="bottom", fontsize=8.5, fontweight="bold", color=INK)
+ax_r.set_ylim(0, 142); ax_r.set_yticks([0, 40, 80])
+ax_r.set_ylabel("Sites reached\n(of 80)", fontsize=7.4)
+ax_r.set_xticks(x); ax_r.set_xticklabels([s[0] for s in steps], fontsize=7.0, linespacing=1.15)
+ax_r.text(-0.02, 1.04, "(b)  Reach: sites that receive an estimate for their own location", transform=ax_r.transAxes, ha="left", va="bottom", fontsize=8.5, fontweight="bold", color=INK)
 from matplotlib.patches import Patch
-ax.legend(handles=[Patch(facecolor=FAINT, label="remote inputs only"), Patch(facecolor=ACC, label="+ inputs observed on site (diagnostic)"),
-                   Patch(facecolor=INK, label="deployed engine, residual layer")],
+ax.legend(handles=[Patch(facecolor=FAINT, label="existing information"), Patch(facecolor=ACC, label="this study: physics on open data"),
+                   Patch(facecolor=INK, label="this study: physics + AI")],
           loc="upper right", bbox_to_anchor=(0.995, 0.86), frameon=False, fontsize=6.8, handlelength=1.2, handleheight=0.9, labelspacing=0.35)
+ax_r.text(0, n + 6, "everywhere,\nbut no street-level term", ha="center", va="bottom", fontsize=6.4, color=MUTED, linespacing=1.15)
 for a_ in (ax, ax_r):
     a_.set_xlim(-0.6, len(steps) - 0.4)
 
