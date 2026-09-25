@@ -23,7 +23,7 @@ mpl.rcParams.update({
     "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6, "xtick.major.size": 2.5, "ytick.major.size": 2.5,
     "axes.spines.top": True, "axes.spines.right": True, "axes.grid": False,
     "xtick.direction": "in", "ytick.direction": "in", "xtick.top": False, "ytick.right": False,
-    "figure.dpi": 200, "savefig.dpi": 600, "pdf.fonttype": 42, "ps.fonttype": 42})
+    "figure.dpi": 200, "savefig.dpi": 1200, "pdf.fonttype": 42, "ps.fonttype": 42})
 INK, MUTED, FAINT, SURF = "#1A1A1A", "#5E5E5E", "#B8B8B8", "#F3F3F1"
 SUN, SHADE = "#C0504D", "#2F6DB5"          # validated pair (CVD ΔE 16, normal 25)
 MM = 1 / 25.4
@@ -48,9 +48,9 @@ for k, m in models.items():
 print("shaded predicted ≥41 but measured <41:", len(false_hot), "/", len(H))
 
 # ------------------------------------------------------------------ layout
-fig = plt.figure(figsize=(190 * MM, 80 * MM))
-gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.8], wspace=0.8, left=0.07, right=0.985, top=0.86, bottom=0.21)
-ax, bx, cx = (fig.add_subplot(gs[i]) for i in range(3))
+fig = plt.figure(figsize=(140 * MM, 80 * MM))
+gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0], wspace=0.45, left=0.09, right=0.985, top=0.86, bottom=0.30)
+ax, bx = (fig.add_subplot(gs[i]) for i in range(2))
 lo, hi = 35, 55
 GREY = "#7A7A7A"
 
@@ -85,36 +85,25 @@ for i, (q, col, name) in enumerate(((S, SUN, "sunlit"), (H, SHADE, "shaded"))):
     bx.vlines(x, mu, q.PET, color=col, lw=0.45, alpha=0.45, zorder=2)      # residual = distance to the group mean
     bx.scatter(x, q.PET, s=15, color=col, edgecolor="white", lw=0.5, zorder=4)
     bx.plot([i - 0.34, i + 0.34], [mu, mu], color=col, lw=1.8, zorder=5)
-    bx.text(i + 0.40, mu + (0.0 if i == 0 else 2.6), f"predicted\n{mu:.1f} °C", ha="left", va="center" if i == 0 else "bottom", fontsize=6.8, color=col, linespacing=1.15)
+    bx.text(i + (0.40 if i == 0 else 0.26), mu + (0.0 if i == 0 else 2.6), f"predicted\n{mu:.1f} °C", ha="left", va="center" if i == 0 else "bottom", fontsize=6.8, color=col, linespacing=1.15)
 bx.set_xlim(-0.6, 1.75); bx.set_ylim(lo, hi); bx.set_box_aspect(1)
 bx.set_xticks([0, 1]); bx.set_xticklabels([f"sunlit\nn = {len(S)}", f"shaded\nn = {len(H)}"])
 bx.set_yticks(range(35, 56, 5)); bx.set_ylabel("Measured PET (°C)")
-bx.set_xlabel("Sun/shade read on the panorama\nsun/shade model: prediction = group mean")
+bx.set_xlabel("Sun/shade read on the panorama\nmodel: prediction = group mean")
 bx.text(-0.55, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom")
 fb = d[(d.pred_lab >= THR) & (d.PET < THR)]
 bx.text(0.0, lo + 0.5, f"predicted extreme,\nmeasured not: {len(fb)} site{'s' if len(fb)!=1 else ''}", ha="center", va="bottom", fontsize=7, color=INK, linespacing=1.3)
 bx.text(0.0, 1.03, f"n = {len(d)}   R² = {m_lab.rsquared:.2f}   RMSE = {rmse(m_lab):.1f} °C", transform=bx.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
-bx.text(1.0, 0.94, "thin line = error,\npoint to its group mean", transform=bx.transAxes, ha="right", va="top", fontsize=6.6, color=MUTED, linespacing=1.2)
+bx.text(0.97, 0.95, "thin line = error,\npoint to group mean", transform=bx.transAxes, ha="right", va="top", fontsize=6.6, color=MUTED, linespacing=1.2)
 
-# (c) model ladder ----------------------------------------------------------------
-names = list(models); vals = [rmse(models[k]) for k in names]; r2 = [models[k].rsquared for k in names]
-ypos = np.arange(len(names))[::-1]
-cols = [FAINT, FAINT, INK, INK]
-cx.barh(ypos, vals, height=0.42, color=cols, edgecolor="none", zorder=3)
-for y, v, r in zip(ypos, vals, r2):
-    cx.text(v + 0.08, y, f"{v:.1f} °C   R² {r:.2f}", va="center", ha="left", fontsize=7, color=INK)
-cx.set_yticks(ypos); cx.set_yticklabels(names, fontsize=7)
-cx.set_xlim(0, 6.4); cx.set_xticks([0, 1, 2, 3, 4])
-cx.set_xlabel("RMSE of PET (°C)")
-cx.tick_params(axis="y", length=0)
-
-for a_, t_ in ((ax, "(a)  Urban-form model"), (bx, "(b)  Sun/shade model"), (cx, "(c)  Model ladder")):
+for a_, t_ in ((ax, "(a)  Urban-form model"), (bx, "(b)  Sun/shade model")):
     x0_ = a_.get_position().x0
     fig.text(x0_, 0.975, t_, ha="left", va="bottom", fontsize=9, fontweight="bold", color=INK)
 fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SUN, markersize=4.8, label="sunlit — direct beam at the sensor"),
                     Line2D([], [], marker="o", color="none", markerfacecolor=SHADE, markersize=4.8, label="shaded — no direct beam"),
                     Line2D([], [], marker="o", color="none", markerfacecolor=GREY, markersize=4.8, label="all sites, label not used (a)")],
-           loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False, fontsize=7.2, handletextpad=0.3, columnspacing=1.6)
+           loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False, fontsize=7.2, handletextpad=0.3, columnspacing=1.6)
 for e in ("pdf", "eps", "png"):
     fig.savefig(f"{OUT}/SCS_Fig_form_vs_sun.{e}", bbox_inches="tight", pad_inches=0.03)
+fig.savefig(f"{OUT}/SCS_Fig_form_vs_sun.tiff", bbox_inches="tight", pad_inches=0.03, dpi=1200, pil_kwargs={"compression": "tiff_lzw"})
 print("saved", OUT)
