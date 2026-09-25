@@ -48,7 +48,7 @@ print("shaded predicted ≥41 but measured <41:", len(false_hot), "/", len(H))
 
 # ------------------------------------------------------------------ layout
 fig = plt.figure(figsize=(190 * MM, 88 * MM))
-gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 0.85, 0.62], wspace=0.55, left=0.055, right=0.985, top=0.90, bottom=0.20)
+gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 0.85, 0.62], wspace=0.55, left=0.055, right=0.985, top=0.86, bottom=0.20)
 ax, bx, cx = (fig.add_subplot(gs[i]) for i in range(3))
 
 def dot(axis, x, y, col, **kw):
@@ -71,8 +71,13 @@ ax.text(lo + 0.4, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bot
 ax.text(hi - 0.4, lo + 0.5,
         f"predicted extreme,\nmeasured not:\n{len(false_hot)} of {len(H)} shaded sites",
         ha="right", va="bottom", fontsize=7, color=SHADE, linespacing=1.3)
-ax.text(lo + 0.4, hi - 0.4, f"n = {len(d)}\nR² = {m_form.rsquared:.2f}\nRMSE = {rmse(m_form):.1f} °C",
-        ha="left", va="top", fontsize=7, color=INK, linespacing=1.3)
+rm = lambda q: float(np.sqrt(np.mean(q.res_form ** 2)))
+ax.text(0.0, 1.115, f"all sites (n = {len(d)}):  R² {m_form.rsquared:.2f},  RMSE {rmse(m_form):.1f} °C", transform=ax.transAxes,
+        ha="left", va="bottom", fontsize=7, color=INK)
+ax.text(0.0, 1.06, f"sunlit (n = {len(S)}):  RMSE {rm(S):.1f} °C,  bias {S.res_form.mean():+.1f} °C", transform=ax.transAxes,
+        ha="left", va="bottom", fontsize=7, color=SUN)
+ax.text(0.0, 1.005, f"shaded (n = {len(H)}):  RMSE {rm(H):.1f} °C,  bias {H.res_form.mean():+.1f} °C", transform=ax.transAxes,
+        ha="left", va="bottom", fontsize=7, color=SHADE)
 
 # (b) residuals by model and group ------------------------------------------------
 rows = [("Form model\n(three view factors)", "res_form"), ("Label model\n(sun/shade)", "res_lab")]
@@ -110,7 +115,7 @@ cx.spines["left"].set_visible(False); cx.tick_params(axis="y", length=0)
 
 for a_, t_ in ((ax, "(a)  Form model against measurement"), (bx, "(b)  Where each model errs"), (cx, "(c)  Model ladder")):
     x0_ = a_.get_position().x0
-    fig.text(x0_, 0.93, t_, ha="left", va="bottom", fontsize=9, fontweight="bold", color=INK)
+    fig.text(x0_, 0.985, t_, ha="left", va="bottom", fontsize=9, fontweight="bold", color=INK)
 # legend --------------------------------------------------------------------------
 fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SUN, markersize=4.8, label=f"sunlit — direct beam at the sensor (n = {len(S)})"),
                     Line2D([], [], marker="o", color="none", markerfacecolor=SHADE, markersize=4.8, label=f"shaded — no direct beam (n = {len(H)})")],
