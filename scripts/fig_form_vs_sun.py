@@ -21,7 +21,8 @@ mpl.rcParams.update({
     "font.family": "serif", "font.serif": ["Times New Roman", "Liberation Serif"], "mathtext.fontset": "stix",
     "font.size": 8, "axes.labelsize": 8.5, "axes.titlesize": 9, "xtick.labelsize": 7.5, "ytick.labelsize": 7.5,
     "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6, "xtick.major.size": 2.5, "ytick.major.size": 2.5,
-    "axes.spines.top": False, "axes.spines.right": False, "axes.grid": False,
+    "axes.spines.top": True, "axes.spines.right": True, "axes.grid": False,
+    "xtick.direction": "in", "ytick.direction": "in", "xtick.top": False, "ytick.right": False,
     "figure.dpi": 200, "savefig.dpi": 600, "pdf.fonttype": 42, "ps.fonttype": 42})
 INK, MUTED, FAINT, SURF = "#1A1A1A", "#5E5E5E", "#B8B8B8", "#F3F3F1"
 SUN, SHADE = "#C0504D", "#2F6DB5"          # validated pair (CVD ΔE 16, normal 25)
@@ -48,7 +49,7 @@ print("shaded predicted ≥41 but measured <41:", len(false_hot), "/", len(H))
 
 # ------------------------------------------------------------------ layout
 fig = plt.figure(figsize=(190 * MM, 80 * MM))
-gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.85], wspace=0.62, left=0.055, right=0.985, top=0.86, bottom=0.21)
+gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.8], wspace=0.8, left=0.07, right=0.985, top=0.86, bottom=0.21)
 ax, bx, cx = (fig.add_subplot(gs[i]) for i in range(3))
 lo, hi = 35, 55
 GREY = "#7A7A7A"
@@ -65,7 +66,7 @@ def frame(axis, xlabel):
     axis.text(lo + 0.4, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom")
 
 # (a) form model, no grouping ------------------------------------------------------
-frame(ax, "Predicted PET (°C)\nurban-form model: sky, building, tree view factors")
+frame(ax, "Predicted PET (°C)\nform model: sky, building, tree view factors")
 ax.scatter(d.pred_form, d.PET, s=15, color=GREY, edgecolor="white", lw=0.5, zorder=4)
 ax.set_ylabel("Measured PET (°C)")
 fa = d[(d.pred_form >= THR) & (d.PET < THR)]
@@ -84,10 +85,10 @@ for i, (q, col, name) in enumerate(((S, SUN, "sunlit"), (H, SHADE, "shaded"))):
     bx.vlines(x, mu, q.PET, color=col, lw=0.45, alpha=0.45, zorder=2)      # residual = distance to the group mean
     bx.scatter(x, q.PET, s=15, color=col, edgecolor="white", lw=0.5, zorder=4)
     bx.plot([i - 0.34, i + 0.34], [mu, mu], color=col, lw=1.8, zorder=5)
-    bx.text(i + 0.40, mu + (0.0 if i == 0 else -0.9), f"predicted\n{mu:.1f} °C", ha="left", va="center" if i == 0 else "top", fontsize=6.8, color=col, linespacing=1.15)
+    bx.text(i + 0.40, mu + (0.0 if i == 0 else 2.6), f"predicted\n{mu:.1f} °C", ha="left", va="center" if i == 0 else "bottom", fontsize=6.8, color=col, linespacing=1.15)
 bx.set_xlim(-0.6, 1.75); bx.set_ylim(lo, hi); bx.set_box_aspect(1)
 bx.set_xticks([0, 1]); bx.set_xticklabels([f"sunlit\nn = {len(S)}", f"shaded\nn = {len(H)}"])
-bx.set_yticks(range(35, 56, 5)); bx.tick_params(labelleft=False)
+bx.set_yticks(range(35, 56, 5)); bx.set_ylabel("Measured PET (°C)")
 bx.set_xlabel("Sun/shade read on the panorama\nsun/shade model: prediction = group mean")
 bx.text(-0.55, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom")
 fb = d[(d.pred_lab >= THR) & (d.PET < THR)]
@@ -105,7 +106,7 @@ for y, v, r in zip(ypos, vals, r2):
 cx.set_yticks(ypos); cx.set_yticklabels(names, fontsize=7)
 cx.set_xlim(0, 6.4); cx.set_xticks([0, 1, 2, 3, 4])
 cx.set_xlabel("RMSE of PET (°C)")
-cx.spines["left"].set_visible(False); cx.tick_params(axis="y", length=0)
+cx.tick_params(axis="y", length=0)
 
 for a_, t_ in ((ax, "(a)  Urban-form model"), (bx, "(b)  Sun/shade model"), (cx, "(c)  Model ladder")):
     x0_ = a_.get_position().x0
