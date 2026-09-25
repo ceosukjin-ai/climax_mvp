@@ -2512,16 +2512,21 @@ async def jp_wbgt(
             "ORDER BY (p.lat-$1)^2 + (p.lon-$2)^2, f.target_at LIMIT 1", lat, lon)
         # 경보는 **그 사람이 있는 예보구역** 것만 (2026-09-25 수정).
         # 예전엔 지역을 거르지 않아 오키나와 경보가 도쿄 사용자에게도 떴다.
-        # 경보 파일의 구역 행마다 소속 지점 이름 목록이 있다 → 가장 가까운 지점 이름으로 찾는다.
-        # (지점 마스터의 region 「北海道」와 경보 구역 「宗谷地方」은 단위가 달라 글자 맞추기가 안 된다.)
+        # 경보 파일의 구역 행마다 소속 지점 이름 목록이 있다 → 사용자에게 **가장 가까운, 경보
+        # 파일에 이름이 실린 지점**으로 구역을 정한다(8/5 파일 대조: 이름 820/820 일치).
+        #  · 경보 파일에 없는 지점(江ノ島·今市·東海 등 11곳)이 가장 가까워도 다음 지점으로 구역을 잡는다.
+        #  · 같은 이름이 여러 곳에 있으면 표시번호(지점번호 앞 두 자리)가 맞는 구역을 먼저.
+        #  · 구역을 먼저 정하고 그 구역의 등급을 본다 — 동명 지점의 남의 구역 경보를 끌어오지 않게.
         # 'judged'(특별경계 판정, 미발표)는 띄우지 않는다 — 발표된 것만 전한다.
         alert = None
-        if row is not None and row["name"]:
-            alert = await c.fetchrow(
-                "SELECT area, level, issued_at FROM wbgt_alert "
-                "WHERE target_date = (NOW() AT TIME ZONE 'Asia/Tokyo')::date "
-                "AND level IN ('alert','special') AND points LIKE '%/' || $1 || '/%' "
-                "ORDER BY (level = 'special') DESC LIMIT 1", row["name"])
+        _a = await c.fetchrow(
+            "SELECT a.area, a.level, a.issued_at FROM wbgt_point p "
+            "JOIN wbgt_alert a ON a.target_date = (NOW() AT TIME ZONE 'Asia/Tokyo')::date "
+            "AND a.points LIKE '%/' || p.name || '/%' "
+            "ORDER BY (p.lat-$1)^2 + (p.lon-$2)^2, (a.disp = left(p.point_id, 2)) DESC LIMIT 1",
+            lat, lon)
+        if _a is not None and _a["level"] in ("alert", "special"):
+            alert = _a
 
     if row is None:
         return {"ok": False, "reason": "가까운 지점의 예측이 없다(시즌 밖이거나 미적재)",

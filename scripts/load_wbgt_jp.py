@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS wbgt_alert (
 ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS pref TEXT;
 ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS points TEXT;
 ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS flag TEXT;
+-- 都府県・振興局表示番号(도쿄 44, 오사카 62 …) = 지점번호 앞 두 자리. 같은 이름 지점이
+-- 여러 곳에 있을 때(지점 865 / 고유 이름 831) 어느 구역인지 가르는 데 쓴다.
+ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS disp TEXT;
 CREATE TABLE IF NOT EXISTS wbgt_forecast (
     point_id  TEXT NOT NULL,
     target_at TIMESTAMPTZ NOT NULL,
@@ -207,7 +210,7 @@ def parse_alert(body: bytes) -> tuple[dict, list[dict]]:
                 nm = tok.split(":")[0].strip()
                 if nm:
                     names.add(nm)
-        rows.append({"area": k, "code": r[3].strip(), "pref": r[4].strip(),
+        rows.append({"area": k, "disp": r[1].strip(), "code": r[3].strip(), "pref": r[4].strip(),
                      "f1": r[6].strip(), "f2": r[7].strip(),
                      "points": "/" + "/".join(sorted(names)) + "/" if names else None,
                      "raw": ",".join(r[:8])})
@@ -255,12 +258,12 @@ async def cmd_alert(conn, base: str) -> None:
                     if lv is None:
                         continue
                     await conn.execute(
-                        "INSERT INTO wbgt_alert (area,target_date,level,issued_at,raw,pref,points,flag) "
-                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (area,target_date) DO UPDATE SET "
+                        "INSERT INTO wbgt_alert (area,target_date,level,issued_at,raw,pref,points,flag,disp) "
+                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (area,target_date) DO UPDATE SET "
                         "level=EXCLUDED.level, issued_at=EXCLUDED.issued_at, raw=EXCLUDED.raw, "
-                        "pref=EXCLUDED.pref, points=EXCLUDED.points, flag=EXCLUDED.flag "
+                        "pref=EXCLUDED.pref, points=EXCLUDED.points, flag=EXCLUDED.flag, disp=EXCLUDED.disp "
                         "WHERE wbgt_alert.issued_at IS NULL OR EXCLUDED.issued_at >= wbgt_alert.issued_at",
-                        r["area"], td, lv, issued, r["raw"][:500], r["pref"], r["points"], r[fk])
+                        r["area"], td, lv, issued, r["raw"][:500], r["pref"], r["points"], r[fk], r["disp"])
                     n_row += 1
     await conn.execute("DELETE FROM wbgt_alert WHERE target_date < (NOW() AT TIME ZONE 'Asia/Tokyo')::date - 7")
     on = await conn.fetch(
