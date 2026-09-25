@@ -25,7 +25,7 @@ mpl.rcParams.update({
     "axes.spines.top": True, "axes.spines.right": True, "xtick.direction": "in", "ytick.direction": "in",
     "figure.dpi": 200, "savefig.dpi": 1200, "pdf.fonttype": 42, "ps.fonttype": 42})
 INK, MUTED, FAINT = "#1A1A1A", "#5E5E5E", "#B8B8B8"
-SV, NOSV = "#1A1A1A", "#E03C31"        # street view of its own: black; none (alley / block interior): red
+SV, NOSV, RED, PINK = "#2E75B6", "#E8A33D", "#C0392B", "#FBE9EC"        # street view of its own: black; none (alley / block interior): red
 MM = 1 / 25.4; THR = 41.0
 
 v7 = pd.read_csv(f"{DATA}/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig")
@@ -48,34 +48,38 @@ def det(q, c): h = q.PET >= THR; return int((h & (q[c] >= THR)).sum()), int(h.su
 lo, hi = 25, 60
 fig, axes2 = plt.subplots(2, 2, figsize=(120 * MM, 132 * MM))
 axes = axes2.ravel()
-fig.subplots_adjust(left=0.10, right=0.985, top=0.93, bottom=0.15, wspace=0.28, hspace=0.42)
+fig.subplots_adjust(left=0.10, right=0.985, top=0.93, bottom=0.19, wspace=0.28, hspace=0.42)
 for ax, (title, sub, col) in zip(axes, panels):
-    ax.plot([lo, hi], [lo, hi], color=FAINT, lw=0.8, zorder=1)
-    ax.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1); ax.axvline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
+    from matplotlib.patches import Rectangle
+    ax.add_patch(Rectangle((THR, lo), hi - THR, THR - lo, facecolor=PINK, edgecolor="none", zorder=0))   # missed extreme
+    ax.plot([lo, hi], [lo, hi], color=INK, lw=0.7, zorder=1)
+    ax.axhline(THR, color=RED, lw=0.7, ls=(0, (4, 3)), zorder=1); ax.axvline(THR, color=RED, lw=0.7, ls=(0, (4, 3)), zorder=1)
     if col == "tier1":
-        ax.scatter(d.PET, d[col], s=11, color=SV, edgecolor="none", zorder=3)
+        ax.scatter(S.PET, S[col], s=13, color=SV, edgecolor="white", lw=0.4, zorder=3)
+        ax.scatter(N.PET, N[col], s=17, color=NOSV, marker="D", edgecolor="white", lw=0.4, zorder=4)
     else:
-        ax.scatter(S.PET, S[col], s=11, color=SV, edgecolor="none", zorder=3)
-        ax.scatter(N.PET, N[col], s=13, color=NOSV, edgecolor="none", zorder=4)
+        ax.scatter(S.PET, S[col], s=13, color=SV, edgecolor="white", lw=0.4, zorder=3)
+        ax.scatter(N.PET, N[col], s=17, color=NOSV, marker="D", edgecolor="white", lw=0.4, zorder=4)
     ax.set_xlim(lo, hi); ax.set_ylim(lo, hi); ax.set_box_aspect(1)
     ax.set_xticks([30, 40, 50, 60]); ax.set_yticks([30, 40, 50, 60])
     ax.text(0.0, 1.10, title, transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="bold", color=INK)
     ax.text(0.0, 1.02, sub, transform=ax.transAxes, ha="left", va="bottom", fontsize=6.6, color=MUTED)
     hs, ns = det(S, col); hn, nn = det(N, col)
     if col == "tier1":
-        ax.text(0.04, 0.96, f"MAE {mae(d, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color=SV)
+        ax.text(0.04, 0.96, f"MAE {mae(d, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color=INK)
     else:
         ax.text(0.04, 0.96, f"MAE {mae(S, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color=SV)
-        ax.text(0.04, 0.88, f"MAE {mae(N, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color=NOSV)
-    ax.text(0.96, 0.04, f"extreme detected {hs + hn}/{ns + nn}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=INK)
+        ax.text(0.04, 0.88, f"MAE {mae(N, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color="#B07A1A")
+    ax.text(0.96, 0.04, f"extreme detected {hs + hn}/{ns + nn}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=RED)
     print(f"{title:36s} SV {mae(S,col):.2f} ({hs}/{ns})  noSV {mae(N,col):.2f} ({hn}/{nn})")
 for a_ in axes:
     a_.set_ylabel("Estimated PET (°C)"); a_.set_xlabel("Measured PET (°C)")
     a_.tick_params(labelleft=True, labelbottom=True)
-axes[0].text(THR + 0.6, hi - 1.0, "41 °C", fontsize=6.4, color=MUTED, va="top")
+axes[0].text(THR + 0.6, hi - 1.0, "41 °C", fontsize=6.4, color=RED, va="top")
 fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SV, markersize=4.6, markeredgecolor="none", label=f"street view at the site (n = {len(S)})"),
-                    Line2D([], [], marker="o", color="none", markerfacecolor=NOSV, markersize=4.6, markeredgecolor="none", label=f"no street view at the site (n = {len(N)}, alley or block interior) — in (b) substituted from 43–110 m away or failed; followed through (c), (d)")],
-           loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=1, frameon=False, fontsize=7, handletextpad=0.3, labelspacing=0.3)
+                    Line2D([], [], marker="D", color="none", markerfacecolor=NOSV, markersize=4.2, markeredgecolor="none", label=f"no street view at the site (n = {len(N)}, alley or block interior): in (b) substituted from 43–110 m away or failed")],
+           loc="lower center", bbox_to_anchor=(0.5, 0.025), ncol=1, frameon=False, fontsize=7, handletextpad=0.3, labelspacing=0.3)
+fig.text(0.5, 0.005, "pink quadrant: measured ≥ 41 °C but estimated below — extreme heat missed", ha="center", va="bottom", fontsize=6.6, color=RED)
 for e in ("pdf", "eps", "png"):
     fig.savefig(f"{OUT}/SCS_Fig_input_ladder.{e}", bbox_inches="tight", pad_inches=0.03)
 fig.savefig(f"{OUT}/SCS_Fig_input_ladder.tiff", bbox_inches="tight", pad_inches=0.03, dpi=1200, pil_kwargs={"compression": "tiff_lzw"})
