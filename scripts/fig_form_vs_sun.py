@@ -82,7 +82,6 @@ bx.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
 for i, (q, col, name) in enumerate(((S, SUN, "sunlit"), (H, SHADE, "shaded"))):
     x = i + rng.uniform(-0.22, 0.22, len(q))
     mu = q.PET.mean()
-    bx.vlines(x, mu, q.PET, color=col, lw=0.45, alpha=0.45, zorder=2)      # residual = distance to the group mean
     bx.scatter(x, q.PET, s=15, color=col, edgecolor="white", lw=0.5, zorder=4)
     bx.plot([i - 0.34, i + 0.34], [mu, mu], color=col, lw=1.8, zorder=5)
     bx.text(i + (0.40 if i == 0 else 0.26), mu + (0.0 if i == 0 else 2.6), f"predicted\n{mu:.1f} °C", ha="left", va="center" if i == 0 else "bottom", fontsize=6.8, color=col, linespacing=1.15)
@@ -94,7 +93,7 @@ bx.text(-0.55, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom
 fb = d[(d.pred_lab >= THR) & (d.PET < THR)]
 bx.text(0.0, lo + 0.5, f"predicted extreme,\nmeasured not: {len(fb)} site{'s' if len(fb)!=1 else ''}", ha="center", va="bottom", fontsize=7, color=INK, linespacing=1.3)
 bx.text(0.0, 1.03, f"n = {len(d)}   R² = {m_lab.rsquared:.2f}   RMSE = {rmse(m_lab):.1f} °C", transform=bx.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
-bx.text(0.97, 0.95, "thin line = error,\npoint to group mean", transform=bx.transAxes, ha="right", va="top", fontsize=6.6, color=MUTED, linespacing=1.2)
+bx.text(0.97, 0.95, "bar = model prediction\n(group mean)", transform=bx.transAxes, ha="right", va="top", fontsize=6.6, color=MUTED, linespacing=1.2)
 
 for a_, t_ in ((ax, "(a)  Urban-form model"), (bx, "(b)  Sun/shade model")):
     x0_ = a_.get_position().x0
