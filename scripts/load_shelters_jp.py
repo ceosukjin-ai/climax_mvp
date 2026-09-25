@@ -22,6 +22,14 @@ sys.path.insert(0, "/app")
 
 CKAN = "https://catalog.data.metro.tokyo.lg.jp/api/3/action/package_search"
 QUERIES = ["クーリングシェルター", "暑熱避難施設", "クールシェアスポット"]
+# 도쿄도 오픈데이터 API (2026-09-25). CSV 파일 서버(opendata.metro.tokyo.lg.jp)는 기계 접속에 403 을
+# 주지만, 같은 데이터가 API 로도 열려 있다. POST {} → {"total":…, "hits":[{열:값}]} 류.
+# 카탈로그 검색으로 찾은 데이터셋의 CSV 가 막히면 여기 등록한 API 로 받는다.
+TOKYO_API = "https://service.api.metro.tokyo.lg.jp/api/{}/json"
+API_IDS = {
+    # 패키지 name → API id (spec.api.metro.tokyo.lg.jp 에서 확인)
+    "t131083d3100000016": "t131083d3100000016-262c81f06e226d2cb4f20ed5cbe817ff-0",   # 江東区 62곳
+}
 UA = {"User-Agent": "ClimaX/0.1 (heat-safety app; contact: ceosukjin@gmail.com)"}
 
 DDL = """
@@ -96,8 +104,39 @@ async def _packages(client):
     return out
 
 
-def _parse(txt: str):
-    rows = list(csv.reader(io.StringIO(txt)))
+def _records(js) -> list[list[str]]:
+    """API JSON → CSV 와 같은 [머리행, 행…] 모양. 레코드 목록은 dict 들의 첫 배열로 찾는다."""
+    def find(o):
+        if isinstance(o, list) and o and isinstance(o[0], dict):
+            return o
+        if isinstance(o, dict):
+            for k in ("hits", "records", "data", "items", "results"):
+                if k in o and find(o[k]):
+                    return find(o[k])
+            for v in o.values():
+                r = find(v)
+                if r:
+                    return r
+        return None
+    recs = find(js) or []
+    if not recs:
+        return []
+    head = list(recs[0].keys())
+    return [head] + [[("" if r.get(h) is None else str(r.get(h))) for h in head] for r in recs]
+
+
+async def _api_rows(client, api_id):
+    try:
+        r = await client.post(TOKYO_API.format(api_id), json={}, headers=UA, timeout=30.0)
+        if r.status_code != 200:
+            print(f"   ✗ API HTTP {r.status_code}"); return None
+        return _records(r.json())
+    except Exception as e:  # noqa: BLE001
+        print(f"   ✗ API {type(e).__name__}"); return None
+
+
+def _parse(txt, rows=None):
+    rows = rows if rows is not None else list(csv.reader(io.StringIO(txt)))
     if len(rows) < 2:
         return None, []
     head = rows[0]
@@ -137,15 +176,28 @@ async def main():
             csvs = [r for r in p.get("resources", []) if (r.get("format") or "").upper() == "CSV"
                     or (r.get("url") or "").lower().endswith(".csv")]
             print(f"\n■ {org} · {p['title'][:40]}  [{lic}]  CSV {len(csvs)}개")
-            for res in csvs[:3]:
-                rr = await _get(client, res["url"])
-                if not rr:
-                    print(f"   ✗ 못 받음 {res['url'][:90]}"); continue
-                meta, rows = _parse(_decode(rr.content))
+            srcs = [("csv", r["url"]) for r in csvs[:3]]
+            if p["name"] in API_IDS:
+                srcs.append(("api", API_IDS[p["name"]]))
+            for how, url in srcs:
+                if how == "csv":
+                    rr = await _get(client, url)
+                    if not rr:
+                        print(f"   ✗ 못 받음 {url[:90]}"); continue
+                    meta, rows = _parse(_decode(rr.content))
+                else:
+                    recs = await _api_rows(client, url)
+                    if not recs:
+                        continue
+                    meta, rows = _parse(None, recs)
+                    url = TOKYO_API.format(url)
+                res = {"url": url}
                 head, ci = meta if meta else ([], {})
                 print(f"   {res['url'][:90]}")
-                print(f"     열 {len(head)}: {', '.join(head[:12])[:140]}")
+                print(f"     [{how}] 열 {len(head)}: {', '.join(head[:14])[:200]}")
                 print(f"     좌표열 {ci.get('la')},{ci.get('lo')} 이름열 {ci.get('nm')} → 좌표 있는 행 {len(rows)}")
+                if rows:
+                    print(f"     예: {rows[0]}")
                 if rows:
                     plan.append((f"tokyo:{p['name']}", _kind(p["title"]), lic, res["url"], rows))
                     break                         # 같은 데이터셋의 다른 판(연도별)은 겹친다 — 첫 CSV 하나만
