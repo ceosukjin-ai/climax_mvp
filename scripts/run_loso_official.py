@@ -46,8 +46,8 @@ from vpti_core import pet_residual as PR                  # noqa: E402
 from app.config import get_settings                       # noqa: E402
 from app.services.geo import dominant_wall_material       # noqa: E402
 
-IN = "/tmp/tier3_engine_output_80_v6.csv"
-OUT = "/tmp/loso_official.json"
+IN = sys.argv[1] if len(sys.argv) > 1 else "/tmp/tier3_engine_output_80_v6.csv"
+OUT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/loso_official.json"
 MATS = [MaterialFraction(material="asphalt", fraction=0.7),
         MaterialFraction(material="concrete", fraction=0.3)]
 ALPHA = 20.0                       # 배포 잔차층과 같은 능형 계수
