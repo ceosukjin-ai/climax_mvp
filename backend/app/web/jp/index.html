@@ -39,6 +39,9 @@
   .fab3{bottom:calc(124px + var(--sab));font-size:20px}
   .fab4{bottom:calc(178px + var(--sab));font-size:20px}
   .fab5{bottom:calc(232px + var(--sab));font-size:20px}
+  .fab6{bottom:calc(286px + var(--sab));font-size:20px}
+  .alertban{border-radius:12px;padding:8px 11px;margin:0 0 8px;font-size:13px;font-weight:700;line-height:1.45}
+  .offwb{font-size:11.5px;color:var(--muted);margin:-4px 0 8px}
   /* 대시보드(home.html)에서 넘어온 경우에만 보인다 — 돌아갈 길 (2026-09-18) */
   .homeBtn{position:absolute;z-index:1000;left:14px;top:calc(14px + var(--sat));height:38px;padding:0 14px;
     border-radius:19px;border:0;background:rgba(255,255,255,.94);color:#1c1c1e;font:inherit;font-size:14px;
@@ -124,6 +127,7 @@
 </div>
 <div class="hint" id="hint">地図をタップ、または ◎ で現在地</div>
 <button class="homeBtn" id="homeBtn" onclick="location.href='./home.html'">&#8592; <span id="homeTxt">ホーム</span></button>
+<button class="fab fab6" id="shBtn" title="涼める場所">❄️</button>
 <button class="fab fab5" id="stBtn" title="最寄り駅">🚉</button>
 <button class="fab fab4" id="dogBtn" title="犬の散歩">🐕</button>
 <button class="fab fab3" id="poiBtn" title="周辺">🍜</button>
@@ -314,6 +318,7 @@ async function query(la,lo){
     if(!d.ok){ nocov(); return; }
     marker.setStyle({fillColor:colorFor(d)});
     show(d); lastQ={la,lo,t:Date.now()};
+    attachOfficial(d,la,lo);
   }catch(e){ if(e.name!=="AbortError") nocov(T().err); }
 }
 map.on('click',e=>{
@@ -353,12 +358,49 @@ fab.onclick=()=>{ if(follow){ follow=false; fab.classList.remove('on'); hint.tex
 // 일본은 체감더위를 WBGT 로 말한다(환경성 기준). 우리 값은 이 좌표의 MRT 에서 나오므로
 // 같은 거리라도 볕/그늘이 다르게 나온다 — 관측점 단위 공식값이 못 하는 구분이다.
 const WBC={safe:"#2e9e6b",attention:"#e8c14a",warning:"#e07b39",severe:"#d9483b",danger:"#a01f14"};
+// 2026-09-25: 경보 아이콘(⚠️/🚨)은 **환경성 발표에서만** 띄운다.
+// 예전엔 우리 추정 WBGT 가 33·35 를 넘으면 스스로 아이콘을 붙였다 — 경보는 환경성만 발표한다
+// (기상업무법·전재 원칙). 우리 값은 "이 자리의 추정"으로 등급 색만 준다.
+// 공식 값(가장 가까운 환경성 지점의 예측)은 /jp/wbgt 로 따로 받아 아래 줄에 그대로 옮긴다.
+const OFF_T={ja:{est:"この場所の推定",off:"環境省",pred:"予測",src:"出典：環境省熱中症予防情報サイト",
+               al:"熱中症警戒アラート発表中",sp:"熱中症特別警戒アラート発表中"},
+             en:{est:"estimate here",off:"MOE",pred:"forecast",src:"Source: Ministry of the Environment, Japan",
+               al:"Heatstroke Alert in effect",sp:"Special Heatstroke Alert in effect"},
+             ko:{est:"이 자리 추정",off:"환경성",pred:"예측",src:"출처: 일본 환경성 열사병 예방정보 사이트",
+               al:"열사병 경계 알림 발표 중",sp:"열사병 특별경계 알림 발표 중"}};
+function OT(){ return OFF_T[L_]||OFF_T.ja; }
 function wbgtRow(d){
   if(d.wbgt==null) return "";
   const lv=d.wbgt_level||{}, c=WBC[lv.code]||"#8899a6", label=lv[L_]||lv.en||"";
-  const alert = lv.alert==="special" ? "🚨" : (lv.alert==="alert" ? "⚠️" : "");
-  return `<div class="wb"><span>${T().wbgt}</span><b style="color:${c}">${d.wbgt}</b>
-    <span style="color:${c};font-weight:600">${label} ${alert}</span></div>`;
+  const o=d.official, ot=OT();
+  let ban="", off="";
+  if(o && o.ok && o.alert){
+    const sp=o.alert.level==="special", bc=sp?"#7a1fa2":"#d9483b";
+    ban=`<div class="alertban" style="background:${bc}1a;border:1px solid ${bc}66;color:${bc}">${sp?"🚨":"⚠️"} ${sp?ot.sp:ot.al}
+      <small style="font-weight:500;color:var(--txt)"> · ${esc(o.alert.area)}</small></div>`;
+  }
+  if(o && o.ok && o.official){
+    const w=o.official, hh=new Date(w.target_at).toLocaleTimeString(L_==="en"?"en-GB":"ja-JP",{hour:"2-digit",minute:"2-digit",timeZone:"Asia/Tokyo"});
+    const oc=WBC[(o.level||{}).code]||"#8899a6";
+    off=`<div class="offwb">${ot.off} ${esc(w.name)} ${hh} ${ot.pred} <b style="color:${oc}">${w.wbgt}</b>
+      (${(o.level||{})[L_]||""}) · <span style="opacity:.8">${ot.src}</span></div>`;
+  }
+  return ban+`<div class="wb"><span>${T().wbgt} · ${ot.est}</span><b style="color:${c}">${d.wbgt}</b>
+    <span style="color:${c};font-weight:600">${label}</span></div>`+off;
+}
+// 공식 WBGT·경보 — 체감 조회와 따로 받아 붙인다(늦게 와도 체감 표시를 막지 않는다).
+let offCache=null;
+async function attachOfficial(d,la,lo){
+  try{
+    if(offCache && distM(offCache.la,offCache.lo,la,lo)<3000 && Date.now()-offCache.t<600000){
+      d.official=offCache.v;
+    } else {
+      const r=await fetch('/api/v1/jp/wbgt?lat='+la.toFixed(4)+'&lon='+lo.toFixed(4));
+      const v=await r.json();
+      offCache={la,lo,t:Date.now(),v}; d.official=v;
+    }
+    if(lastData===d) show(d);
+  }catch(e){}
 }
 const PAWC={ok:"#2e9e6b",hot:"#e8c14a",burn:"#e07b39",danger:"#d9483b"};
 function pawCard(d){
@@ -887,6 +929,66 @@ async function routeToStation(idx){
 stBtn.onclick=()=>{
   if(stLayers.length){ clearSt(); stBtn.classList.remove('on'); sheet.classList.add('hidden'); return; }
   loadStations();
+};
+
+// ─── 涼める場所 (쿨링 셸터) (2026-09-25) ─────────────────────
+// 두 층을 **섞지 않는다**: 公式(지자체 공개 쿨링 셸터·쿨셰어) 와 目安(OSM 도서관·백화점·편의점 등).
+// 目安은 공식 쉼터가 아니다 — 목록 위에 그 사실과 "개방 시간은 각 시설 확인" 을 항상 띄운다.
+// 고르면 그곳을 목적지로 체감이 낮은 길을 그린다(poiVia — 가게 고르기와 같은 흐름).
+const SH_API="/api/v1/jp/shelters";
+const SH_T={
+ ja:{load:"涼める場所を探しています…",off:"公式",cand:"冷房のある場所（目安）",none:"近くに見つかりません。地図を動かしてお試しください。",
+     noOff:"この付近は公式リストの座標が未公開です",pick:"タップで涼しいルート",hours:"時間"},
+ en:{load:"Looking for places to cool down…",off:"Official",cand:"Likely air-conditioned (not official)",none:"Nothing found nearby. Move the map and try again.",
+     noOff:"No official list with coordinates for this area yet",pick:"Tap one for the coolest route",hours:"hours"},
+ ko:{load:"더위를 피할 곳을 찾는 중…",off:"공식",cand:"냉방 있는 곳 (참고)",none:"근처에 없습니다. 지도를 옮겨 다시 해보세요.",
+     noOff:"이 지역은 공식 목록 좌표가 아직 공개되지 않았습니다",pick:"누르면 시원한 길로 안내",hours:"시간"}};
+function SHT(){ return SH_T[L_]||SH_T.ja; }
+const SH_ICON={designated:"❄️",coolshare:"❄️",public:"🏛️",store:"🏬",konbini:"🏪"};
+const shBtn=document.getElementById('shBtn');
+let shLayers=[];
+function clearSh(){ shLayers.forEach(l=>l.remove()); shLayers=[]; }
+async function loadShelters(){
+  const o=poiOrigin(), s=SHT();
+  clearSh(); shBtn.classList.add('on');
+  sheet.classList.remove('hidden'); toggleMini(false);
+  setSheet('<div style="font-size:13px;color:var(--muted)"><span class="spin"></span>'+s.load+'</div>');
+  let d=null;
+  try{ d=await fetch(SH_API+'?lat='+o.la.toFixed(5)+'&lon='+o.lo.toFixed(5)+'&radius=800&lang='+L_).then(r=>r.json()); }
+  catch(e){ d=null; }
+  const off=(d&&d.official)||[], cand=(d&&d.candidates)||[], lab=(d&&d.labels)||{};
+  if(!off.length && !cand.length){ setSheet('<div style="font-size:13px;color:var(--muted)">'+s.none+'</div>'); return; }
+  const all=off.concat(cand);
+  const row=(x,i)=>'<div class="prow" data-i="'+i+'"><div class="ic">'+(SH_ICON[x.kind]||'📍')+'</div>'
+     +'<div class="nm">'+esc(x.name)+(x.official?' <small style="color:#2e7bd9;font-weight:700">'+s.off+'</small>':'')
+     +'<br><small>'+esc(lab[x.kind]||'')+(x.hours?' · '+s.hours+' '+esc(x.hours):'')+'</small></div>'
+     +'<div class="di">'+x.meters+'m</div></div>';
+  let html='<div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:6px">'+esc(d.note||'')+'</div>';
+  html+='<div style="font-size:12px;font-weight:700;margin:4px 0">❄️ '+s.off+'</div>';
+  html+= off.length ? '<div class="plist">'+off.slice(0,15).map((x,i)=>row(x,i)).join('')+'</div>'
+                    : '<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">'+s.noOff+'</div>';
+  if(cand.length){
+    html+='<div style="font-size:12px;font-weight:700;margin:8px 0 4px">'+s.cand+'</div>';
+    html+='<div class="plist">'+cand.slice(0,20).map((x,i)=>row(x,off.length+i)).join('')+'</div>';
+  }
+  const offLic=[...new Set(off.map(x=>x.license).filter(Boolean))].join(', ');
+  html+='<div class="foot"><span>'+s.pick+'</span><span>'+(off.length?'自治体OD'+(offLic?' ('+esc(offLic)+')':'')+' · ':'')+'© OpenStreetMap</span></div>';
+  setSheet(html);
+  sheet.querySelectorAll('.prow').forEach(el=>{
+    el.onclick=()=>{ const x=all[+el.dataset.i]; clearSh(); shBtn.classList.remove('on'); poiVia(x.lat,x.lon,x.name); };
+  });
+  all.slice(0,25).forEach(x=>{
+    const m=L.marker([x.lat,x.lon],{icon:L.divIcon({className:"",
+      html:'<div class="poiPin" style="'+(x.official?'outline:2px solid #2e7bd9;border-radius:50%;':'opacity:.85;')+'">'+(SH_ICON[x.kind]||'📍')+'</div>',
+      iconSize:[20,20],iconAnchor:[10,10]})}).addTo(map);
+    m.bindTooltip((x.official?'['+s.off+'] ':'')+x.name+' · '+x.meters+'m',{direction:'top'});
+    m.on('click',()=>{ clearSh(); shBtn.classList.remove('on'); poiVia(x.lat,x.lon,x.name); });
+    shLayers.push(m);
+  });
+}
+shBtn.onclick=()=>{
+  if(shLayers.length){ clearSh(); shBtn.classList.remove('on'); sheet.classList.add('hidden'); return; }
+  loadShelters();
 };
 
 // ─── 턴바이턴 안내 (2026-09-13) ──────────────────────────────

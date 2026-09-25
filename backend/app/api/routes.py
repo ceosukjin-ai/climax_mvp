@@ -659,6 +659,34 @@ async def poi_stations(
 
 
 @router.get(
+    "/jp/shelters",
+    summary="일본 — 더위를 피할 곳: 공식 쿨링 셸터 + 냉방 있는 곳(공식 아님, 참고)",
+)
+async def jp_shelters(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    radius: int = Query(800, ge=200, le=2000, description="반경 m"),
+    lang: str = Query("ja", description="ja/en/ko"),
+) -> JSONResponse:
+    """두 목록을 **따로** 준다 (2026-09-25).
+
+    · `official`   : 지자체가 공개한 쿨링 셸터·쿨셰어 스폿(DB). 행마다 출처·라이선스.
+    · `candidates` : OSM 의 도서관·공민관·구청·백화점·몰·편의점 — **공식 아님**, 냉방 가능성이 높은 곳.
+    `note` 를 화면에 함께 띄울 것(개방 시간 확인·공식 아님 고지).
+    고른 곳을 /route/shade 의 목적지로 넘기면 그곳까지 체감이 낮은 길이 나온다.
+    """
+    from app.services import shelter_jp as _sh
+    try:
+        res = await _sh.nearby(lat, lon, radius, lang=lang)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("jp/shelters 실패: {}", e)
+        res = {"official": [], "candidates": [], "labels": {}, "note": ""}
+    return JSONResponse({"ok": True, "radius": radius, **res,
+                         "attribution": {"official": "各自治体オープンデータ",
+                                         "candidates": "© OpenStreetMap contributors"}})
+
+
+@router.get(
     "/poi/along",
     summary="경로 위의 장소 — 가는 길에 뭐가 있나",
 )
