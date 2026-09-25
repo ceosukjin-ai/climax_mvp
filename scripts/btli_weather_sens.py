@@ -20,9 +20,13 @@ sys.path.insert(0, "/app")
 sys.path.insert(0, "/repo/scripts")
 
 IN = "/repo/data/btli_energy_busan_2026-09-25.csv"
-OUT = "/repo/data/btli_weather_sens_busan_2026-09-25.csv"
+OUT = "/repo/data/btli_weather_sens_v3_busan_2026-09-25.csv"
 URL = "https://apis.data.go.kr/1613000/BldEngyHubService/getBeElctyUsgInfo"
-MONTHS = [(y, m) for y in (2024, 2025, 2026) for m in range(4, 11) if (y, m) <= (2026, 8)]
+# 3판(2026-09-25): 원 시계열 진단(40단지×29개월) 결과
+#  · 전기 useYm 은 **청구월** — 정점이 8·9월(1.5·1.4배)로, 냉방도일 정점(7·8월)보다 한 달 늦다 → 1개월 지연이 정답.
+#  · 2026-05 값이 평소의 ~11배로 튄다(자료 오류) — 2판의 음수 기울기는 이 한 달 때문이었다.
+#  → 청구월 5~11월(사용월 4~10월)만 쓰고, 단지 중앙값의 3배 초과·1/3 미만은 버린다.
+MONTHS = [(y, m) for y in (2024, 2025) for m in range(5, 12)]
 BASE_T = 24.0
 LAT, LON = 35.18, 129.08          # 부산 대표점 (8개 동 모두 20 km 안)
 
@@ -102,6 +106,9 @@ async def main():
                     got[(y, m)] = v
                 await asyncio.sleep(0.12)
             # 전기 사용월(useYm)이 **검침·청구 월**이면 실제 사용은 전달일 수 있다 → 0개월·1개월 지연 둘 다 맞춘다
+            if got:
+                med = st.median(got.values())
+                got = {k: v for k, v in got.items() if med / 3 <= v <= 3 * med}
             fits = {}
             for lag in (0, 1):
                 xs, ys = [], []
@@ -110,18 +117,18 @@ async def main():
                     if (py, pm) in cdd:
                         xs.append(cdd[(py, pm)]); ys.append(v)
                 fits[lag] = (xs, ys)
-            xs, ys = fits[0]
-            if len(xs) < 10:
+            xs, ys = fits[1]          # 1개월 지연(청구월→사용월)이 정본
+            if len(xs) < 8:
                 continue
             a, b, r2 = ols(xs, ys)
-            a1, b1, r21 = ols(*fits[1]) if len(fits[1][0]) >= 10 else (None, None, None)
+            a1, b1, r21 = ols(*fits[0]) if len(fits[0][0]) >= 10 else (None, None, None)   # 참고: 지연 없음
             if a is None or a <= 0:
                 continue
             out.append(dict(동=r["동"], 지번=r["지번"], 단지=r["단지"], 세대=r["세대"], 준공=r["준공"],
                             평균층=r["평균층"], 개월=len(xs), base_kwh=round(a), slope_kwh_per_cdd=round(b, 1),
                             sens_pct_per_cdd=round(b / a * 100, 3), r2=round(r2, 2) if r2 is not None else "",
-                            sens_lag1=round(b1 / a1 * 100, 3) if a1 and a1 > 0 else "",
-                            r2_lag1=round(r21, 2) if r21 is not None else "",
+                            sens_lag0=round(b1 / a1 * 100, 3) if a1 and a1 > 0 else "",
+                            r2_lag0=round(r21, 2) if r21 is not None else "",
                             btli_env_w_m2=r["btli_env_w_m2"], btli_w_m2=r["btli_w_m2"]))
             if i % 20 == 0:
                 print(f"  {i}/{len(rows)}", flush=True)
@@ -134,10 +141,10 @@ async def main():
     s = [o["sens_pct_per_cdd"] for o in out]
     good = [o for o in out if o["r2"] != "" and o["r2"] >= 0.5]
     print(f"\n단지 {len(out)}곳 → {OUT}")
-    l1 = [o for o in out if o["r2_lag1"] != ""]
+    l1 = [o for o in out if o["r2_lag0"] != ""]
     if l1:
-        print(f"  (1개월 지연) 민감도 중앙값 {st.median([o['sens_lag1'] for o in l1]):.2f} %/도일 · "
-              f"R² 중앙값 {st.median([o['r2_lag1'] for o in l1]):.2f}")
+        print(f"  (참고: 지연 없음) 민감도 중앙값 {st.median([o['sens_lag0'] for o in l1]):.2f} %/도일 · "
+              f"R² 중앙값 {st.median([o['r2_lag0'] for o in l1]):.2f}")
     print(f"  민감도 중앙값 {st.median(s):.2f} %/도일 · 적합 R² 중앙값 {st.median([o['r2'] for o in out if o['r2']!='']):.2f} "
           f"· R²≥0.5 단지 {len(good)}곳")
     for lab, sub in (("전체", out), ("R²≥0.5", good)):
