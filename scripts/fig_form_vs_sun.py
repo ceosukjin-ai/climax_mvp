@@ -47,58 +47,45 @@ for k, m in models.items():
 print("shaded predicted ≥41 but measured <41:", len(false_hot), "/", len(H))
 
 # ------------------------------------------------------------------ layout
-fig = plt.figure(figsize=(190 * MM, 88 * MM))
-gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 0.85, 0.62], wspace=0.55, left=0.055, right=0.985, top=0.86, bottom=0.20)
+fig = plt.figure(figsize=(190 * MM, 80 * MM))
+gs = fig.add_gridspec(1, 3, width_ratios=[1.0, 1.0, 0.85], wspace=0.62, left=0.055, right=0.985, top=0.86, bottom=0.21)
 ax, bx, cx = (fig.add_subplot(gs[i]) for i in range(3))
-
-def dot(axis, x, y, col, **kw):
-    axis.scatter(x, y, s=15, color=col, edgecolor="white", lw=0.5, zorder=4, **kw)
-
-# (a) measured vs predicted ----------------------------------------------------
 lo, hi = 35, 55
-ax.add_patch(Rectangle((THR, lo), hi - THR, THR - lo, facecolor=SURF, edgecolor="none", zorder=0))
-ax.plot([lo, hi], [lo, hi], color=FAINT, lw=0.8, zorder=1)
-ax.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
-ax.axvline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
-dot(ax, S.pred_form, S.PET, SUN); dot(ax, H.pred_form, H.PET, SHADE)
-ax.set_xlim(lo, hi); ax.set_ylim(lo, hi); ax.set_box_aspect(1)
-ax.set_xticks(range(35, 56, 5)); ax.set_yticks(range(35, 56, 5))
-ax.set_xlabel("PET predicted from urban form (°C)\nsky, building and tree view factors")
+GREY = "#7A7A7A"
+
+def frame(axis, xlabel):
+    axis.add_patch(Rectangle((THR, lo), hi - THR, THR - lo, facecolor=SURF, edgecolor="none", zorder=0))
+    axis.plot([lo, hi], [lo, hi], color=FAINT, lw=0.8, zorder=1)
+    axis.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
+    axis.axvline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
+    axis.set_xlim(lo, hi); axis.set_ylim(lo, hi); axis.set_box_aspect(1)
+    axis.set_xticks(range(35, 56, 5)); axis.set_yticks(range(35, 56, 5))
+    axis.set_xlabel(xlabel)
+    axis.text(hi - 2.0, hi - 2.9, "1:1", ha="center", va="center", fontsize=7, color=MUTED, rotation=45)
+    axis.text(lo + 0.4, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom")
+
+# (a) form model, no grouping ------------------------------------------------------
+frame(ax, "Predicted PET (°C)\nurban-form model: sky, building, tree view factors")
+ax.scatter(d.pred_form, d.PET, s=15, color=GREY, edgecolor="white", lw=0.5, zorder=4)
 ax.set_ylabel("Measured PET (°C)")
+fa = d[(d.pred_form >= THR) & (d.PET < THR)]
+ax.text(hi - 0.4, lo + 0.5, f"predicted extreme,\nmeasured not: {len(fa)} sites", ha="right", va="bottom", fontsize=7, color=INK, linespacing=1.3)
+ax.text(0.0, 1.03, f"n = {len(d)}   R² = {m_form.rsquared:.2f}   RMSE = {rmse(m_form):.1f} °C", transform=ax.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
 
-ax.text(hi - 0.3, hi - 0.6, "1:1", ha="right", va="top", fontsize=7, color=MUTED)
-ax.text(lo + 0.4, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom")
-ax.text(hi - 0.4, lo + 0.5,
-        f"predicted extreme,\nmeasured not:\n{len(false_hot)} of {len(H)} shaded sites",
-        ha="right", va="bottom", fontsize=7, color=SHADE, linespacing=1.3)
-rm = lambda q: float(np.sqrt(np.mean(q.res_form ** 2)))
-ax.text(0.0, 1.115, f"all sites (n = {len(d)}):  R² {m_form.rsquared:.2f},  RMSE {rmse(m_form):.1f} °C", transform=ax.transAxes,
-        ha="left", va="bottom", fontsize=7, color=INK)
-ax.text(0.0, 1.06, f"sunlit (n = {len(S)}):  RMSE {rm(S):.1f} °C,  bias {S.res_form.mean():+.1f} °C", transform=ax.transAxes,
-        ha="left", va="bottom", fontsize=7, color=SUN)
-ax.text(0.0, 1.005, f"shaded (n = {len(H)}):  RMSE {rm(H):.1f} °C,  bias {H.res_form.mean():+.1f} °C", transform=ax.transAxes,
-        ha="left", va="bottom", fontsize=7, color=SHADE)
-
-# (b) residuals by model and group ------------------------------------------------
-rows = [("Form model\n(three view factors)", "res_form"), ("Label model\n(sun/shade)", "res_lab")]
-rng = np.random.default_rng(3)
-y0 = {0: 1.25, 1: 0.0}
-bx.axvline(0, color=FAINT, lw=0.8, zorder=1)
-for r, (name, col) in enumerate(rows):
-    base = y0[r]
-    for g, colr, off in ((1, SUN, +0.16), (0, SHADE, -0.16)):
-        q = d[d.sun == g][col].values
-        yy = base + off + rng.uniform(-0.07, 0.07, len(q))
-        bx.scatter(q, yy, s=11, color=colr, edgecolor="white", lw=0.4, alpha=0.9, zorder=3)
-        mu = q.mean()
-        bx.plot([mu, mu], [base + off - 0.11, base + off + 0.11], color=colr, lw=1.6, zorder=5)
-        ty = base + off + (0.14 if g == 1 else -0.14)
-        bx.text(mu, ty, f"{mu:+.1f} °C", ha="center", va="bottom" if g == 1 else "top", fontsize=6.8, color=INK)
-    bx.text(-9.3, base + 0.40, name, ha="left", va="bottom", fontsize=7.4, color=INK, linespacing=1.15)
-bx.set_xlim(-9.5, 8); bx.set_ylim(-0.5, 2.1)
-bx.set_yticks([]); bx.spines["left"].set_visible(False)
-bx.set_xlabel("Residual, measured − predicted (°C)")
-
+# (b) label model: prediction is the group mean -------------------------------------
+frame(bx, "Predicted PET (°C)\nsun/shade model: group mean, 62 sunlit / 17 shaded")
+d["pred_lab"] = m_lab.fittedvalues
+S, H = d[d.sun == 1], d[d.sun == 0]
+rng = np.random.default_rng(5)
+for q, col in ((S, SUN), (H, SHADE)):
+    jitter = rng.uniform(-0.25, 0.25, len(q))
+    bx.scatter(m_lab.fittedvalues.loc[q.index] + jitter, q.PET, s=15, color=col, edgecolor="white", lw=0.5, zorder=4)
+bx.tick_params(labelleft=False)
+fb = d[(d.pred_lab >= THR) & (d.PET < THR)]
+bx.text(hi - 0.4, lo + 0.5, f"predicted extreme,\nmeasured not: {len(fb)} site{'s' if len(fb)!=1 else ''}", ha="right", va="bottom", fontsize=7, color=INK, linespacing=1.3)
+bx.text(0.0, 1.03, f"n = {len(d)}   R² = {m_lab.rsquared:.2f}   RMSE = {rmse(m_lab):.1f} °C", transform=bx.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
+bx.text(S.pred_lab.iloc[0] + 0.8, hi - 0.6, f"sunlit sites,\npredicted {S.pred_lab.iloc[0]:.1f} °C", ha="left", va="top", fontsize=6.8, color=SUN, linespacing=1.2)
+bx.text(H.pred_lab.iloc[0] - 0.8, hi - 0.6, f"shaded sites,\npredicted {H.pred_lab.iloc[0]:.1f} °C", ha="right", va="top", fontsize=6.8, color=SHADE, linespacing=1.2)
 
 # (c) model ladder ----------------------------------------------------------------
 names = list(models); vals = [rmse(models[k]) for k in names]; r2 = [models[k].rsquared for k in names]
@@ -107,19 +94,18 @@ cols = [FAINT, FAINT, INK, INK]
 cx.barh(ypos, vals, height=0.42, color=cols, edgecolor="none", zorder=3)
 for y, v, r in zip(ypos, vals, r2):
     cx.text(v + 0.08, y, f"{v:.1f} °C   R² {r:.2f}", va="center", ha="left", fontsize=7, color=INK)
-cx.set_yticks(ypos); cx.set_yticklabels(names, fontsize=7.2)
+cx.set_yticks(ypos); cx.set_yticklabels(names, fontsize=7)
 cx.set_xlim(0, 6.4); cx.set_xticks([0, 1, 2, 3, 4])
 cx.set_xlabel("RMSE of PET (°C)")
 cx.spines["left"].set_visible(False); cx.tick_params(axis="y", length=0)
 
-
-for a_, t_ in ((ax, "(a)  Form model against measurement"), (bx, "(b)  Where each model errs"), (cx, "(c)  Model ladder")):
+for a_, t_ in ((ax, "(a)  Urban-form model"), (bx, "(b)  Sun/shade model"), (cx, "(c)  Model ladder")):
     x0_ = a_.get_position().x0
-    fig.text(x0_, 0.985, t_, ha="left", va="bottom", fontsize=9, fontweight="bold", color=INK)
-# legend --------------------------------------------------------------------------
-fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SUN, markersize=4.8, label=f"sunlit — direct beam at the sensor (n = {len(S)})"),
-                    Line2D([], [], marker="o", color="none", markerfacecolor=SHADE, markersize=4.8, label=f"shaded — no direct beam (n = {len(H)})")],
-           loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False, fontsize=7.4, handletextpad=0.3, columnspacing=2.0)
+    fig.text(x0_, 0.975, t_, ha="left", va="bottom", fontsize=9, fontweight="bold", color=INK)
+fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SUN, markersize=4.8, label="sunlit — direct beam at the sensor"),
+                    Line2D([], [], marker="o", color="none", markerfacecolor=SHADE, markersize=4.8, label="shaded — no direct beam"),
+                    Line2D([], [], marker="o", color="none", markerfacecolor=GREY, markersize=4.8, label="all sites, label not used")],
+           loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=3, frameon=False, fontsize=7.2, handletextpad=0.3, columnspacing=1.6)
 for e in ("pdf", "eps", "png"):
     fig.savefig(f"{OUT}/SCS_Fig_form_vs_sun.{e}", bbox_inches="tight", pad_inches=0.03)
 print("saved", OUT)
