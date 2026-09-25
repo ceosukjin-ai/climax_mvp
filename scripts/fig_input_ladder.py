@@ -55,7 +55,7 @@ for ax, (title, sub, col) in zip(axes, panels):
     ax.plot([lo, hi], [lo, hi], color=INK, lw=0.7, zorder=1)
     ax.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1); ax.axvline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
     if col == "tier1":
-        ax.scatter(d.PET, d[col], s=13, color=MUTED, edgecolor="white", lw=0.4, zorder=3)
+        ax.scatter(d.PET, d[col], s=13, color=INK, edgecolor="white", lw=0.4, zorder=3)
     else:
         ax.scatter(S.PET, S[col], s=13, color=SV, edgecolor="white", lw=0.4, zorder=3)
         ax.scatter(N.PET, N[col], s=17, color=NOSV, marker="D", edgecolor="white", lw=0.4, zorder=4)
@@ -69,17 +69,17 @@ for ax, (title, sub, col) in zip(axes, panels):
     else:
         ax.text(0.04, 0.96, f"MAE {mae(S, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color=SV)
         ax.text(0.04, 0.88, f"MAE {mae(N, col):.1f} °C", transform=ax.transAxes, ha="left", va="top", fontsize=7, color="#B07A1A")
-    ax.text(0.96, 0.04, f"extreme detected {hs + hn}/{ns + nn}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=RED)
+    ax.text(0.96, 0.04, f"extreme detected {hs + hn}/{ns + nn}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=MUTED)
     print(f"{title:36s} SV {mae(S,col):.2f} ({hs}/{ns})  noSV {mae(N,col):.2f} ({hn}/{nn})")
 for a_ in axes:
     a_.set_ylabel("Estimated PET (°C)"); a_.set_xlabel("Measured PET (°C)")
     a_.tick_params(labelleft=True, labelbottom=True)
 axes[0].text(THR + 0.6, hi - 1.0, "41 °C", fontsize=6.4, color=MUTED, va="top")
-fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=MUTED, markersize=4.6, markeredgecolor="none", label="all 80 sites — street view not involved (a)"),
+fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=INK, markersize=4.6, markeredgecolor="none", label="all 80 sites — street view not involved (a)"),
                     Line2D([], [], marker="o", color="none", markerfacecolor=SV, markersize=4.6, markeredgecolor="none", label=f"street view at the site (n = {len(S)})"),
                     Line2D([], [], marker="D", color="none", markerfacecolor=NOSV, markersize=4.2, markeredgecolor="none", label=f"no street view at the site (n = {len(N)}, alley or block interior): in (b) substituted from 43–110 m away or failed")],
            loc="lower center", bbox_to_anchor=(0.5, 0.025), ncol=1, frameon=False, fontsize=7, handletextpad=0.3, labelspacing=0.3)
-fig.text(0.5, 0.005, "pink quadrant: measured ≥ 41 °C but estimated below — extreme heat missed", ha="center", va="bottom", fontsize=6.6, color=RED)
+fig.text(0.5, 0.005, "pink quadrant: measured ≥ 41 °C but estimated below — extreme heat missed", ha="center", va="bottom", fontsize=6.6, color=MUTED)
 for e in ("pdf", "eps", "png"):
     fig.savefig(f"{OUT}/SCS_Fig_input_ladder.{e}", bbox_inches="tight", pad_inches=0.03)
 fig.savefig(f"{OUT}/SCS_Fig_input_ladder.tiff", bbox_inches="tight", pad_inches=0.03, dpi=1200, pil_kwargs={"compression": "tiff_lzw"})
