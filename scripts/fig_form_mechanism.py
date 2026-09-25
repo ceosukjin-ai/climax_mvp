@@ -57,7 +57,10 @@ def load():
     d = (m[["측정ID", "시각", "권역", "위도", "경도", "Ta", "PET", "볕"]]
          .merge(v[["측정ID", "SVF"]], on="측정ID")
          .merge(w[["측정ID", "width_m", "hw_ratio"]], on="측정ID", how="left"))
-    d["sun"] = d["볕"].astype(int)
+    # 2026-09-25: 볕/그늘은 정본 scs_master_80.csv 의 sun (62/18, 부암제1동_05 재판독) 에서 읽는다.
+    _m = pd.read_csv(f"{DATA}/scs_master_80.csv", encoding="utf-8-sig")[["측정ID", "sun"]]
+    d = d.drop(columns=["볕"]).merge(_m, on="측정ID")
+    d["sun"] = d["sun"].astype(int)
     d["shade"] = 1 - d["sun"]
     d["t"] = pd.to_datetime(d["시각"])
     return d
