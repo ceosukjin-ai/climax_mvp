@@ -52,7 +52,7 @@ fig = plt.figure(figsize=(140 * MM, 80 * MM))
 gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0], wspace=0.45, left=0.09, right=0.985, top=0.86, bottom=0.30)
 ax, bx = (fig.add_subplot(gs[i]) for i in range(2))
 lo, hi = 35, 55
-GREY = "#7A7A7A"
+GREY = "#1A1A1A"
 
 def frame(axis, xlabel):
     axis.add_patch(Rectangle((THR, lo), hi - THR, THR - lo, facecolor=SURF, edgecolor="none", zorder=0))
