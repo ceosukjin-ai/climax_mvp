@@ -53,7 +53,7 @@ for ax, (title, sub, col) in zip(axes, panels):
     from matplotlib.patches import Rectangle
     ax.add_patch(Rectangle((THR, lo), hi - THR, THR - lo, facecolor=PINK, edgecolor="none", zorder=0))   # missed extreme
     ax.plot([lo, hi], [lo, hi], color=INK, lw=0.7, zorder=1)
-    ax.axhline(THR, color=RED, lw=0.7, ls=(0, (4, 3)), zorder=1); ax.axvline(THR, color=RED, lw=0.7, ls=(0, (4, 3)), zorder=1)
+    ax.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1); ax.axvline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
     if col == "tier1":
         ax.scatter(d.PET, d[col], s=13, color=MUTED, edgecolor="white", lw=0.4, zorder=3)
     else:
@@ -74,8 +74,9 @@ for ax, (title, sub, col) in zip(axes, panels):
 for a_ in axes:
     a_.set_ylabel("Estimated PET (°C)"); a_.set_xlabel("Measured PET (°C)")
     a_.tick_params(labelleft=True, labelbottom=True)
-axes[0].text(THR + 0.6, hi - 1.0, "41 °C", fontsize=6.4, color=RED, va="top")
-fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SV, markersize=4.6, markeredgecolor="none", label=f"street view at the site (n = {len(S)})"),
+axes[0].text(THR + 0.6, hi - 1.0, "41 °C", fontsize=6.4, color=MUTED, va="top")
+fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=MUTED, markersize=4.6, markeredgecolor="none", label="all 80 sites — street view not involved (a)"),
+                    Line2D([], [], marker="o", color="none", markerfacecolor=SV, markersize=4.6, markeredgecolor="none", label=f"street view at the site (n = {len(S)})"),
                     Line2D([], [], marker="D", color="none", markerfacecolor=NOSV, markersize=4.2, markeredgecolor="none", label=f"no street view at the site (n = {len(N)}, alley or block interior): in (b) substituted from 43–110 m away or failed")],
            loc="lower center", bbox_to_anchor=(0.5, 0.025), ncol=1, frameon=False, fontsize=7, handletextpad=0.3, labelspacing=0.3)
 fig.text(0.5, 0.005, "pink quadrant: measured ≥ 41 °C but estimated below — extreme heat missed", ha="center", va="bottom", fontsize=6.6, color=RED)
