@@ -13,7 +13,10 @@
   대조군: 층수만·준공연도만으로 순위를 매겨도 되는지 — BTLI 가 그보다 나아야 의미가 있다.
 
 실행 (서버 — 공공데이터포털에서 「건축HUB_건물에너지정보 서비스」 활용신청이 승인된 뒤)
-  docker run --rm --env-file ~/climax_mvp/infra/ncp/.env.prod \
+  ⚠️ .env.prod 를 --env-file 로 바로 주면 따옴표가 값에 그대로 붙는다(docker run 은 따옴표를 안 벗긴다).
+     돌고 있는 API 컨테이너의 환경을 빌린다:
+  docker exec climax-api printenv > /tmp/api.env && chmod 600 /tmp/api.env
+  docker run --rm --env-file /tmp/api.env \
     -v ~/climax_mvp:/repo -v ~/climax_mvp/backend/app:/app/app:ro climax-backend:latest \
     python3 /repo/scripts/btli_energy_validate.py --probe
   … --run          (부산 8개 동, 2025년)
@@ -58,8 +61,12 @@ async def titles(client, key, sgg, bjd):
     while True:
         r = await client.get(HUB_TITLE, params={"serviceKey": key, "sigunguCd": sgg, "bjdongCd": bjd,
                                                 "numOfRows": "100", "pageNo": str(page), "_type": "json"})
-        r.raise_for_status()
-        rows, total = _items(r.json())
+        try:
+            js = r.json()
+        except ValueError:
+            # 공공데이터포털은 키·권한 오류를 JSON 이 아니라 XML/텍스트로 준다 — 원문을 보여준다(키는 안 찍힘)
+            raise SystemExit(f"건축물대장 응답이 JSON 이 아님 (HTTP {r.status_code}): {r.text[:300]}")
+        rows, total = _items(js)
         out += rows
         if not rows or len(out) >= total or page > 80:
             return out
@@ -106,12 +113,21 @@ async def energy(client, key, url, sgg, bjd, p, ym):
         rows, _ = _items(r.json())
     except ValueError:
         return None, r.text[:300]
-    tot = 0.0
+    if not rows:
+        return None, r.text[:300]
+    # 사용량 칸 이름은 활용가이드에만 있다. 알려진 후보 → 없으면 이름에 Qty/Usg 가 든 숫자 칸.
+    # 못 찾으면 0 으로 치지 않고 None (0 kWh 로 섞이면 검증이 조용히 망가진다).
+    known = ("useQty", "useqty", "elctyUseQty", "elctyUsgQty", "usgQty", "useAmt", "gasUseQty")
+    tot, found = 0.0, None
     for x in rows:
-        for k in ("useQty", "useAmt", "elctyUsgQty", "usgQty", "useqty"):
-            if k in x:
-                tot += _f(x[k]); break
-    return (tot if rows else None), (json.dumps(rows[:1], ensure_ascii=False)[:300] if rows else r.text[:300])
+        k = next((k for k in known if k in x), None) or next(
+            (k for k in x if any(t in k.lower() for t in ("qty", "usg", "usage")) and
+             str(x[k]).replace(".", "", 1).lstrip("-").isdigit()), None)
+        if k is None:
+            continue
+        found = k
+        tot += _f(x[k])
+    return (tot if found else None), json.dumps(rows[:1], ensure_ascii=False) + f"  [사용량 칸={found}, 행 {len(rows)}]"
 
 
 def btli_intensity(p, lat, lon):
@@ -158,6 +174,10 @@ async def main():
     from app.config import get_settings
     from app.services.building import _reverse_vworld
     key = get_settings().building_api_key
+    # 에너지 API 키를 따로 받았으면 ENERGY_API_KEY 로 (없으면 건축물대장 키와 같은 것을 쓴다 —
+    # 공공데이터포털 인증키는 계정당 하나라 보통 같다). 키 값은 절대 출력하지 않는다.
+    ekey = os.environ.get("ENERGY_API_KEY") or key
+    print("에너지 키:", "ENERGY_API_KEY(별도)" if os.environ.get("ENERGY_API_KEY") else "BUILDING_API_KEY 와 같음")
     if not key:
         print("BUILDING_API_KEY 없음 (.env.prod)"); return
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -178,8 +198,8 @@ async def main():
             p = max(ps, key=lambda x: x["hh"])
             print(f"  시험 지번: {p['name']} {p['bun']}-{p['ji']} ({p['hh']}세대, {len(p['bldgs'])}동, {p['year']})")
             for url, kind in ENERGY_CANDIDATES:
-                v, raw = await energy(client, key, url, sgg, bjd, p, f"{YEAR}08")
-                print(f"  {'✅' if v is not None else '  '} {kind} {url}\n      → {raw[:220]}")
+                v, raw = await energy(client, ekey, url, sgg, bjd, p, f"{YEAR}08")
+                print(f"  {'✅' if v is not None else '  '} {kind} {url}  사용량={v}\n      → {raw[:900]}")
             return
 
         url = a.energy_url or ENERGY_CANDIDATES[0][0]
@@ -191,7 +211,7 @@ async def main():
             for p in ps:
                 e = {}
                 for m in MONTHS:
-                    v, _ = await energy(client, key, url, sgg, bjd, p, f"{YEAR}{m:02d}")
+                    v, _ = await energy(client, ekey, url, sgg, bjd, p, f"{YEAR}{m:02d}")
                     e[m] = v
                     await asyncio.sleep(0.05)
                 if any(e[m] is None for m in MONTHS) or p["tot_area"] <= 0:
