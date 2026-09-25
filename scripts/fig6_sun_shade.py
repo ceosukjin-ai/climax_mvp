@@ -54,11 +54,14 @@ ROWS = [("LCZ 1", "부암제1동", "Buam 1"),
 
 
 def load_measured():
+    # 2026-09-25: 볕/그늘은 정본(scs_master_80.csv 의 sun)으로 — 부암제1동_05 재판독(62/18) 반영.
+    sun = {r["측정ID"]: r["sun"] for r in csv.DictReader(
+        open(f"{DATA}/scs_master_80.csv", encoding="utf-8-sig"))}
     out = []
     for r in csv.DictReader(open(f"{DATA}/tier3_engine_output_80_v7_photo.csv",
                                  encoding="utf-8-sig")):
         ta, tmrt = float(r["Ta"]), float(r["Tmrt"])
-        out.append(dict(dong=r["권역"], pet=float(r["PET"]), sun=(r["볕"] == "1"),
+        out.append(dict(dong=r["권역"], pet=float(r["PET"]), sun=(sun.get(r["측정ID"], r["볕"]) == "1"),
                         rise=tmrt - ta))
     return out
 

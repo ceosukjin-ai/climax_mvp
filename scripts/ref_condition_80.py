@@ -59,6 +59,14 @@ def main():
     meas = {r["측정ID"]: r for r in csv.DictReader(
         open("data/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig"))}
     idx = list(csv.DictReader(open("data/aug80_viewfactors.csv", encoding="utf-8-sig")))
+    # 2026-09-25: 볕/그늘은 **정본(scs_master_80.csv 의 sun)** 에서 가져온다.
+    # 예전엔 tier3_…_v7_photo.csv 의 「볕」을 읽어, scs_master.py 의 SUN_OVERRIDE
+    # (부암제1동_05 → 볕, 62/18)가 기준조건 계산에 반영되지 않았다.
+    sun = {r["측정ID"]: r["sun"] for r in csv.DictReader(
+        open("data/scs_master_80.csv", encoding="utf-8-sig"))}
+    for k, m in meas.items():
+        if k in sun:
+            m["볕"] = sun[k]
 
     out = []
     for r in idx:
