@@ -658,6 +658,29 @@ async def poi_stations(
                          "attribution": "© OpenStreetMap contributors"})
 
 
+@router.get("/jp/home", include_in_schema=False)
+async def jp_home(
+    lat: float = Query(..., ge=-90.0, le=90.0),
+    lon: float = Query(..., ge=-180.0, le=180.0),
+    era: str | None = Query(None, description="pre1980|s55|h4|h11"),
+    structure: str | None = Query(None, description="wood|steel|rc"),
+    kind: str | None = Query(None, description="detached|apartment"),
+    lang: str = Query("ja"),
+) -> dict:
+    """일본 — 「우리 집 더위」: 단열 시기·구조로 본 냉방 필요도 (2026-09-25, btli_jp).
+
+    입력은 사용자가 기기에 저장한 값을 **질의로만** 보낸다(서버에 저장 안 함).
+    모르면 전국 주택 스톡 분포(무단열 24% 등)로 기대값을 준다(estimated=true).
+    현행 기준(等級4) 집 = 1.0 대비 배수. 절대 kWh 아님. 일부 계수는 UNCONFIRMED(응답에 표기).
+    """
+    from app.services import btli_jp as _bj
+    try:
+        return _bj.home(lat, lon, era, structure, kind, lang)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("jp/home 실패: {}", e)
+        return {"ok": False, "reason": f"{type(e).__name__}"}
+
+
 @router.get(
     "/jp/shelters",
     summary="일본 — 더위를 피할 곳: 공식 쿨링 셸터 + 냉방 있는 곳(공식 아님, 참고)",

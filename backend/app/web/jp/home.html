@@ -144,6 +144,11 @@
 
 <div class="card" id="actCard" style="display:none"><div id="actBody"></div></div>
 
+<div class="card" id="homeCard" style="display:none">
+  <div class="h" id="t_home">おうちの暑さ</div>
+  <div id="homeBody"></div>
+</div>
+
 <div class="foot" id="foot"></div>
 
 <div class="ov" id="onb">
@@ -154,6 +159,10 @@
   <input type="number" id="inAge" min="1" max="120" placeholder="40" inputmode="numeric"/>
   <label id="o_cond">あてはまるものをすべて</label>
   <div class="chips" id="condChips"></div>
+  <label id="o_home">おうち（わかる範囲で）</label>
+  <div class="chips" id="kindChips"></div>
+  <div class="chips" id="eraChips" style="margin-top:8px"></div>
+  <div class="chips" id="strChips" style="margin-top:8px"></div>
   <label id="o_lang">言語</label>
   <div class="chips" id="langChips"></div>
   <button class="btn" style="margin-top:26px" id="o_ok" onclick="saveProfile()">はじめる</button>
@@ -262,12 +271,29 @@ function drawGauge(v, color){
 // ─── 프로필 — 이 기기 안에만 ──────────────────────────
 // 질환은 민감정보다. 서버에 저장하지 않고 질의 파라미터로만 보낸다(몸씨와 같은 방침).
 const CONDS = ["cardio","resp","diabetes","kidney","pregnant"];
+// 집 정보 (2026-09-25) — 築年·構造·建て方. 이 기기 안에만 저장, 질의 파라미터로만 보낸다.
+// 일본은 건물대장이 공개돼 있지 않고 도쿄 PLATEAU 공개판엔 건축연도·구조가 없다 → 본인에게 묻는다.
+const HOME_T = {
+ ja:{h:"おうち（わかる範囲で）",card:"おうちの暑さ",kind:{detached:"戸建て",apartment:"マンション・アパート"},
+     era:{pre1980:"〜1980年",s55:"1981〜91年",h4:"1992〜98年",h11:"1999年〜",unk:"わからない"},
+     str:{wood:"木造",steel:"鉄骨",rc:"鉄筋コンクリート",unk:"わからない"},
+     x:"現行基準の家の {n} 倍 冷房が必要になりやすい",est:"（推定）",set:"⚙ で築年数を入れる"},
+ en:{h:"Your home (if you know)",card:"Heat at home",kind:{detached:"House",apartment:"Apartment"},
+     era:{pre1980:"–1980",s55:"1981–91",h4:"1992–98",h11:"1999–",unk:"Not sure"},
+     str:{wood:"Wood",steel:"Steel",rc:"Concrete",unk:"Not sure"},
+     x:"Needs about {n}× the cooling of a current-standard home",est:" (estimate)",set:"Add build year in ⚙"},
+ ko:{h:"우리 집 (아는 만큼)",card:"우리 집 더위",kind:{detached:"단독주택",apartment:"맨션·아파트"},
+     era:{pre1980:"~1980년",s55:"1981~91년",h4:"1992~98년",h11:"1999년~",unk:"모름"},
+     str:{wood:"목조",steel:"철골",rc:"철근콘크리트",unk:"모름"},
+     x:"현행 기준 집보다 냉방이 {n}배 필요하기 쉬움",est:" (추정)",set:"⚙ 에서 지은 해 입력"}};
+function HT(){ return HOME_T[L_] || HOME_T.ja; }
 function profile(){ try{ return JSON.parse(localStorage.getItem("jp_profile")||"null"); }catch(e){ return null; } }
 let draft = {age:null, conditions:[]};
 
 function openOnb(){
   const p = profile() || {};
-  draft = {age: p.age || null, conditions: (p.conditions || []).slice()};
+  draft = {age: p.age || null, conditions: (p.conditions || []).slice(),
+           kind: p.kind || null, era: p.era || null, str: p.str || null};
   document.getElementById("inAge").value = p.age || "";
   // 첫 실행이면 나가는 길은 「はじめる/あとで」뿐, 다시 연 거면 ← 로 그냥 나간다
   const again = profile() !== null;
@@ -287,6 +313,15 @@ function renderOnb(){
   document.getElementById("o_lang").textContent = t.olang;
   document.getElementById("o_skip").textContent = t.oskip;
   document.getElementById("o_note").textContent = t.onote;
+  const ht = HT();
+  document.getElementById("o_home").textContent = ht.h;
+  const chipset = (id, field, opts) => {
+    document.getElementById(id).innerHTML = Object.entries(opts).map(([k, n]) =>
+      `<button data-k="${k}" class="${draft[field]===k?"on":""}">${n}</button>`).join("");
+    document.querySelectorAll("#"+id+" button").forEach(b => b.onclick = () => {
+      draft[field] = (draft[field] === b.dataset.k) ? null : b.dataset.k; renderOnb(); });
+  };
+  chipset("kindChips", "kind", ht.kind); chipset("eraChips", "era", ht.era); chipset("strChips", "str", ht.str);
   document.getElementById("condChips").innerHTML = CONDS.map(k =>
     `<button data-k="${k}" class="${draft.conditions.includes(k)?"on":""}">${t.cond[k]}</button>`).join("");
   const LANGS = [["ja","\u65e5\u672c\u8a9e"],["en","English"],["ko","\ud55c\uad6d\uc5b4"]];
@@ -307,7 +342,9 @@ function saveProfile(skip){
   const v = parseInt(document.getElementById("inAge").value, 10);
   localStorage.setItem("jp_profile", JSON.stringify({
     age: (!v || v < 1 || v > 120) ? null : v,
-    conditions: skip ? [] : draft.conditions, at: Date.now()}));
+    conditions: skip ? [] : draft.conditions,
+    kind: skip ? null : draft.kind, era: skip ? null : draft.era, str: skip ? null : draft.str,
+    at: Date.now()}));
   document.getElementById("onb").classList.remove("on");
   if(here) load(here.lat, here.lon); else start();
 }
@@ -320,7 +357,7 @@ function applyLang(){
   set("t_now", t.now); set("t_feel", t.feel); set("t_wbgt", t.wbgt);
   set("t_lo", t.lo); set("t_hi", t.hi);
   set("n_map", t.map); set("n_route", t.route); set("n_poi", t.poi);
-  set("n_dog", t.dog); set("n_set", t.set);
+  set("n_dog", t.dog); set("n_set", t.set); set("t_home", HT().card);
   renderOnb();
 }
 
@@ -436,6 +473,27 @@ async function load(lat, lon){
     renderWbgt(w);
     document.getElementById("foot").textContent = (w && w.attribution) ? (w.attribution[L_] || w.attribution.ja) : "";
   }catch(e){ /* 공식값이 없어도 우리 값은 보여준다 */ }
+  loadHome(lat, lon);
+}
+
+async function loadHome(lat, lon){
+  const p = profile() || {}, ht = HT();
+  const q = `lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&lang=${L_}`
+          + (p.kind ? `&kind=${p.kind}` : "")
+          + (p.era && p.era !== "unk" ? `&era=${p.era}` : "")
+          + (p.str && p.str !== "unk" ? `&structure=${p.str}` : "");
+  try{
+    const h = await (await fetch(`/api/v1/jp/home?${q}`)).json();
+    if(!h || !h.ok) return;
+    const n = h.load_vs_grade4, col = n >= 1.4 ? "#E6474D" : n >= 1.15 ? "#F2A33A" : "#17B5A6";
+    document.getElementById("homeBody").innerHTML =
+      `<div style="font-size:15px;font-weight:700;color:${col};line-height:1.5">${ht.x.replace("{n}", n.toFixed(1))}${h.estimated ? ht.est : ""}</div>`
+      + `<div style="font-size:13px;margin-top:6px;line-height:1.6">${h.advice}</div>`
+      + (h.structure_note ? `<div style="font-size:12.5px;color:var(--muted);margin-top:4px">${h.structure_note}</div>` : "")
+      + (h.estimated ? `<button class="btn ghost" style="margin-top:9px" onclick="openOnb()">${ht.set}</button>` : "")
+      + `<div style="font-size:11px;color:var(--muted);margin-top:8px">${h.note}</div>`;
+    document.getElementById("homeCard").style.display = "";
+  }catch(e){}
 }
 
 function outside(lat, lon){

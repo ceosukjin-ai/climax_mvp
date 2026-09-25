@@ -123,8 +123,14 @@ def facade_load(
     month: int = 8,
     floor_height_m: float = 2.8,
     is_slab: bool = True,
+    u_override: float | None = None,
+    solar_frac: float | None = None,
 ) -> dict:
-    u_wall = _u_wall(structure)
+    """u_override: 외피 평균 열관류율(일본 UA 등)을 직접 준다.
+    solar_frac: 외피 입사일사 중 실내로 드는 비율(일본 ηAC/100, 창 포함)을 직접 준다 —
+      주면 기준 재질(material_base)에서 이 값이 되도록 맞추고, 새 재질은 (1−R)(1−evap) 비로 줄인다.
+    (2026-09-25 일본판. 둘 다 없으면 한국 v2 와 똑같이 동작한다.)"""
+    u_wall = u_override if u_override is not None else _u_wall(structure)
     areas = _facade_areas(footprint_area_m2, floors, floor_height_m, is_slab)
     a_facade = sum(areas.values())
     a_roof = footprint_area_m2                      # 지붕(수평) — 저층일수록 외피 비중 큼
@@ -147,7 +153,10 @@ def facade_load(
                 I = _face_irradiance(sun, normal)
                 solar_in += (1.0 - mat.reflectance) * (1.0 - mat.evap_cool) * I * areas[name]
             solar_in += (1.0 - mat.reflectance) * (1.0 - mat.evap_cool) * sun.ghi * a_roof
-            solar_in *= (u / H_OUT)          # 불투명 외피: 흡수열 중 실내로 드는 비율
+            if solar_frac is not None:
+                solar_in *= solar_frac / max(1e-6, (1.0 - base.reflectance) * (1.0 - base.evap_cool))
+            else:
+                solar_in *= (u / H_OUT)          # 불투명 외피: 흡수열 중 실내로 드는 비율
         cond = u * (a_facade + a_roof) * DT_COND
         return solar_in, cond
 
