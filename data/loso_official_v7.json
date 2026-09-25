@@ -1,6 +1,6 @@
 {
   "generated": "2026-09-14",
-  "input": "/tmp/tier3_engine_output_80_v7_photo.csv",
+  "input": "/tmp/tier3_engine_output_80_v7_photo_6218.csv",
   "n": 80,
   "settings": {
     "wall_reflect": true,
@@ -8,66 +8,66 @@
   },
   "physics": {
     "n": 80,
-    "mae": 4.908,
-    "bias": 4.326,
-    "r": 0.652,
+    "mae": 4.964,
+    "bias": 4.423,
+    "r": 0.658,
     "hot": 63,
     "hit": 63
   },
   "physics_plus_ai_lono": {
     "n": 80,
-    "mae": 1.857,
-    "bias": -0.045,
-    "r": 0.805,
+    "mae": 1.795,
+    "bias": -0.019,
+    "r": 0.816,
     "hot": 63,
     "hit": 63
   },
   "physics_plus_ai_shipped_insample": {
     "n": 80,
-    "mae": 1.807,
-    "bias": 0.058,
-    "r": 0.833,
+    "mae": 1.692,
+    "bias": 0.051,
+    "r": 0.846,
     "hot": 63,
     "hit": 63
   },
   "per_neighbourhood_lono": {
     "명장동": {
       "n": 17,
-      "mae": 2.272,
-      "bias": 0.195,
-      "r": 0.779,
+      "mae": 2.277,
+      "bias": 0.096,
+      "r": 0.77,
       "hot": 11,
       "hit": 11
     },
     "보수동": {
       "n": 16,
-      "mae": 1.378,
-      "bias": -0.189,
-      "r": 0.849,
+      "mae": 1.358,
+      "bias": -0.196,
+      "r": 0.855,
       "hot": 12,
       "hit": 12
     },
     "부암제1동": {
       "n": 15,
-      "mae": 1.97,
-      "bias": -0.89,
-      "r": 0.572,
+      "mae": 1.747,
+      "bias": -0.459,
+      "r": 0.378,
       "hot": 15,
       "hit": 15
     },
     "서제2동": {
       "n": 17,
-      "mae": 1.509,
-      "bias": 1.185,
-      "r": 0.917,
+      "mae": 1.437,
+      "bias": 1.063,
+      "r": 0.92,
       "hot": 10,
       "hit": 10
     },
     "용호제1동": {
       "n": 15,
-      "mae": 2.181,
-      "bias": -0.711,
-      "r": 0.204,
+      "mae": 2.171,
+      "bias": -0.747,
+      "r": 0.192,
       "hot": 15,
       "hit": 15
     }
