@@ -165,7 +165,7 @@ row(sec, "SVF 중앙 (범위), n", "", f"{d.SVF.median():.2f} ({d.SVF.min():.2f}
 sec = "Fig 2 · 방법 (기하 SVF 검증)"
 import os
 if os.path.isfile("data/geo_svf_80.csv"):
-    gq = pd.read_csv("data/geo_svf_80.csv", encoding="utf-8-sig").merge(d[["측정ID", "SVF"]], on="측정ID").dropna()
+    gq = pd.read_csv("data/geo_svf_80.csv", encoding="utf-8-sig").merge(d[["측정ID", "SVF"]], on="측정ID").dropna(subset=["geo_svf","SVF"])
     e = gq.geo_svf - gq.SVF
     row(sec, "기하 SVF vs 어안: MAE", "0.108", f"{e.abs().mean():.3f}", "엔진 9/20판 vs 일관 정의 SVF")
     row(sec, "  bias", "+0.022", sg(e.mean(), 3))
