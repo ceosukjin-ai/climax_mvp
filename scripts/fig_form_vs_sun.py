@@ -69,15 +69,14 @@ def frame(axis, xlabel):
 frame(ax, "Predicted PET (°C)\nform model: sky, building, tree view factors")
 ax.scatter(d.pred_form, d.PET, s=15, color=GREY, edgecolor="white", lw=0.5, zorder=4)
 ax.set_ylabel("Measured PET (°C)")
-fa = d[(d.pred_form >= THR) & (d.PET < THR)]
-ax.text(hi - 0.4, lo + 0.5, f"predicted extreme,\nmeasured not: {len(fa)} sites", ha="right", va="bottom", fontsize=7, color=INK, linespacing=1.3)
-ax.text(0.0, 1.03, f"n = {len(d)}   R² = {m_form.rsquared:.2f}   RMSE = {rmse(m_form):.1f} °C", transform=ax.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
+fa = d[(d.pred_form >= THR) & (d.PET < THR)]; ma = d[(d.pred_form < THR) & (d.PET >= THR)]
+ax.text(0.0, 1.03, f"extreme (≥ {THR:.0f} °C): false alarms {len(fa)}, misses {len(ma)}", transform=ax.transAxes, ha="left", va="bottom", fontsize=7, color=INK)
+ax.text(0.0, 1.10, f"n = {len(d)}   R² = {m_form.rsquared:.2f}   RMSE = {rmse(m_form):.1f} °C", transform=ax.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
 
 # (b) label model: two groups, group mean = prediction ----------------------------
 d["pred_lab"] = m_lab.fittedvalues
 S, H = d[d.sun == 1], d[d.sun == 0]
 rng = np.random.default_rng(5)
-bx.add_patch(Rectangle((-0.42, lo), 0.84, THR - lo, facecolor=SURF, edgecolor="none", zorder=0))
 bx.axhline(THR, color=MUTED, lw=0.6, ls=(0, (4, 3)), zorder=1)
 for i, (q, col, name) in enumerate(((S, SUN, "sunlit"), (H, SHADE, "shaded"))):
     x = i + rng.uniform(-0.22, 0.22, len(q))
@@ -90,17 +89,16 @@ bx.set_xticks([0, 1]); bx.set_xticklabels([f"sunlit\nn = {len(S)}", f"shaded\nn 
 bx.set_yticks(range(35, 56, 5)); bx.set_ylabel("Measured PET (°C)")
 bx.set_xlabel("Sun/shade read on the panorama\nmodel: prediction = group mean")
 bx.text(-0.55, THR + 0.35, f"{THR:.0f} °C", fontsize=7, color=MUTED, va="bottom")
-fb = d[(d.pred_lab >= THR) & (d.PET < THR)]
-bx.text(0.0, lo + 0.5, f"predicted extreme,\nmeasured not: {len(fb)} site{'s' if len(fb)!=1 else ''}", ha="center", va="bottom", fontsize=7, color=INK, linespacing=1.3)
-bx.text(0.0, 1.03, f"n = {len(d)}   R² = {m_lab.rsquared:.2f}   RMSE = {rmse(m_lab):.1f} °C", transform=bx.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
-bx.text(0.97, 0.95, "bar = model prediction\n(group mean)", transform=bx.transAxes, ha="right", va="top", fontsize=6.6, color=MUTED, linespacing=1.2)
+fb = d[(d.pred_lab >= THR) & (d.PET < THR)]; mb = d[(d.pred_lab < THR) & (d.PET >= THR)]
+bx.text(0.0, 1.03, f"extreme (≥ {THR:.0f} °C): false alarms {len(fb)}, misses {len(mb)}", transform=bx.transAxes, ha="left", va="bottom", fontsize=7, color=INK)
+bx.text(0.0, 1.10, f"n = {len(d)}   R² = {m_lab.rsquared:.2f}   RMSE = {rmse(m_lab):.1f} °C", transform=bx.transAxes, ha="left", va="bottom", fontsize=7.2, color=INK)
 
 for a_, t_ in ((ax, "(a)  Urban-form model"), (bx, "(b)  Sun/shade model")):
     x0_ = a_.get_position().x0
     fig.text(x0_, 0.975, t_, ha="left", va="bottom", fontsize=9, fontweight="bold", color=INK)
-fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SUN, markersize=4.8, label="sunlit — direct beam at the sensor"),
-                    Line2D([], [], marker="o", color="none", markerfacecolor=SHADE, markersize=4.8, label="shaded — no direct beam"),
-                    Line2D([], [], marker="o", color="none", markerfacecolor=GREY, markersize=4.8, label="all sites, label not used (a)")],
+fig.legend(handles=[Line2D([], [], marker="o", color="none", markerfacecolor=SUN, markersize=4.8, markeredgecolor="none", label="sunlit — direct beam at the sensor"),
+                    Line2D([], [], marker="o", color="none", markerfacecolor=SHADE, markersize=4.8, markeredgecolor="none", label="shaded — no direct beam"),
+                    Line2D([], [], marker="o", color="none", markerfacecolor=GREY, markersize=4.8, markeredgecolor="none", label="all sites, label not used (a)")],
            loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=2, frameon=False, fontsize=7.2, handletextpad=0.3, columnspacing=1.6)
 for e in ("pdf", "eps", "png"):
     fig.savefig(f"{OUT}/SCS_Fig_form_vs_sun.{e}", bbox_inches="tight", pad_inches=0.03)
