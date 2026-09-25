@@ -146,11 +146,21 @@ async def nearby(lat: float, lon: float, radius: int = 800, lang: str = "ja") ->
     off = await _official(lat, lon, radius)
     osm = await _osm(lat, lon, radius, lang)
     # 공식과 같은 건물(40 m 안)인 OSM 점은 뺀다 — 같은 곳이 두 번 나오면 공식이 묻힌다.
-    osm = [o for o in osm if not any(_hav(o["lat"], o["lon"], f["lat"], f["lon"]) < 40 for f in off)]
+    # 이름이 같으면 300 m 까지 같은 곳으로 본다(주소검색 좌표는 건물 입구와 수십 m 어긋날 수 있다).
+    def _same(o, f):
+        d = _hav(o["lat"], o["lon"], f["lat"], f["lon"])
+        return d < 40 or (d < 300 and (o["name"] in f["name"] or f["name"] in o["name"]))
+    osm = [o for o in osm if not any(_same(o, f) for f in off)]
     off.sort(key=lambda x: x["meters"])
     # 目安 은 공공시설·상업시설을 편의점보다 앞에 — 오래 머물 수 있고 앉을 곳이 있다.
     rank = {"public": 0, "store": 1, "konbini": 2}
     osm.sort(key=lambda x: (x["meters"] > 300, rank[x["kind"]], x["meters"]))
+    # OSM 끼리도 겹친다(「江東区役所」 점과 「江東区」 건물 면이 25 m 안). 앞선 것 하나만 남긴다.
+    keep: list[dict] = []
+    for o in osm:
+        if not any(_hav(o["lat"], o["lon"], k["lat"], k["lon"]) < 40 and o["kind"] == k["kind"] for k in keep):
+            keep.append(o)
+    osm = keep
     res = {"official": off[:30], "candidates": osm[:30],
            "labels": {k: v.get(lang, v["ja"]) for k, v in KIND_LABEL.items()},
            "note": NOTE.get(lang, NOTE["ja"])}
