@@ -26,6 +26,11 @@ final class LocationBridge: NSObject, CLLocationManagerDelegate {
         mgr.startUpdatingLocation()
     }
 
+    /// 앱이 화면에서 내려가거나 웹이 추적을 끌 때 — 상시 GPS 를 켜 두지 않는다.
+    func stopWhenInUse() {
+        mgr.stopUpdatingLocation()
+    }
+
     func startSignificant() {
         guard CLLocationManager.significantLocationChangeMonitoringAvailable() else { return }
         mgr.requestAlwaysAuthorization()

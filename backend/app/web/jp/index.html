@@ -338,20 +338,37 @@ map.on('click',e=>{
 // ─── 현재 위치 따라가기: 30m 이상 이동 또는 10분 경과 시 재계산 ───
 function distM(a,b,c,d){const R=6371000,p=Math.PI/180;const x=(c-a)*p,y=(d-b)*p*Math.cos((a+c)/2*p);return Math.sqrt(x*x+y*y)*R;}
 let watchId=null;
-function startFollow(){
-  if(!navigator.geolocation){ geoerr(2); return; }
-  follow=true; fab.classList.add('on'); hint.textContent=T().follow;
-  watchId=navigator.geolocation.watchPosition(p=>{
-    const la=p.coords.latitude, lo=p.coords.longitude;
-    if(!meMarker){ meMarker=L.marker([la,lo],{icon:L.divIcon({className:"",html:'<div class="me"></div>',iconSize:[18,18],iconAnchor:[9,9]})}).addTo(map); map.setView([la,lo],17); }
-    else meMarker.setLatLng([la,lo]);
-    if(follow) map.panTo([la,lo],{animate:true});
-    const stale = !lastQ || distM(lastQ.la,lastQ.lo,la,lo)>30 || (Date.now()-lastQ.t)>600000;
-    if(follow && stale && (p.coords.accuracy||99)<60) query(la,lo);
-  },err=>{ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; geoerr(err.code); },
-  {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+// iOS 앱(MomssiJP) 안이면 위치는 네이티브가 준다 (2026-09-25) — home.html 과 같은 다리.
+const NATIVE = !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.Native);
+function toNative(fn){ try{ window.webkit.messageHandlers.Native.postMessage({fn}); }catch(e){} }
+function followFix(la,lo,acc){
+  if(!meMarker){ meMarker=L.marker([la,lo],{icon:L.divIcon({className:"",html:'<div class="me"></div>',iconSize:[18,18],iconAnchor:[9,9]})}).addTo(map); map.setView([la,lo],17); }
+  else meMarker.setLatLng([la,lo]);
+  if(follow) map.panTo([la,lo],{animate:true});
+  const stale = !lastQ || distM(lastQ.la,lastQ.lo,la,lo)>30 || (Date.now()-lastQ.t)>600000;
+  if(follow && stale && (acc||99)<60) query(la,lo);
 }
-fab.onclick=()=>{ if(follow){ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;} } else startFollow(); };
+function followFail(code){ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; geoerr(code); }
+window.Native = { on(msg){
+  if(!msg) return;
+  if(msg.fn==="location" && msg.lat) followFix(msg.lat,msg.lon,msg.acc);
+  else if(msg.fn==="locationError" && follow && !meMarker) followFail(2);
+} };
+function startFollow(){
+  if(!NATIVE && !navigator.geolocation){ geoerr(2); return; }
+  follow=true; fab.classList.add('on'); hint.textContent=T().follow;
+  if(NATIVE){ toNative("requestLocation"); watchId="native"; return; }
+  watchId=navigator.geolocation.watchPosition(
+    p=>followFix(p.coords.latitude,p.coords.longitude,p.coords.accuracy),
+    err=>followFail(err.code),
+    {enableHighAccuracy:true,maximumAge:5000,timeout:15000});
+}
+function stopWatch(){
+  if(watchId==="native") toNative("stopLocation");
+  else if(watchId!=null) navigator.geolocation.clearWatch(watchId);
+  watchId=null;
+}
+fab.onclick=()=>{ if(follow){ follow=false; fab.classList.remove('on'); hint.textContent=T().hint; stopWatch(); } else startFollow(); };
 
 
 // ─── WBGT(暑さ指数) · 노면(강아지) ──────────────────────
@@ -1139,6 +1156,10 @@ setSheet = function(html){
 };
 
 applyLang();
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ if(watchId!=null) stopWatch(); }
+  else if(follow && watchId==null) startFollow();
+});
 
 // ─── 대시보드(home.html)에서 넘어온 경우 ─────────────────────
 // 카드를 누르면 그 기능이 켜진 채로 열린다. 기능 자체는 여기 있는 것을 그대로 쓴다 —
@@ -1155,6 +1176,18 @@ applyLang();
     hb.classList.add('on');
   }
   const mode = u.searchParams.get('mode');
+  // 2026-09-25: 앱을 열면 ◎ 없이 바로 현재 위치를 따라간다(걸으면 자동 갱신).
+  // 위치 권한을 이미 거부했으면 켜지 않는다 — 열 때마다 오류가 뜨지 않게.
+  // 기능 모드(경로·주변·강아지·역)로 열리면 지도를 끌고 다니지 않도록 켜지 않는다. ◎로 켤 수 있다.
+  if(!mode && (NATIVE || navigator.geolocation)){
+    const go = () => { if(!follow) startFollow(); };
+    if(NATIVE) go();
+    else if(navigator.permissions && navigator.permissions.query){
+      navigator.permissions.query({name:'geolocation'})
+        .then(st => { if(st.state !== 'denied') go(); })
+        .catch(go);
+    } else go();
+  }
   if(!mode) return;
   // 지도·타일이 자리를 잡은 뒤에 켠다. 바로 부르면 시트가 지도보다 먼저 떠 레이아웃이 어긋난다.
   setTimeout(() => {

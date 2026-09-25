@@ -54,6 +54,8 @@ struct WebHostView: UIViewRepresentable {
             switch fn {
             case "requestLocation":                 // 웹: 현재지 버튼
                 LocationBridge.shared.requestWhenInUse()
+            case "stopLocation":                    // 웹: 화면 숨김·추적 끄기
+                LocationBridge.shared.stopWhenInUse()
             case "startBackground":                 // 웹: 보호/추적 켜기
                 LocationBridge.shared.startSignificant()
             case "stopBackground":
