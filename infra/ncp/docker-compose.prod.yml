@@ -21,6 +21,12 @@ services:
       # 건물 원천: db = PostGIS bldg_poly(2026-09-11 채택, 80점 0.121/-0.001/r0.40 — 파일과 동일·미세 개선),
       # file = 로컬 타일 JSON(폴백). 전국/일본은 디스크·메모리 때문에 db 만 가능.
       BUILDING_SOURCE: ${BUILDING_SOURCE:-file}
+      # 스카이라인 격자로 점 조회 (2026-09-25 재활성화 검토). 9/12 에 칸 양자화로 MAE 0.121→0.153 이라 껐다.
+      # 도로앵커·수관·가로수 재계산 뒤 80지점: 실시간 0.112 / 격자 0.117 — 거의 같고 조회는 3 s → 0.1 s.
+      # 격자가 없는 곳(일본 도쿄권 밖 등)은 자동으로 실시간 계산으로 물러선다.
+      GEO_USE_GRID: ${GEO_USE_GRID:-0}
+      # 가로수를 SVF 에 반영 (2026-09-22). 코드 기본값도 켜짐 — 끌 때만 0.
+      GEO_TREE_SVF: ${GEO_TREE_SVF:-1}
 
       GOOGLE_STREETVIEW_API_KEY: ${GOOGLE_STREETVIEW_API_KEY}
       GOOGLE_STREETVIEW_SIGNING_SECRET: ${GOOGLE_STREETVIEW_SIGNING_SECRET:-}

@@ -45,7 +45,7 @@ async def main():
     r = cov / math.sqrt(sum((a - ma) ** 2 for a, _ in p) * sum((b - mb) ** 2 for _, b in p))
     print(f"\n기하 SVF vs 어안 SVF   n {n}   MAE {st.mean(map(abs, e)):.3f}   "
           f"bias {st.mean(e):+.3f}   r {r:.2f}")
-    print(f"저장 {out_path}   GEO_TREE_SVF={os.environ.get('GEO_TREE_SVF','0')} "
+    print(f"저장 {out_path}   GEO_TREE_SVF={os.environ.get('GEO_TREE_SVF','1')} "
           f"GEO_CANOPY={os.environ.get('GEO_CANOPY','1')}")
 
 

@@ -841,9 +841,16 @@ async function routeToStation(idx){
   // 값이 없으면(옛 서버·계산 불가) 그늘 비율로 물러선다. 같으면 짧은 쪽.
   const petOf=r=>(r.d.comfort.mean_pet_c==null?null:r.d.comfort.mean_pet_c);
   const havePet=res.every(r=>petOf(r)!=null);
-  res.sort((a,b)=> havePet ? (petOf(a)-petOf(b)) || (a.d.comfort.seconds-b.d.comfort.seconds)
-                           : (b.d.comfort.shade_ratio-a.d.comfort.shade_ratio)
-                             || (a.d.comfort.seconds-b.d.comfort.seconds));
+  // 흐린 날·밤에는 출구마다 PET 가 똑같이 나온다(일사가 없으면 그늘이 값을 바꾸지 않는다).
+  // 그때는 무엇으로 고를지가 남는다 — 가장 더운 구간, 그늘, 그다음 짧은 쪽 순서로 본다.
+  const near=(x,y)=>Math.abs(x-y)<0.05;
+  res.sort((a,b)=>{
+    const A=a.d.comfort, B=b.d.comfort;
+    if(havePet && !near(petOf(a),petOf(b))) return petOf(a)-petOf(b);
+    if(havePet && A.max_pet_c!=null && B.max_pet_c!=null && !near(A.max_pet_c,B.max_pet_c))
+      return A.max_pet_c-B.max_pet_c;
+    return (B.shade_ratio-A.shade_ratio) || (A.seconds-B.seconds);
+  });
   const best=res[0], d=best.d;
   rDest={la:best.c.lat, lo:best.c.lon};
   lastRoute=d.comfort; baseRoute=d.comfort;
