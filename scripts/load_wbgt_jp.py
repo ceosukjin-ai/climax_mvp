@@ -40,13 +40,21 @@ CANDIDATES = [
     "https://www.wbgt.env.go.jp/data_service_sample/",
 ]
 PROBE_POINT = "44132"          # 東京(気象庁)
-# 경보(熱中症警戒情報) 파일 후보. 05시·17시(JST)에 발표된다.
-ALERT_CANDIDATES = [
-    "https://www.wbgt.env.go.jp/alert/dl/",
-    "https://www.wbgt.env.go.jp/prev15WG/dl/",
-    "https://www.wbgt.env.go.jp/est15WG/dl/",
-    "https://www.wbgt.env.go.jp/data_service_sample/",
-]
+# 경보(熱中症特別警戒情報・熱中症警戒情報) 파일 (2026-09-25 확정).
+# 실제 경로는 **연도 폴더**가 붙는다: alert/dl/<YYYY>/alert_<YYYYMMDD>_<HH>.csv
+# (data_service.php 표본 + 검색으로 확인. 9/18 판은 연도 폴더를 빼먹어 한여름에도 0건이었다.)
+# 하루 4번 발표: 05·10·14·17시(JST). 늦은 발표가 앞 발표를 덮는다.
+ALERT_BASE = "https://www.wbgt.env.go.jp/alert/dl/"
+ALERT_HOURS = ("05", "10", "14", "17")
+# 파일의 플래그 정의(FlagExplanation 원문):
+#   0 발표 없음, 1 熱中症警戒情報 발표, 2 特別警戒情報 판정, 3 特別警戒情報 발표, 9 발표시간 외
+# 2(판정)는 아직 **발표가 아니다** — 우리가 발표로 격상하지 않는다(기상업무법·전재 원칙).
+# 9 는 그 파일에 정보가 없다는 뜻이라 앞 발표를 덮지 않는다.
+ALERT_FLAG = {"0": "none", "1": "alert", "2": "judged", "3": "special"}
+
+
+def alert_url(base: str, day: datetime, hh: str) -> str:
+    return f"{base}{day:%Y}/alert_{day:%Y%m%d}_{hh}.csv"
 
 DDL = """
 CREATE TABLE IF NOT EXISTS wbgt_point (
@@ -66,6 +74,12 @@ CREATE TABLE IF NOT EXISTS wbgt_alert (
     raw       TEXT,
     PRIMARY KEY (area, target_date)
 );
+-- 2026-09-25: 지역 매칭을 **지점 이름**으로 한다. 경보 파일의 각 행(예보구역)에
+-- 그 구역 지점 목록(「宗谷岬:12/稚内:12/…」)이 들어 있다 → points 에 "/이름/이름/" 로 둔다.
+-- 지점 마스터의 region(「北海道」)은 경보 구역(「宗谷地方」)과 단위가 달라 글자 맞추기가 안 된다.
+ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS pref TEXT;
+ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS points TEXT;
+ALTER TABLE wbgt_alert ADD COLUMN IF NOT EXISTS flag TEXT;
 CREATE TABLE IF NOT EXISTS wbgt_forecast (
     point_id  TEXT NOT NULL,
     target_at TIMESTAMPTZ NOT NULL,
@@ -141,61 +155,123 @@ async def cmd_probe() -> None:
 
 
 async def cmd_probe_alert(days: list[str] | None = None) -> None:
-    """경보 파일 주소 찾기.
-
-    ⚠️ 오늘 날짜만 보면 **주소가 틀린 것**과 **그날 경보가 없던 것**을 구분할 수 없다.
-    그래서 한여름 날짜도 같이 찌른다 — 8월에는 일본 어딘가에 거의 매일 경보가 있다.
-    한여름에도 안 나오면 주소가 틀린 것이다.
-    """
+    """경보 파일 주소 확인. 오늘·어제 + 한여름 대조일(8월엔 거의 매일 어딘가 경보가 있다)."""
     now = datetime.now(JST)
-    days = days or [(now - timedelta(days=d)).strftime("%Y%m%d") for d in (0, 1)] + \
-        ["20260805", "20260812", "20260728"]          # 한여름 대조
-    print("\n경보 파일 주소 찾기 (오늘·어제 + 한여름 대조)")
+    ds = [now - timedelta(days=d) for d in (0, 1)] + \
+        [datetime(2026, 8, 5, tzinfo=JST), datetime(2026, 8, 12, tzinfo=JST)]
+    print("\n경보 파일 주소 확인 (오늘·어제 + 한여름 대조)")
     found = False
-    for base in ALERT_CANDIDATES:
-        for day in days:
-            for hh in ("05", "17"):
-                url = f"{base}alert_{day}_{hh}.csv"
-                b = await _get(url)
-                if b:
-                    found = True
-                    print(f"  ✅ {url}   ({len(b)}바이트)")
-                    head = b.decode("utf-8", "replace").splitlines()[:3]
-                    for ln in head:
-                        print(f"       {ln[:110]}")
+    for day in ds:
+        for hh in ALERT_HOURS:
+            url = alert_url(ALERT_BASE, day, hh)
+            b = await _get(url)
+            if not b:
+                print(f"     {url}")
+                continue
+            found = True
+            meta, rows = parse_alert(b)
+            n1 = sum(1 for r in rows if r["f1"] in ("1", "3"))
+            n2 = sum(1 for r in rows if r["f2"] in ("1", "3"))
+            print(f"  ✅ {url}  Status={meta.get('Status')}  구역 {len(rows)}  "
+                  f"경보 {meta.get('TargetDate1')}:{n1}  {meta.get('TargetDate2')}:{n2}")
     if not found:
-        print("  한여름 날짜에도 하나도 없다 → **주소가 틀렸다.**")
-        print("  https://www.wbgt.env.go.jp/alert_record.php (발표 이력)에서 실제 경로를 확인할 것.")
+        print("  하나도 없다 → 주소가 또 바뀐 것. https://www.wbgt.env.go.jp/alert_record.php 확인.")
+
+
+def parse_alert(body: bytes) -> tuple[dict, list[dict]]:
+    """경보 CSV → (머리 정보, 구역 행들).
+
+    형식(표본 alert_20240411_17.csv 로 확인): 위쪽에 「키,값」 머리 줄들, 그 다음
+    「府県予報区,…,TargetDate1フラグ,TargetDate2フラグ,日最高WBGT…」 표.
+    열: 0 구역명, 3 구역코드, 4 도도부현, 6·7 플래그, 8~ 지점별 일최고 WBGT 「이름:값/…」.
+    """
+    txt = body.decode("utf-8-sig", "replace")
+    meta: dict = {}
+    rows: list[dict] = []
+    in_table = False
+    for r in csv.reader(io.StringIO(txt)):
+        if not r or not r[0].strip():
+            continue
+        k = r[0].strip()
+        if not in_table:
+            if k == "府県予報区":
+                in_table = True
+            elif len(r) > 1:
+                meta[k] = r[1].strip()
+            continue
+        if len(r) < 8:
+            continue
+        names = set()
+        for cell in r[8:]:
+            for tok in cell.split("/"):
+                nm = tok.split(":")[0].strip()
+                if nm:
+                    names.add(nm)
+        rows.append({"area": k, "code": r[3].strip(), "pref": r[4].strip(),
+                     "f1": r[6].strip(), "f2": r[7].strip(),
+                     "points": "/" + "/".join(sorted(names)) + "/" if names else None,
+                     "raw": ",".join(r[:8])})
+    return meta, rows
+
+
+def _d(s: str | None):
+    try:
+        return datetime.strptime((s or "").strip(), "%Y/%m/%d").date()
+    except ValueError:
+        return None
 
 
 async def cmd_alert(conn, base: str) -> None:
-    """경보 적재. 파일 형식을 모르므로 **원문도 함께 저장**한다 — 나중에 확인할 수 있게."""
+    """경보 적재 — 환경성 플래그를 **그대로** 옮긴다(판정하지 않는다).
+
+    어제·오늘 파일을 발표 순서대로 읽는다. 같은 (구역, 대상일)은 늦은 발표가 덮는다.
+    플래그 9(발표시간 외)·모르는 값은 건너뛴다 — 앞 발표를 지우지 않게.
+    """
+    base = base or ALERT_BASE
     now = datetime.now(JST)
-    n = 0
-    for d in (0, 1):
+    n_file = n_row = 0
+    for d in (1, 0):
         day = now - timedelta(days=d)
-        for hh in ("17", "05"):
-            b = await _get(f"{base}alert_{day:%Y%m%d}_{hh}.csv")
+        for hh in ALERT_HOURS:
+            b = await _get(alert_url(base, day, hh))
             if not b:
                 continue
-            txt = b.decode("utf-8", "replace")
-            for row in csv.reader(io.StringIO(txt)):
-                if len(row) < 2 or not row[0].strip() or row[0].strip().startswith("#"):
+            meta, rows = parse_alert(b)
+            if meta.get("Status") and meta["Status"] not in ("通常", "本番", "正式"):
+                # 표본 파일은 「試験」이다. 운용 파일 값이 뭔지 한 번 보여주고 계속 간다.
+                print(f"  (Status={meta['Status']} — {day:%m/%d} {hh}시 파일)")
+            try:
+                issued = datetime.strptime(f"{meta.get('ReportDate')} {meta.get('ReportTime')}",
+                                           "%Y/%m/%d %H:%M:%S").replace(tzinfo=JST)
+            except ValueError:
+                issued = day.replace(hour=int(hh), minute=0, second=0, microsecond=0)
+            n_file += 1
+            for td_key, fk in (("TargetDate1", "f1"), ("TargetDate2", "f2")):
+                td = _d(meta.get(td_key))
+                if td is None:
                     continue
-                area = row[0].strip()
-                if not area or area in ("府県予報区", "area"):
-                    continue
-                # 등급: 파일에 '特別' 이 있으면 특별경계, 아니면 경계.
-                lv = "special" if any("特別" in c for c in row) else "alert"
-                await conn.execute(
-                    "INSERT INTO wbgt_alert (area,target_date,level,issued_at,raw) "
-                    "VALUES ($1,$2,$3,$4,$5) ON CONFLICT (area,target_date) DO UPDATE SET "
-                    "level=EXCLUDED.level, issued_at=EXCLUDED.issued_at, raw=EXCLUDED.raw",
-                    area, day.date(), lv,
-                    day.replace(hour=int(hh), minute=0, second=0, microsecond=0),
-                    ",".join(row)[:500])
-                n += 1
-    print(f"✅ 경보 {n}건 적재" if n else "경보 없음 (발표가 없는 날이거나 시즌 밖)")
+                for r in rows:
+                    lv = ALERT_FLAG.get(r[fk])
+                    if lv is None:
+                        continue
+                    await conn.execute(
+                        "INSERT INTO wbgt_alert (area,target_date,level,issued_at,raw,pref,points,flag) "
+                        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (area,target_date) DO UPDATE SET "
+                        "level=EXCLUDED.level, issued_at=EXCLUDED.issued_at, raw=EXCLUDED.raw, "
+                        "pref=EXCLUDED.pref, points=EXCLUDED.points, flag=EXCLUDED.flag "
+                        "WHERE wbgt_alert.issued_at IS NULL OR EXCLUDED.issued_at >= wbgt_alert.issued_at",
+                        r["area"], td, lv, issued, r["raw"][:500], r["pref"], r["points"], r[fk])
+                    n_row += 1
+    await conn.execute("DELETE FROM wbgt_alert WHERE target_date < (NOW() AT TIME ZONE 'Asia/Tokyo')::date - 7")
+    on = await conn.fetch(
+        "SELECT target_date, level, count(*) n FROM wbgt_alert "
+        "WHERE target_date >= (NOW() AT TIME ZONE 'Asia/Tokyo')::date AND level <> 'none' "
+        "GROUP BY 1,2 ORDER BY 1,2")
+    print(f"✅ 경보 파일 {n_file}개, 구역·날짜 {n_row}행 반영")
+    for r in on:
+        print(f"   {r['target_date']}  {r['level']:8s} {r['n']}구역")
+    if not on:
+        print("   오늘·내일 발표 중인 경보 없음")
 
 
 async def cmd_points(conn) -> None:
@@ -270,6 +346,7 @@ async def main() -> None:
     ap.add_argument("--points", action="store_true")
     ap.add_argument("--forecast", action="store_true")
     ap.add_argument("--base", default="")
+    ap.add_argument("--alert-base", default="", help="기본값 ALERT_BASE")
     ap.add_argument("--tokyo", action="store_true", help="도쿄 23구 지점만")
     a = ap.parse_args()
 
@@ -290,10 +367,7 @@ async def main() -> None:
             print("--base 가 필요하다 (--probe 로 찾은 접두사)"); await conn.close(); return
         await cmd_forecast(conn, a.base, (35.5, 139.55, 35.9, 139.92) if a.tokyo else None)
     if a.alert:
-        if not a.base:
-            print("--base 가 필요하다 (--probe-alert 로 찾은 접두사)")
-        else:
-            await cmd_alert(conn, a.base)
+        await cmd_alert(conn, a.alert_base or ALERT_BASE)
     await conn.close()
 
 

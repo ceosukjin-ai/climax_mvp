@@ -2510,18 +2510,18 @@ async def jp_wbgt(
             "FROM wbgt_point p JOIN wbgt_forecast f ON f.point_id = p.point_id "
             "WHERE f.target_at >= NOW() - INTERVAL '90 minutes' "
             "ORDER BY (p.lat-$1)^2 + (p.lon-$2)^2, f.target_at LIMIT 1", lat, lon)
-        # 경보는 **그 사람이 있는 府県予報区** 것만 (2026-09-25 수정).
-        # 예전엔 지역을 거르지 않고 "오늘 이후 경보 중 첫 번째"를 돌려줬다 — 오키나와에 경보가
-        # 나면 도쿄 사용자에게도 경보가 떴다. 가장 가까운 환경성 지점의 region 과 이름으로 맞춘다.
-        # 두 파일의 표기가 조금 다를 수 있어(「東京地方」/「東京都」) 서로 포함 관계까지 본다.
-        # 맞는 것이 없으면 **경보 없음**으로 둔다 — 남의 지역 경보를 띄우는 것보다 낫다.
+        # 경보는 **그 사람이 있는 예보구역** 것만 (2026-09-25 수정).
+        # 예전엔 지역을 거르지 않아 오키나와 경보가 도쿄 사용자에게도 떴다.
+        # 경보 파일의 구역 행마다 소속 지점 이름 목록이 있다 → 가장 가까운 지점 이름으로 찾는다.
+        # (지점 마스터의 region 「北海道」와 경보 구역 「宗谷地方」은 단위가 달라 글자 맞추기가 안 된다.)
+        # 'judged'(특별경계 판정, 미발표)는 띄우지 않는다 — 발표된 것만 전한다.
         alert = None
-        if row is not None and row["region"]:
+        if row is not None and row["name"]:
             alert = await c.fetchrow(
                 "SELECT area, level, issued_at FROM wbgt_alert "
                 "WHERE target_date = (NOW() AT TIME ZONE 'Asia/Tokyo')::date "
-                "AND (area = $1 OR area LIKE '%' || $1 || '%' OR $1 LIKE '%' || area || '%') "
-                "ORDER BY (level = 'special') DESC LIMIT 1", row["region"])
+                "AND level IN ('alert','special') AND points LIKE '%/' || $1 || '/%' "
+                "ORDER BY (level = 'special') DESC LIMIT 1", row["name"])
 
     if row is None:
         return {"ok": False, "reason": "가까운 지점의 예측이 없다(시즌 밖이거나 미적재)",
