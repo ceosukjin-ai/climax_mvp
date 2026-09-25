@@ -8,7 +8,7 @@ e-Stat API 는 appId(무료 등록) 가 필요하다 → .env.prod 에 ESTAT_APP
 
   docker run --rm --env-file ~/climax_mvp/infra/ncp/.env.prod -v ~/climax_mvp:/repo climax-backend:latest \
     python3 /repo/scripts/load_jp_housing_prior.py
-출력: /repo/backend/data/jp_housing_prior_2023.json  {지역: {구조: {pre1980,s55,h4,h11: 비율}, "n": 호수}}
+출력: /repo/backend/app/data/jp_housing_prior_2023.json (배포 이미지에 app/ 만 복사되므로 app 아래)  {지역: {구조: {pre1980,s55,h4,h11: 비율}, "n": 호수}}
 분류 이름으로 골라서 쓴다(코드를 짐작하지 않는다) — 실행하면 분류표를 먼저 찍는다.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from collections import defaultdict
 
 URL = "https://api.e-stat.go.jp/rest/3.0/app/json/getStatsData"
 SID = "0004021718"
-OUT = "/repo/backend/data/jp_housing_prior_2023.json"
+OUT = "/repo/backend/app/data/jp_housing_prior_2023.json"   # 이미지에는 app/ 만 들어간다
 
 
 def era_of(name: str) -> str | None:
@@ -39,7 +39,9 @@ def era_of(name: str) -> str | None:
 
 
 def struct_of(name: str) -> str | None:
-    if "総数" in name:
+    if "総数" in name or "非木造" in name:
+        # 非木造 = RC·철골·기타의 합계 칸이다. 「木造」 글자가 들어 있어 목조로 잘못 셌다(2026-09-25 수정) —
+        # 그러면 목조가 전체와 같아지고 '전체'도 비목조를 두 번 센다.
         return None
     if "木造" in name:
         return "wood"                 # 木造·防火木造

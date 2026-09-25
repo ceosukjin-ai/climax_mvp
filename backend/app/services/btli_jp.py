@@ -29,7 +29,7 @@ ERAS = {
 STOCK_2022 = {"pre1980": 0.24, "s55": 0.22, "h4": 0.36, "h11": 0.18}
 
 # 대도시별 기본값 (令和5年 住宅・土地統計調査 7-1 → scripts/load_jp_housing_prior.py) — 있으면 이것을 쓴다.
-_PRIOR_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "jp_housing_prior_2023.json")
+_PRIOR_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "jp_housing_prior_2023.json")  # app/data
 CITY = {"区部": (35.69, 139.69), "横浜市": (35.45, 139.64), "川崎市": (35.53, 139.70),
         "大阪市": (34.69, 135.50), "名古屋市": (35.18, 136.91), "京都市": (35.01, 135.77),
         "神戸市": (34.69, 135.20), "福岡市": (33.59, 130.40), "札幌市": (43.06, 141.35),
