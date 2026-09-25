@@ -55,8 +55,7 @@ for ax, (title, sub, col) in zip(axes, panels):
     ax.plot([lo, hi], [lo, hi], color=INK, lw=0.7, zorder=1)
     ax.axhline(THR, color=RED, lw=0.7, ls=(0, (4, 3)), zorder=1); ax.axvline(THR, color=RED, lw=0.7, ls=(0, (4, 3)), zorder=1)
     if col == "tier1":
-        ax.scatter(S.PET, S[col], s=13, color=SV, edgecolor="white", lw=0.4, zorder=3)
-        ax.scatter(N.PET, N[col], s=17, color=NOSV, marker="D", edgecolor="white", lw=0.4, zorder=4)
+        ax.scatter(d.PET, d[col], s=13, color=MUTED, edgecolor="white", lw=0.4, zorder=3)
     else:
         ax.scatter(S.PET, S[col], s=13, color=SV, edgecolor="white", lw=0.4, zorder=3)
         ax.scatter(N.PET, N[col], s=17, color=NOSV, marker="D", edgecolor="white", lw=0.4, zorder=4)
