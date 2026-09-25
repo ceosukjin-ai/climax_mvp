@@ -938,11 +938,11 @@ stBtn.onclick=()=>{
 const SH_API="/api/v1/jp/shelters";
 const SH_T={
  ja:{load:"涼める場所を探しています…",off:"公式",cand:"冷房のある場所（目安）",none:"近くに見つかりません。地図を動かしてお試しください。",
-     noOff:"この付近は公式リストの座標が未公開です",pick:"タップで涼しいルート",hours:"時間"},
+     noOff:"この付近は公式リストの座標が未公開です",pick:"タップで涼しいルート",hours:"時間",geo:"位置は住所から（国土地理院）"},
  en:{load:"Looking for places to cool down…",off:"Official",cand:"Likely air-conditioned (not official)",none:"Nothing found nearby. Move the map and try again.",
-     noOff:"No official list with coordinates for this area yet",pick:"Tap one for the coolest route",hours:"hours"},
+     noOff:"No official list with coordinates for this area yet",pick:"Tap one for the coolest route",hours:"hours",geo:"located from address (GSI)"},
  ko:{load:"더위를 피할 곳을 찾는 중…",off:"공식",cand:"냉방 있는 곳 (참고)",none:"근처에 없습니다. 지도를 옮겨 다시 해보세요.",
-     noOff:"이 지역은 공식 목록 좌표가 아직 공개되지 않았습니다",pick:"누르면 시원한 길로 안내",hours:"시간"}};
+     noOff:"이 지역은 공식 목록 좌표가 아직 공개되지 않았습니다",pick:"누르면 시원한 길로 안내",hours:"시간",geo:"위치는 주소로 찾음(국토지리원)"}};
 function SHT(){ return SH_T[L_]||SH_T.ja; }
 const SH_ICON={designated:"❄️",coolshare:"❄️",public:"🏛️",store:"🏬",konbini:"🏪"};
 const shBtn=document.getElementById('shBtn');
@@ -961,7 +961,7 @@ async function loadShelters(){
   const all=off.concat(cand);
   const row=(x,i)=>'<div class="prow" data-i="'+i+'"><div class="ic">'+(SH_ICON[x.kind]||'📍')+'</div>'
      +'<div class="nm">'+esc(x.name)+(x.official?' <small style="color:#2e7bd9;font-weight:700">'+s.off+'</small>':'')
-     +'<br><small>'+esc(lab[x.kind]||'')+(x.hours?' · '+s.hours+' '+esc(x.hours):'')+'</small></div>'
+     +'<br><small>'+esc(lab[x.kind]||'')+(x.hours?' · '+s.hours+' '+esc(x.hours):'')+(x.geo==='gsi'?' · '+s.geo:'')+'</small></div>'
      +'<div class="di">'+x.meters+'m</div></div>';
   let html='<div style="font-size:11.5px;color:var(--muted);line-height:1.5;margin-bottom:6px">'+esc(d.note||'')+'</div>';
   html+='<div style="font-size:12px;font-weight:700;margin:4px 0">❄️ '+s.off+'</div>';

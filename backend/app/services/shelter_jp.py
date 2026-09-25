@@ -76,7 +76,7 @@ async def _official(lat: float, lon: float, radius: int) -> list[dict[str, Any]]
             if not await c.fetchval("SELECT to_regclass('cooling_shelter') IS NOT NULL"):
                 return []
             rows = await c.fetch(
-                "SELECT name, addr, lat, lon, kind, hours, src, license, source_url "
+                "SELECT name, addr, lat, lon, kind, hours, src, license, source_url, geo "
                 "FROM cooling_shelter WHERE lat BETWEEN $1 AND $2 AND lon BETWEEN $3 AND $4",
                 lat - dlat, lat + dlat, lon - dlon, lon + dlon)
     except Exception as e:  # noqa: BLE001
@@ -89,7 +89,7 @@ async def _official(lat: float, lon: float, radius: int) -> list[dict[str, Any]]
             out.append({"name": r["name"], "addr": r["addr"], "lat": round(r["lat"], 6),
                         "lon": round(r["lon"], 6), "kind": r["kind"], "official": True,
                         "hours": r["hours"], "src": r["src"], "license": r["license"],
-                        "source_url": r["source_url"], "meters": round(d)})
+                        "source_url": r["source_url"], "geo": r["geo"], "meters": round(d)})
     return out
 
 
