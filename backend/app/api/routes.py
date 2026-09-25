@@ -2506,13 +2506,22 @@ async def jp_wbgt(
     async with pool.acquire() as c:
         # 가장 가까운 지점 — 거리는 대략(도 단위 제곱)으로 고른 뒤 m 로 환산해 알려준다.
         row = await c.fetchrow(
-            "SELECT p.point_id, p.name, p.lat, p.lon, f.wbgt, f.target_at, f.issued_at "
+            "SELECT p.point_id, p.name, p.region, p.lat, p.lon, f.wbgt, f.target_at, f.issued_at "
             "FROM wbgt_point p JOIN wbgt_forecast f ON f.point_id = p.point_id "
             "WHERE f.target_at >= NOW() - INTERVAL '90 minutes' "
             "ORDER BY (p.lat-$1)^2 + (p.lon-$2)^2, f.target_at LIMIT 1", lat, lon)
-        alert = await c.fetchrow(
-            "SELECT area, level, issued_at FROM wbgt_alert "
-            "WHERE target_date >= CURRENT_DATE ORDER BY target_date LIMIT 1")
+        # 경보는 **그 사람이 있는 府県予報区** 것만 (2026-09-25 수정).
+        # 예전엔 지역을 거르지 않고 "오늘 이후 경보 중 첫 번째"를 돌려줬다 — 오키나와에 경보가
+        # 나면 도쿄 사용자에게도 경보가 떴다. 가장 가까운 환경성 지점의 region 과 이름으로 맞춘다.
+        # 두 파일의 표기가 조금 다를 수 있어(「東京地方」/「東京都」) 서로 포함 관계까지 본다.
+        # 맞는 것이 없으면 **경보 없음**으로 둔다 — 남의 지역 경보를 띄우는 것보다 낫다.
+        alert = None
+        if row is not None and row["region"]:
+            alert = await c.fetchrow(
+                "SELECT area, level, issued_at FROM wbgt_alert "
+                "WHERE target_date = (NOW() AT TIME ZONE 'Asia/Tokyo')::date "
+                "AND (area = $1 OR area LIKE '%' || $1 || '%' OR $1 LIKE '%' || area || '%') "
+                "ORDER BY (level = 'special') DESC LIMIT 1", row["region"])
 
     if row is None:
         return {"ok": False, "reason": "가까운 지점의 예측이 없다(시즌 밖이거나 미적재)",
@@ -2524,7 +2533,7 @@ async def jp_wbgt(
     return {
         "ok": True,
         "official": {
-            "point_id": row["point_id"], "name": row["name"],
+            "point_id": row["point_id"], "name": row["name"], "region": row["region"],
             "wbgt": round(float(row["wbgt"]), 1),
             "target_at": row["target_at"].isoformat(),
             "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
