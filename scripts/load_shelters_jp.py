@@ -133,7 +133,9 @@ async def _gsi(client, addr: str, pref_city: str):
     title = _norm(js[0]["properties"].get("title", ""))
     # 번지 수준 확인: 질의의 숫자 꼬리(예: 4-11-28)의 앞 두 마디(丁目-番)가 맞춘 주소에 있어야 한다.
     nums = re.findall(r"\d+(?:-\d+)*", q)
-    tail = nums[-1] if nums else ""
+    # 번지는 「2-3-5」처럼 대시가 든 첫 숫자열이다. 뒤의 「5階」 같은 층수를 번지로 읽지 않게 (2026-09-25).
+    dashed = [n for n in nums if "-" in n]
+    tail = dashed[0] if dashed else (nums[-1] if nums else "")
     need = "-".join(tail.split("-")[:2])
     ok = bool(need) and need.count("-") >= 1 and need in title
     return (float(lat), float(lon), js[0]["properties"].get("title", "")) if ok else ("coarse", js[0]["properties"].get("title", ""))
