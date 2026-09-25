@@ -36,7 +36,7 @@ DATA = sys.argv[1] if len(sys.argv) > 1 else "/mnt/user-data/uploads/climax_mvp/
 VF = sys.argv[2] if len(sys.argv) > 2 else f"{DATA}/aug80_viewfactors.csv"
 OUT = sys.argv[3] if len(sys.argv) > 3 else "/tmp/claude-0/fig_ab"
 INK, MUTED, FAINT = "#1A1A1A", "#5E5E5E", "#9C9C9C"
-SUN, SHADE, THR = "#C0504D", "#3F6496", "#B3261E"
+SUN, SHADE, THR = "#C0504D", "#3F6496", "#1A1A1A"   # 2026-09-25: 임계선은 중립색 — 적/청은 볕/그늘에만
 NB = 3000
 rng = np.random.default_rng(20260922)
 
@@ -91,6 +91,22 @@ def main():
     ax.text(0.005, 41.25, "PET 41 °C — extreme heat stress", fontsize=6.4, color=THR,
             va="bottom", ha="left")
     fits = {}
+    # 예외 지점 표시: 41 °C 위의 그늘(뜨거운 그늘), 41 °C 아래의 볕
+    hot_sh = d[(d.sun == 0) & (d.PET >= 41) & d.SVF.notna()]
+    cool_su = d[(d.sun == 1) & (d.PET < 41) & d.SVF.notna()]
+    for _, r in hot_sh.iterrows():
+        ax.scatter([r.SVF], [r.PET], s=46, facecolor="none", edgecolor=SHADE, lw=0.9, zorder=5)
+    for _, r in cool_su.iterrows():
+        ax.scatter([r.SVF], [r.PET], s=46, facecolor="none", edgecolor=SUN, lw=0.9, zorder=5)
+    if len(hot_sh):
+        ax.annotate(f"shaded, above 41 °C ({len(hot_sh)}): building shade,\n38 °C air on the hottest afternoon",
+                    xy=(hot_sh.SVF.min(), hot_sh.loc[hot_sh.SVF.idxmin(), "PET"]), xytext=(0.02, 46.6), fontsize=6.2, color=SHADE,
+                    ha="left", va="center", arrowprops=dict(arrowstyle="-", lw=0.6, color=SHADE, shrinkA=0, shrinkB=3))
+    if len(cool_su):
+        r = cool_su.iloc[0]
+        ax.annotate(f"sunlit, below 41 °C ({len(cool_su)})", xy=(r.SVF, r.PET), xytext=(r.SVF - 0.07, r.PET - 2.2),
+                    fontsize=6.2, color=SUN, ha="right", va="center",
+                    arrowprops=dict(arrowstyle="-", lw=0.6, color=SUN, shrinkA=0, shrinkB=3))
     for g, col in ((1, SUN), (0, SHADE)):
         q = s[s.sun == g]
         xs = np.linspace(q.SVF.min(), q.SVF.max(), 60)
@@ -122,8 +138,8 @@ def main():
             pass
     lo, hi = np.percentile(np.array(B), [2.5, 97.5], axis=0)
     p = lg.predict(sm.add_constant(xs))
-    top.fill_between(xs, 100 * lo, 100 * hi, color=SHADE, alpha=0.13, lw=0)
-    top.plot(xs, 100 * p, color=SHADE, lw=1.3)
+    top.fill_between(xs, 100 * lo, 100 * hi, color=MUTED, alpha=0.15, lw=0)
+    top.plot(xs, 100 * p, color=INK, lw=1.3)
     for x0 in (0.3, 0.5, 0.7):
         p0 = 100 * float(lg.predict(np.array([[1.0, x0]]))[0])
         top.scatter([x0], [p0], s=12, color=INK, zorder=4)
