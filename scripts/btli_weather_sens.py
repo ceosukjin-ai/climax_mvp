@@ -53,6 +53,10 @@ def ols(x, y):
     return a, b, r2
 
 
+STAT: dict = {}
+MSTAT: dict = {}
+
+
 async def main():
     import httpx
     from app.config import get_settings
@@ -75,35 +79,65 @@ async def main():
                 continue
             sgg, bjd = codes[r["동"]]
             bun, ji = r["지번"].split("-")
-            xs, ys = [], []
+            # 2026-09-25 2판: 1판은 161곳 중 24곳만 10개월을 채웠다(R² 0.03) — 호출이 빨라 거절됐거나
+            # 달이 비었을 수 있다. 재시도 3번 + 간격 0.12 s, 실패 사유를 센다.
+            got = {}
             for (y, m) in MONTHS:
                 q = {"serviceKey": key, "sigunguCd": sgg, "bjdongCd": bjd, "platGbCd": "0",
                      "bun": bun, "ji": ji, "useYm": f"{y}{m:02d}", "numOfRows": "10", "pageNo": "1", "_type": "json"}
-                try:
-                    resp = await client.get(URL, params=q)
-                    items, _ = _items(resp.json())
-                except Exception:  # noqa: BLE001
-                    items = []
-                v = sum(_f(x.get("useQty")) for x in items) if items else None
-                if v and (y, m) in cdd:
-                    xs.append(cdd[(y, m)]); ys.append(v)
-                await asyncio.sleep(0.03)
+                v, why = None, "empty"
+                for t in range(3):
+                    try:
+                        resp = await client.get(URL, params=q)
+                        items, _ = _items(resp.json())
+                        v = sum(_f(x.get("useQty")) for x in items) if items else None
+                        why = "ok" if v else "empty"
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        why = type(e).__name__
+                        await asyncio.sleep(1.0 + t)
+                STAT[why] = STAT.get(why, 0) + 1
+                MSTAT.setdefault(f"{y}-{m:02d}", [0, 0])[0 if v else 1] += 1
+                if v:
+                    got[(y, m)] = v
+                await asyncio.sleep(0.12)
+            # 전기 사용월(useYm)이 **검침·청구 월**이면 실제 사용은 전달일 수 있다 → 0개월·1개월 지연 둘 다 맞춘다
+            fits = {}
+            for lag in (0, 1):
+                xs, ys = [], []
+                for (y, m), v in got.items():
+                    py, pm = (y, m - lag) if m - lag >= 1 else (y - 1, 12)
+                    if (py, pm) in cdd:
+                        xs.append(cdd[(py, pm)]); ys.append(v)
+                fits[lag] = (xs, ys)
+            xs, ys = fits[0]
             if len(xs) < 10:
                 continue
             a, b, r2 = ols(xs, ys)
+            a1, b1, r21 = ols(*fits[1]) if len(fits[1][0]) >= 10 else (None, None, None)
             if a is None or a <= 0:
                 continue
             out.append(dict(동=r["동"], 지번=r["지번"], 단지=r["단지"], 세대=r["세대"], 준공=r["준공"],
                             평균층=r["평균층"], 개월=len(xs), base_kwh=round(a), slope_kwh_per_cdd=round(b, 1),
                             sens_pct_per_cdd=round(b / a * 100, 3), r2=round(r2, 2) if r2 is not None else "",
+                            sens_lag1=round(b1 / a1 * 100, 3) if a1 and a1 > 0 else "",
+                            r2_lag1=round(r21, 2) if r21 is not None else "",
                             btli_env_w_m2=r["btli_env_w_m2"], btli_w_m2=r["btli_w_m2"]))
             if i % 20 == 0:
                 print(f"  {i}/{len(rows)}", flush=True)
+    print("\n호출 결과:", STAT)
+    print("월별 [있음, 없음]:", MSTAT)
+    if not out:
+        print("맞춘 단지 없음"); return
     with open(OUT, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=list(out[0].keys())); w.writeheader(); w.writerows(out)
     s = [o["sens_pct_per_cdd"] for o in out]
     good = [o for o in out if o["r2"] != "" and o["r2"] >= 0.5]
     print(f"\n단지 {len(out)}곳 → {OUT}")
+    l1 = [o for o in out if o["r2_lag1"] != ""]
+    if l1:
+        print(f"  (1개월 지연) 민감도 중앙값 {st.median([o['sens_lag1'] for o in l1]):.2f} %/도일 · "
+              f"R² 중앙값 {st.median([o['r2_lag1'] for o in l1]):.2f}")
     print(f"  민감도 중앙값 {st.median(s):.2f} %/도일 · 적합 R² 중앙값 {st.median([o['r2'] for o in out if o['r2']!='']):.2f} "
           f"· R²≥0.5 단지 {len(good)}곳")
     for lab, sub in (("전체", out), ("R²≥0.5", good)):
