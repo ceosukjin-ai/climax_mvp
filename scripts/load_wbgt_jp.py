@@ -301,7 +301,10 @@ async def cmd_points(conn) -> None:
     await conn.executemany(
         "INSERT INTO wbgt_point (point_id,name,name_en,region,addr,lat,lon) "
         "VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (point_id) DO UPDATE SET "
-        "name=EXCLUDED.name, lat=EXCLUDED.lat, lon=EXCLUDED.lon", out)
+        "name=EXCLUDED.name, name_en=EXCLUDED.name_en, region=EXCLUDED.region, "
+        "addr=EXCLUDED.addr, lat=EXCLUDED.lat, lon=EXCLUDED.lon", out)
+    # 2026-09-25: 예전엔 name·lat·lon 만 덮어써서, 9/18 cp932 오독으로 깨진 region(「髢｢譚ｱ」=関東)이
+    # 인코딩을 고친 뒤에도 남아 있었다. 전부 덮어쓴다.
     n = await conn.fetchval("SELECT count(*) FROM wbgt_point")
     tk = await conn.fetchval("SELECT count(*) FROM wbgt_point WHERE lat BETWEEN 35.5 AND 35.9 "
                              "AND lon BETWEEN 139.55 AND 139.92")
