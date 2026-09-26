@@ -24,7 +24,8 @@ mpl.rcParams.update({
     "axes.spines.top": True, "axes.spines.right": True, "xtick.direction": "in", "ytick.direction": "in",
     "figure.dpi": 200, "savefig.dpi": 1200, "pdf.fonttype": 42, "ps.fonttype": 42})
 INK, MUTED, SURF, RED = "#1A1A1A", "#5E5E5E", "#CFCFCD", "#C0504D"
-FAB1, FAB2, FAB3 = "#EDEDEB", "#E4E4E2", "#CFCFCD"                 # all buildings: full range / 5–95 %
+FAB1, FAB2, FAB3 = "#EDEDEB", "#E4E4E2", "#CFCFCD"
+LCZC = "#FBEFCF"                                  # LCZ class range: pale amber background                 # all buildings: full range / 5–95 %
 W_GREY = ["#3F5F7F", "#7C9CBF", "#C6D4E2", "#EFEFEF"]   # alley → open (blue ramp, as in the 09-20 figure)
 M_GREY = {"concrete": "#9AA5AE", "brick": "#B5714F"}
 MM = 1 / 25.4
@@ -69,9 +70,7 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.add_patch(Rectangle((q05, y - 0.30), q95 - q05, 0.60, facecolor=FAB3, edgecolor="none", zorder=1))
     ax_h.text(mx * 1.10, y - 0.02, f"{mx:.0f}", ha="left", va="center", fontsize=6.2, color=MUTED, zorder=7, bbox=dict(facecolor="white", edgecolor="none", pad=0.6))
     lo, hi = hr; hi_d = 200 if hi is None else hi
-    ax_h.plot([lo, hi_d], [y - 0.40, y - 0.40], color=INK, lw=0.9, zorder=2, solid_capstyle="butt")
-    ax_h.plot([lo, lo], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
-    if hi is not None: ax_h.plot([hi, hi], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
+    ax_h.add_patch(Rectangle((lo, y - 0.50), hi_d - lo, 1.00, facecolor=LCZC, edgecolor="none", zorder=-1))
     H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.quantile(.25), H.quantile(.75)
     inside = hm >= lo and (hi is None or hm <= hi)
     ax_h.plot([h1, h3], [y, y], color=RED, lw=3.2, zorder=4, solid_capstyle="butt")
@@ -79,8 +78,7 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.text(np.sqrt(h1 * h3), y + 0.34, f"{hm:.1f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
     # (c) SVF
     lo, hi = sr
-    ax_s.plot([lo, hi], [y - 0.40, y - 0.40], color=INK, lw=0.9, zorder=2, solid_capstyle="butt")
-    for xx in (lo, hi): ax_s.plot([xx, xx], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
+    ax_s.add_patch(Rectangle((lo, y - 0.50), hi - lo, 1.00, facecolor=LCZC, edgecolor="none", zorder=-1))
     S = q.SVF.dropna(); sm, s1, s3 = S.median(), S.quantile(.25), S.quantile(.75)
     ax_s.plot([s1, s3], [y, y], color=RED, lw=3.2, zorder=3, solid_capstyle="butt")
     ax_s.scatter([sm], [y], s=30, facecolor="white", edgecolor=RED, lw=1.2, zorder=4)
@@ -108,7 +106,7 @@ for ax in axes: ax.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
 h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: median and interquartile range (b: canyon height; c: sky view factor)"),
-       Line2D([], [], color=INK, lw=0.9, marker="|", markersize=5, markeredgewidth=0.9, label="range defining the assigned LCZ class (Stewart and Oke, 2012); open-ended for high-rise"),
+       Rectangle((0, 0), 1, 1, facecolor=LCZC, edgecolor="none", label="range defining the assigned LCZ class (Stewart and Oke, 2012); open-ended for high-rise"),
        Rectangle((0, 0), 1, 1, facecolor=FAB3, edgecolor="none", label="all buildings within 60 m of the sites, 5–95 %"),
        Rectangle((0, 0), 1, 1, facecolor=FAB1, edgecolor="none", label="all buildings, full range")]
 h_m = [Rectangle((0, 0), 1, 1, facecolor=M_GREY[k], edgecolor="none", label=k) for k in ("concrete", "brick")]
