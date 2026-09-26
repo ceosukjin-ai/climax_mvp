@@ -70,20 +70,28 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.add_patch(Rectangle((q05, y - 0.30), q95 - q05, 0.60, facecolor=FAB3, edgecolor="none", zorder=1))
     ax_h.text(mx * 1.10, y - 0.02, f"{mx:.0f}", ha="left", va="center", fontsize=6.2, color=MUTED, zorder=7, bbox=dict(facecolor="white", edgecolor="none", pad=0.6))
     lo, hi = hr; hi_d = 200 if hi is None else hi
-    ax_h.add_patch(Rectangle((lo, y - 0.50), hi_d - lo, 1.00, facecolor=LCZC, edgecolor="none", zorder=-1))
+    yb = y + 0.42
+    ax_h.plot([lo, hi_d], [yb, yb], color=INK, lw=0.9, zorder=6, solid_capstyle="butt", clip_on=True)
+    ax_h.plot([lo, lo], [yb - 0.08, yb + 0.08], color=INK, lw=0.9, zorder=6)
+    if hi is None:
+        ax_h.annotate("", xy=(160, yb), xytext=(120, yb), arrowprops=dict(arrowstyle="-|>", color=INK, lw=0.9, mutation_scale=6), zorder=6)
+    else:
+        ax_h.plot([hi, hi], [yb - 0.08, yb + 0.08], color=INK, lw=0.9, zorder=6)
     H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.quantile(.25), H.quantile(.75)
     inside = hm >= lo and (hi is None or hm <= hi)
     ax_h.plot([h1, h3], [y, y], color=RED, lw=3.2, zorder=4, solid_capstyle="butt")
     ax_h.scatter([hm], [y], s=30, facecolor=RED if not inside else "white", edgecolor=RED, lw=1.2, zorder=5)
-    ax_h.text(np.sqrt(h1 * h3), y + 0.34, f"{hm:.1f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
+    ax_h.text(hm, y - 0.36, f"{hm:.1f}", ha="center", va="top", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
     # (c) SVF
     lo, hi = sr
     S = q.SVF.dropna(); sm, s1, s3 = S.median(), S.quantile(.25), S.quantile(.75)
     s_in = lo <= sm <= hi
-    ax_s.add_patch(Rectangle((lo, y - 0.50), hi - lo, 1.00, facecolor=LCZC, edgecolor="none", zorder=-1))
+    yb = y + 0.42
+    ax_s.plot([lo, hi], [yb, yb], color=INK, lw=0.9, zorder=6, solid_capstyle="butt")
+    for xx in (lo, hi): ax_s.plot([xx, xx], [yb - 0.08, yb + 0.08], color=INK, lw=0.9, zorder=6)
     ax_s.plot([s1, s3], [y, y], color=RED, lw=3.2, zorder=3, solid_capstyle="butt")
     ax_s.scatter([sm], [y], s=30, facecolor=RED if not s_in else "white", edgecolor=RED, lw=1.2, zorder=4)
-    ax_s.text(sm, y + 0.34, f"{sm:.2f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=5)
+    ax_s.text(sm, y - 0.36, f"{sm:.2f}", ha="center", va="top", fontsize=6.8, color=RED, fontweight="bold", zorder=5)
     # (d) material
     m = MAT[dong]; tot = sum(m.values()); left = 0
     for k in ("concrete", "brick"):
@@ -100,14 +108,14 @@ ax_h.xaxis.set_minor_locator(mpl.ticker.NullLocator())
 ax_s.set_xlim(0, 1.0); ax_s.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0]); ax_s.set_xlabel("sky view factor")
 ax_m.set_xlim(0, 100); ax_m.set_xticks([0, 25, 50, 75, 100]); ax_m.set_xlabel("share of sites (%)")
 for ax, t in zip(axes, ["(a)  Street width", "(b)  Building height", "(c)  Sky view factor", "(d)  Facade material"]):
-    ax.set_ylim(-0.75, 4 * 1.45 + 0.85)
+    ax.set_ylim(-0.85, 4 * 1.45 + 0.75)
     ax.text(0.0, 1.03, t, transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="bold", color=INK)
 ax_w.set_yticks(ys); ax_w.set_yticklabels([f"{lab}\n{en}" for _, lab, en, *_ in LCZ], fontsize=7, linespacing=1.15)
 for ax in axes: ax.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
 h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: median and interquartile range (b: canyon height; c: sky view factor)"),
-       Rectangle((0, 0), 1, 1, facecolor=LCZC, edgecolor="none", label="range defining the assigned LCZ class (Stewart and Oke, 2012); open-ended for high-rise — filled circle: median outside"),
+       Line2D([], [], color=INK, lw=0.9, marker="|", markersize=5, markeredgewidth=0.9, label="range defining the assigned LCZ class (Stewart and Oke, 2012); arrow: open-ended — filled circle: median outside"),
        Rectangle((0, 0), 1, 1, facecolor=FAB3, edgecolor="none", label="all buildings within 60 m of the sites, 5–95 %"),
        Rectangle((0, 0), 1, 1, facecolor=FAB1, edgecolor="none", label="all buildings, full range")]
 h_m = [Rectangle((0, 0), 1, 1, facecolor=M_GREY[k], edgecolor="none", label=k) for k in ("concrete", "brick")]
