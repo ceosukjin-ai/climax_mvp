@@ -29,7 +29,7 @@ panels = [("Air temperature (°C)", "Ta", "Weather meter", 1), ("Relative humidi
           ("Sky view factor", "SVF", "360° camera", 2), ("Tree view factor", "TVF", "360° camera", 2), ("Pavement surface temperature (°C)", "Ts", "Thermal camera", 1)]
 
 fig, axes = plt.subplots(3, 3, figsize=(190 * MM, 110 * MM))
-fig.subplots_adjust(left=0.05, right=0.99, top=0.96, bottom=0.07, wspace=0.16, hspace=0.75)
+fig.subplots_adjust(left=0.02, right=0.99, top=0.96, bottom=0.07, wspace=0.16, hspace=0.75)
 rng = np.random.default_rng(7)
 for ax, (title, col, inst, dec) in zip(axes.ravel(), panels):
     x = d[col].dropna().values; n = len(x)
@@ -37,7 +37,7 @@ for ax, (title, col, inst, dec) in zip(axes.ravel(), panels):
     ax.axvspan(q1, q3, color=C[inst], alpha=0.16, lw=0, zorder=0)
     ax.axvline(med, color=C[inst], lw=0.9, zorder=3)
     ax.scatter(x, rng.uniform(-0.55, 0.55, n), s=9, color=C[inst], edgecolor="white", lw=0.3, zorder=2, alpha=0.9)
-    ax.set_ylim(-1, 1); ax.set_yticks([]); ax.set_ylabel("sites", fontsize=7, color=MUTED); ax.set_xlabel(title, fontsize=7.5)
+    ax.set_ylim(-1, 1); ax.set_yticks([]); ax.set_xlabel(title, fontsize=7.5)
     lo, hi = x.min(), x.max(); pad = (hi - lo) * 0.06
     ax.set_xlim(lo - pad, hi + pad)
     loc = mpl.ticker.MaxNLocator(nbins=6, steps=[1, 2, 2.5, 5, 10]); ax.xaxis.set_major_locator(loc)
