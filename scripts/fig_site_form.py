@@ -104,7 +104,7 @@ for ax, t in zip(axes, ["(a)  Street width", "(b)  Building height", "(c)  Sky v
     ax.set_ylim(-0.75, 4 * 1.45 + 0.85)
     ax.text(0.0, 1.03, t, transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="bold", color=INK)
 ax_w.set_yticks(ys); ax_w.set_yticklabels([f"{lab}\n{en}" for _, lab, en, *_ in LCZ], fontsize=7, linespacing=1.15)
-ax_w.tick_params(axis="y", length=0)
+for ax in axes: ax.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
 h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: range and median (b: canyon height; c: sky view factor)"),
