@@ -2586,6 +2586,13 @@ async def jp_wbgt(
     import math as _m
     _dy = (float(row["lat"]) - lat) * 111320.0
     _dx = (float(row["lon"]) - lon) * 111320.0 * _m.cos(_m.radians(lat))
+    _dist = _m.hypot(_dx, _dy)
+    # 일본 밖이면 공식값을 주지 않는다 (2026-09-26).
+    # 부산에서 열면 대마도 지점(약 60 km)의 예측이 「이 자리 공식값」처럼 떴다.
+    # 환경성 지점은 AMeDAS 간격(약 20 km)이라 일본 안에서는 가장 가까운 지점이 40 km 를 넘지 않는다.
+    if _dist > 40000:
+        return {"ok": False, "reason": "outside",
+                "nearest_m": round(_dist), "attribution": W.ATTRIBUTION}
     return {
         "ok": True,
         "official": {
@@ -2593,7 +2600,7 @@ async def jp_wbgt(
             "wbgt": round(float(row["wbgt"]), 1),
             "target_at": row["target_at"].isoformat(),
             "issued_at": row["issued_at"].isoformat() if row["issued_at"] else None,
-            "distance_m": round(_m.hypot(_dx, _dy)),
+            "distance_m": round(_dist),
         },
         "level": W.level_of(float(row["wbgt"]), age, cond),
         "alert": ({"area": alert["area"], "level": alert["level"],

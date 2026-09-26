@@ -28,7 +28,7 @@ DATA
 ----
   tier3_engine_output_80_v7_photo.csv   PET, 볕 = photo-verified sun/shade
   scs_master_80.csv                     SVF (fisheye, consistent view factors 2026-09-21; n = 79)
-  tier3_width_80.csv                    width_m, hw_ratio (geometric, from building rings)
+  scs_master_80.csv                     width_m, hw_ratio (site_form_80.csv 2026-09-26: building-register floors)
 
 Sun = direct beam reaching the sensor, verified on the 360-degree panorama; cloud-diffuse
 counts as no beam. Sun 62 / shade 18 (2026-09-25; sun label read from scs_master_80.csv). The five neighbourhoods are one per LCZ class
@@ -95,7 +95,7 @@ PET_EXTREME = 41.0
 STAT_PT = 7.0                     # Elsevier minimum for normal text
 
 v7 = pd.read_csv(f"{BASE}/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig")
-wd = pd.read_csv(f"{BASE}/tier3_width_80.csv", encoding="utf-8-sig")
+wd = pd.read_csv(f"{BASE}/scs_master_80.csv", encoding="utf-8-sig")
 v7.columns = [c.strip() for c in v7.columns]
 wd.columns = [c.strip() for c in wd.columns]
 d = v7.merge(wd[["측정ID", "width_m", "hw_ratio"]], on="측정ID", how="left")

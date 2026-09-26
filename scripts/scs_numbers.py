@@ -147,6 +147,7 @@ for L in range(1, 6):
     row(sec, f"LCZ {L} BVF 중앙", OLD[L][1], f"{q.BVF.median():.2f}", "〃")
     row(sec, f"LCZ {L} TVF 평균", OLD[L][2], f"{q.TVF.mean():.3f}", "〃")
     row(sec, f"LCZ {L} 폭 중앙 / H/W 중앙", "", f"{q.width_m.median():.1f} / {q.hw_ratio.median():.2f}")
+    row(sec, f"LCZ {L} 건물높이 H 중앙 (최대)", "", f"{q.H_m.median():.1f} ({q.H_m.max():.1f})", "9/26 건축물대장 층수")
     row(sec, f"LCZ {L} PET 평균 (범위폭)", "", f"{q.PET.mean():.1f} ({q.PET.max()-q.PET.min():.1f})")
     row(sec, f"LCZ {L} 표고 범위", "", f"{q.표고_m.min():.0f}–{q.표고_m.max():.0f} m")
 row(sec, "방법절: 표고 LCZ 4 / LCZ 2", "2–3 m / 24–101 m",

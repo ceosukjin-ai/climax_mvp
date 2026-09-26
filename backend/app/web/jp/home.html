@@ -423,7 +423,17 @@ function render(d){
 
 function renderWbgt(w){
   const t = T(), card = document.getElementById("wbgtCard");
-  if(!w || !w.ok){ card.style.display = "none"; return; }
+  // 공식값이 없을 때(일본 밖·시즌 밖)도 우리 추정 WBGT 한 줄은 보여준다 (2026-09-26).
+  if(!w || !w.ok){
+    if(last && last.wbgt != null){
+      card.style.display = "";
+      document.getElementById("wbgtBody").innerHTML =
+        `<div class="kv"><span class="k">${t.hereW}<small>${X(last.exposure) || ""}</small></span>`
+        + `<span class="v">${last.wbgt.toFixed(1)}</span></div>`;
+    } else card.style.display = "none";
+    const act = document.getElementById("actCard"); if(act) act.style.display = "none";
+    return;
+  }
   card.style.display = "";
   const lv = w.level || {}, name = lv[L_] || lv.ja || "";
   const adv = (lv.advice || {})[L_] || (lv.advice || {}).ja || "";

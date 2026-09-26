@@ -10,7 +10,8 @@
   볕/그늘 (v7 사진검증 라벨, 61/19)   같은 파일의 `볕`
   뷰팩터 (일관 정의, 9/21)            aug80_viewfactors.csv  SVF TVF BVF (위쪽 반구·Steyn·보정 없음)
                                       158번 사진(서제2동_07)은 자세복원 실패 → 결측
-  가로 기하                           tier3_width_80.csv     width_m hw_ratio (7곳 결측)
+  가로 기하 (9/26 서버 DB, 건축물대장 층수)  site_form_80.csv    width_m hw_ratio H_m H_default (7곳 결측)
+                                      옛 tier3_width_80.csv(9/9, V-World, 층수 없음 → 기본 5.6 m 32곳)은 폐기
   표고                                elev80.json            Copernicus 90 m DEM (Open-Meteo)
   엔진 무영상 입력(비교용)            v7_photo 의 tier3_svf tier3_gvi tier3_bvi
 
@@ -33,7 +34,7 @@ EN = {"부암제1동": "Buam 1", "보수동": "Bosu", "서제2동": "Seo 2",
 
 meas = list(csv.DictReader(open(f"{D}/tier3_engine_output_80_v7_photo.csv", encoding="utf-8-sig")))
 vf = {r["측정ID"]: r for r in csv.DictReader(open(f"{D}/aug80_viewfactors.csv", encoding="utf-8-sig"))}
-wd = {r["측정ID"]: r for r in csv.DictReader(open(f"{D}/tier3_width_80.csv", encoding="utf-8-sig"))}
+wd = {r["측정ID"]: r for r in csv.DictReader(open(f"{D}/site_form_80.csv", encoding="utf-8-sig"))}
 ev = json.load(open(f"{D}/elev80.json"))
 assert len(meas) == 80 and len(ev) == 80
 
@@ -48,7 +49,7 @@ for r, e in zip(meas, ev):
         Ta=r["Ta"], RH=r["RH"], v=r["v"], Tmrt=r["Tmrt"], PET=r["PET"], Ts=r["Ts"],
         태양고도=r["태양고도"], sun=SUN_OVERRIDE.get(k, r["볕"]),
         SVF=f(v["SVF"]), TVF=f(v["TVF"]), BVF=f(v["BVF"]), 사진=v["사진"],
-        width_m=w.get("width_m", ""), hw_ratio=w.get("hw_ratio", ""),
+        width_m=w.get("width_m", ""), hw_ratio=w.get("hw_ratio", ""), H_m=w.get("H_m", ""), H_default=w.get("H_default", ""),
         geo_SVF=r["tier3_svf"], geo_GVI=r["tier3_gvi"], geo_BVI=r["tier3_bvi"]))
 
 with open(f"{D}/scs_master_80.csv", "w", newline="", encoding="utf-8-sig") as fh:
