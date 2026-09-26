@@ -50,119 +50,56 @@ def elbow(ax, p0, p1, ymid, color=INK, ls="-", lw=0.8):
 
 
 # ============================================================ Fig: pipeline
-# Thumbnails (docs/figs/thumbs): site 20260825_용호제1동_05 — panorama crop, SegFormer-B0 (ADE20K) classes sky / tree / building / rest;
-# building polygons = LCZ 4 panel of SCS_Fig_sites_map (national register footprints, 3 height classes).
-import matplotlib.image as mpimg, os
-from matplotlib.patches import Circle, Rectangle
-TH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "figs", "thumbs")
-def thumb(ax, name, x, y, w, h):
-    img = mpimg.imread(os.path.join(TH, name)); ih, iw = img.shape[:2]
-    # fit inside (x, y, w, h) keeping aspect, centred
-    if iw / ih > w / h: ww, hh = w, w * ih / iw
-    else: hh, ww = h, h * iw / ih
-    x0, y0 = x + (w - ww) / 2, y + (h - hh) / 2
-    ax.imshow(img, extent=[x0, x0 + ww, y0, y0 + hh], aspect="auto", zorder=3, interpolation="lanczos")
-    ax.add_patch(Rectangle((x0, y0), ww, hh, facecolor="none", edgecolor="#8FA6BF", lw=0.5, zorder=4))
-
-def icon_globe(ax, cx, cy, h):
-    """globe thermometer on a tripod + cup anemometer, line icon"""
-    r = h * 0.17
-    ax.add_patch(Circle((cx, cy + h * 0.28), r, facecolor="#2B2B2B", edgecolor="none", zorder=3))
-    ax.plot([cx, cx], [cy - h * 0.45, cy + h * 0.11], color=INK, lw=0.8, zorder=3)
-    for dx in (-h * 0.22, h * 0.22): ax.plot([cx, cx + dx], [cy - h * 0.05, cy - h * 0.45], color=INK, lw=0.7, zorder=3)
-    # anemometer on a side arm
-    ax.plot([cx, cx + h * 0.36], [cy - h * 0.05, cy - h * 0.05], color=INK, lw=0.7, zorder=3)
-    ax.plot([cx + h * 0.36, cx + h * 0.36], [cy - h * 0.05, cy + h * 0.15], color=INK, lw=0.7, zorder=3)
-    for dx, dy in ((-h * 0.12, 0), (h * 0.12, 0), (0, h * 0.12)):
-        ax.plot([cx + h * 0.36, cx + h * 0.36 + dx], [cy + h * 0.15, cy + h * 0.15 + dy], color=INK, lw=0.6, zorder=3)
-        ax.add_patch(Circle((cx + h * 0.36 + dx, cy + h * 0.15 + dy), h * 0.035, facecolor="white", edgecolor=INK, lw=0.6, zorder=3))
-
-def icon_canopy(ax, x, y, w, h):
-    """30 m grid with canopy cells + a weather grid symbol"""
-    n, m = 4, 7; cw, ch = w / m, h / n
-    rng = np.random.default_rng(5)
-    for i in range(n):
-        for j in range(m):
-            v = rng.random()
-            fc = "#2F7D4A" if v > 0.72 else ("#A9D3A6" if v > 0.5 else "#F2F2EE")
-            ax.add_patch(Rectangle((x + j * cw, y + i * ch), cw, ch, facecolor=fc, edgecolor="#B9C4CF", lw=0.35, zorder=3))
-    ax.add_patch(Rectangle((x, y), w, h, facecolor="none", edgecolor="#8FA6BF", lw=0.5, zorder=4))
-
-W, H = 190, 150
+# Plain single-sheet flowchart (the 09-20 look), structure and numbers corrected to the 62/18 canonical set:
+# field data never enter the energy balance; only sun/shade, Ta and wind (on-site) enter the residual layer.
+W, H = 190, 184
 fig = plt.figure(figsize=(W * MM, H * MM)); ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off")
-top = H - 3; hb = 7
-h0, h1, h2, h3, h4 = 25, 21, 15, 17, 15                 # row heights: inputs, processing, outputs, learning, result
-g01, g12, g23, g34 = 6, 10, 6, 6                        # gaps (g12 wide: verification notes sit beside the arrows)
-y0 = top - hb - 4 - h0; y1 = y0 - g01 - h1; y2 = y1 - g12 - h2; y3 = y2 - g23 - h3; y4 = y3 - g34 - h4
-F, T, TN, FN = 5.8, 7.2, 6.6, 5.5
-AMB = "#8A5A1B"
-
-def lane(x0, x1, ybot, title, sub, col):
-    ax.add_patch(FancyBboxPatch((x0, ybot), x1 - x0, top - ybot, boxstyle="round,pad=0,rounding_size=1.2", facecolor="#F5F6F8", edgecolor="none", zorder=0))
-    ax.add_patch(FancyBboxPatch((x0, top - hb), x1 - x0, hb, boxstyle="round,pad=0,rounding_size=1.2", facecolor=col, edgecolor="none", zorder=1))
-    ax.add_patch(Rectangle((x0, top - hb), x1 - x0, hb / 2, facecolor=col, edgecolor="none", zorder=1))
-    ax.text(x0 + 3, top - hb / 2, title, ha="left", va="center", fontsize=8.2, fontweight="bold", color="white", zorder=3)
-    ax.text(x1 - 3, top - hb / 2, sub, ha="right", va="center", fontsize=6.4, color="white", zorder=3)
-
-L0, L1, R0, R1 = 17, 100, 104, 187
-lane(L0, L1, y3 - 3, "A   Field reference", "80 sites · same site, same minute", BLUE)
-lane(R0, R1, y4 - 3, "B   Imagery-free service", "no street view anywhere in the chain", "#3D3D3D")
-# row labels (left gutter)
-for (yy, hh, lab) in ((y0, h0, "Inputs"), (y1, h1, "Processing"), (y2, h2, "Outputs"), (y3, h3, "Learning"), (y4, h4, "Result")):
-    ax.text(L0 - 2.5, yy + hh / 2, lab.upper(), ha="right", va="center", fontsize=6.0, color=MUTED, fontweight="bold")
-
-def note(ax, x, y, txt, ha="left"):
-    ax.text(x, y, txt, ha=ha, va="center", fontsize=5.3, style="italic", color=AMB, linespacing=1.15, zorder=5)
-
-# ---- lane A
-xs = [19.5, 46, 72.5]; bw = 25; xc = [x + bw / 2 for x in xs]
-# inputs (thumbnails)
-box(ax, xs[0], y0, 51.5, h0, "$\\bf{80}$ 360° panoramas", "one per site at 1.5 m; two fisheye images stitched\nwith a per-image attitude correction", "data", fs=F, tfs=T, bottom=True)
-thumb(ax, "thumb_pano.png", xs[0] + 6.5, y0 + h0 - 14.6, 38.5, 10.6)
-box(ax, xs[2], y0, bw, h0, "Globe + weather meter", "$T_g$ (Ø 0.05 m), $T_a$, RH,\nwind at the reading minute", "data", fs=FN, tfs=TN, bottom=True)
-icon_globe(ax, xs[2] + bw / 2, y0 + h0 - 9.6, 11)
-# processing
-box(ax, xs[0], y1, bw, h1, "Semantic segmentation", "SegFormer-B0 (ADE20K)\nsky, tree, building, rest", "proc", fs=FN, tfs=TN, bottom=True)
-thumb(ax, "thumb_seg.png", xs[0] + 1.5, y1 + h1 - 12.6, bw - 3, 7.2)
-box(ax, xs[1], y1, bw, h1, "Sun / shade reading", "two readers, $\\bf{76/80}$ agreed;\nobserver's shadow settles\nthe rest; cloud-diffuse = shade", "proc", fs=FN, tfs=TN)
-box(ax, xs[2], y1, bw, h1, "$T_{mrt}$ → PET", "ISO 7726 (D 0.05 m, ε 0.95,\nforced convection) →\nHöppe MEMI, VDI 3787-2", "proc", fs=FN, tfs=TN)
-# outputs
-box(ax, xs[0], y2, bw, h2, "View factors · $\\bf{79}$ sites", "SVF, TVF, BVF", "data", fs=F, tfs=TN)
-box(ax, xs[1], y2, bw, h2, "Sun or shade · $\\bf{62 / 18}$", "62 sunlit, 18 shaded", "data", fs=F, tfs=TN)
-box(ax, xs[2], y2, bw, h2, "Reference PET · $\\bf{80}$", "35.9–53.8 °C; reference for\nevery comparison", "data", fs=FN, tfs=TN)
-arrow(ax, (xc[0], y0), (xc[0], y1 + h1)); arrow(ax, (xc[1], y0), (xc[1], y1 + h1)); arrow(ax, (xc[2], y0), (xc[2], y1 + h1))
-for x in xc: arrow(ax, (x, y1), (x, y2 + h2))
-# verification notes beside the processing → output arrows
-note(ax, xc[0] + 1.2, y1 - g12 / 2, "one pose failure → 79;\nresidual class median 0.02")
-note(ax, xc[1] + 1.2, y1 - g12 / 2, "globe rise 21.7 K sunlit vs\n9.4 K shaded, p < 0.001")
-# learning row: on-site inputs
-box(ax, xs[1], y3, 51.5, h3, "On-site inputs to the residual layer", "sun or shade (panorama), $T_a$ and wind (weather meter)\n— read at the site, not from imagery or a grid", "data", fs=F, tfs=T)
-arrow(ax, (xc[1], y2), (xc[1], y3 + h3))
-gx = (L1 + R0) / 2
-arrow(ax, (xs[1] + 51.5, y3 + h3 / 2), (R0 + 3, y3 + h3 / 2), color=RED, lw=1.0)
-
-# ---- lane B
-rx, rw = R0 + 3, R1 - R0 - 6; hw = (rw - 4) / 2
-box(ax, rx, y0, hw, h0, "Building polygons", "national register; heights\nfloors × 3.018 m + 0.902 m", "data", fs=F, tfs=TN, bottom=True)
-thumb(ax, "thumb_poly.png", rx + 1.5, y0 + h0 - 14.6, hw - 3, 10.6)
-box(ax, rx + hw + 4, y0, hw, h0, "Satellite canopy + weather", "Meta/WRI canopy height (30 m);\ngridded $T_a$, RH, wind", "data", fs=F, tfs=TN, bottom=True)
-icon_canopy(ax, rx + hw + 4 + 8.5, y0 + h0 - 14.4, hw - 17, 10)
-box(ax, rx, y1, rw, h1, "Geometric view factors", "ray casting in 5° steps to the building skyline; tree canopy as a transmissive\nlayer; SVF and BVF at any point — no imagery needed", "proc", fs=F, tfs=T)
-arrow(ax, (rx + hw / 2, y0), (rx + hw / 2, y1 + h1)); arrow(ax, (rx + hw * 1.5 + 4, y0), (rx + hw * 1.5 + 4, y1 + h1))
-box(ax, rx, y2, rw, h2, "Physics PET  —  MAE $\\bf{6.6}$ °C against the reference", "energy balance at the pedestrian location → $T_{mrt}$ (ISO 7726)\n→ PET (Höppe MEMI; 1.37 met, 0.5 clo)", "proc", fs=F, tfs=T)
-arrow(ax, (rx + rw / 2, y1), (rx + rw / 2, y2 + h2))
-note(ax, rx + rw / 2 + 1.2, y1 - g12 / 2, "verified against the panorama SVF at the 79 field sites:\nMAE 0.112, bias +0.046, r 0.70")
-box(ax, rx, y3, rw, h3, "AI residual layer · $\\bf{5}$ predictors — the only learned step", "ridge regression, α = 20; sun/shade, geometric SVF, $T_a$, wind, PET$_{phys}$; no coordinates\nPET = PET$_{phys}$ + Δ;  trained and tested leave-one-neighbourhood-out", "ai", fs=F, tfs=T)
-arrow(ax, (rx + rw / 2, y2), (rx + rw / 2, y3 + h3))
-box(ax, rx + 8, y4, rw - 16, h4, "Reported PET · $\\bf{63 / 63}$ extreme sites detected", "MAE $\\bf{1.8}$ °C, bias −0.0 °C, $r$ $\\bf{0.82}$ against the field reference", "data", fs=F, tfs=T)
-arrow(ax, (rx + rw / 2, y3), (rx + rw / 2, y4 + h4))
-
+cw, bh, gap = 42, 15, 6; step = bh + gap
+xs = [4, 51, 98, 145]; xc = [x + cw / 2 for x in xs]
+y0 = H - 4 - bh; ys = [y0 - i * step for i in range(8)]; y0, y1, y2, y3, y4, y5, y6, y7 = ys
+F, T = 5.8, 7.0
+# ---- inputs
+box(ax, xs[0], y0, cw, bh, "360° panoramas", "one per site, pole-mounted at 1.5 m;\ntwo fisheye images stitched", "data", fs=F, tfs=T)
+box(ax, xs[1], y0, cw, bh, "360° panoramas", "the same panoramas,\nread for the direct beam", "data", fs=F, tfs=T)
+box(ax, xs[2], y0, cw, bh, "Globe + weather meter", "$T_g$ (Ø 0.05 m), $T_a$, RH, wind\nat the reading minute, 80 sites", "data", fs=F, tfs=T)
+box(ax, xs[3], y0, cw, bh, "Buildings and canopy", "national register polygons and floors;\nMeta/WRI canopy height (30 m)", "data", fs=F, tfs=T)
+# ---- processing
+box(ax, xs[0], y1, cw, bh, "Semantic segmentation", "SegFormer-B0 (ADE20K): sky, tree, building;\nSteyn (1980) sin 2θ integration on a 1° grid", "proc", fs=F, tfs=T)
+box(ax, xs[1], y1, cw, bh, "Sun or shade reading", "two readers, all 80 sites;\ncloud-diffuse counted as no beam", "proc", fs=F, tfs=T)
+box(ax, xs[2], y1, cw, bh, "$T_{mrt}$ from the globe", "ISO 7726; D = 0.05 m, ε = 0.95,\nforced convection", "proc", fs=F, tfs=T)
+box(ax, xs[3], y1, cw, bh, "Geometric view factors", "ray casting in 5° steps to the building\nskyline; canopy as a transmissive layer", "proc", fs=F, tfs=T)
+# ---- verification / PET
+box(ax, xs[0], y2, cw, bh, "Verification", "one pose failure → 79 sites;\nresidual class median 0.02", "ver", fs=F, tfs=T)
+box(ax, xs[1], y2, cw, bh, "Verification", "76 of 80 agreed; globe-temperature rise\n21.7 K sunlit vs 9.4 K shaded, $p$ < 0.001", "ver", fs=F, tfs=T)
+box(ax, xs[2], y2, cw, bh, "PET", "Höppe MEMI, VDI 3787 Part 2;\n35.9–53.8 °C at the 80 sites", "proc", fs=F, tfs=T)
+box(ax, xs[3], y2, cw, bh, "Verification", "geometric vs. panorama SVF at the 79\nfield sites: MAE 0.112, bias +0.046, $r$ 0.70", "ver", fs=F, tfs=T)
+# ---- outputs
+box(ax, xs[0], y3, cw, bh, "View factors", "sky, tree and building (79 sites)", "data", fs=F, tfs=T)
+box(ax, xs[1], y3, cw, bh, "Sun or shade", "62 sunlit, 18 shaded", "data", fs=F, tfs=T)
+box(ax, xs[2], y3, cw, bh, "Reference PET", "the reference for every\ncomparison in the paper", "data", fs=F, tfs=T)
+box(ax, xs[3], y3, cw, bh, "View factors", "without street view — any point", "data", fs=F, tfs=T)
+for x in xc:
+    arrow(ax, (x, y0), (x, y1 + bh)); arrow(ax, (x, y1), (x, y2 + bh)); arrow(ax, (x, y2), (x, y3 + bh))
+# ---- service chain (right column only: no field data enter it)
+box(ax, xs[3], y4, cw, bh, "Energy balance model", "deterministic solution at the pedestrian\nlocation; coefficients fixed as deployed", "proc", fs=F, tfs=T)
+box(ax, xs[3], y5, cw, bh, "$T_{mrt}$ and PET, physics", "ISO 7726 → Höppe MEMI (1.37 met, 0.5 clo)\nMAE 6.6 °C against the reference", "data", fs=F, tfs=T)
+arrow(ax, (xc[3], y3), (xc[3], y4 + bh)); arrow(ax, (xc[3], y4), (xc[3], y5 + bh))
+# ---- on-site inputs to the residual layer (sun/shade from the panorama; Ta, wind from the weather meter)
+box(ax, xs[1], y5, cw, bh, "On-site inputs", "sun or shade (above); $T_a$ and wind\nfrom the weather-meter reading", "data", fs=F, tfs=T)
+arrow(ax, (xc[1], y3), (xc[1], y5 + bh))
+# ---- residual layer and result
+rx0, rx1 = xs[2], xs[3] + cw
+box(ax, rx0, y6, rx1 - rx0, bh + 3, "Residual correction layer — the only learned step", "ridge regression, α = 20; five standardised predictors: sun or shade, geometric SVF, $T_a$, wind, PET$_{phys}$;\nno coordinates;  PET = PET$_{phys}$ + Δ;  trained and tested leave-one-neighbourhood-out", "ai", fs=F, tfs=T)
+arrow(ax, (xc[3], y5), (xc[3], y6 + bh + 3))
+ym = y6 + (bh + 3) / 2
+ax.plot([xc[1], xc[1]], [y5, ym], color=RED, lw=1.0, zorder=4); arrow(ax, (xc[1], ym), (rx0, ym), color=RED, lw=1.0)
+box(ax, xs[2] + 12, y7, cw * 2 + 5 - 24, bh, "Reported PET", "MAE 1.8 °C, bias −0.0 °C, $r$ 0.82 against the field reference\n(leave-one-neighbourhood-out); all 63 extreme-heat sites (PET ≥ 41 °C) detected", "data", fs=F, tfs=T)
+arrow(ax, ((rx0 + rx1) / 2, y6), ((rx0 + rx1) / 2, y7 + bh))
 # ---- legend
-ly = 4.2
-for x, kind, lab in [(17, "data", "input or output data"), (58, "proc", "processing step"), (95, "ai", "learned step")]:
-    box(ax, x, ly - 2.6, 12, 5.2, "", None, kind); ax.text(x + 14.5, ly, lab, va="center", fontsize=6.4)
-ax.text(128, ly, "verification", va="center", fontsize=6.4, style="italic", color=AMB)
-ax.plot([148, 154], [ly, ly], color=RED, lw=1.0); ax.text(156, ly, "field data into the service chain", va="center", fontsize=6.4)
+ly = 5
+for x, kind, lab in [(20, "data", "input or output data"), (62, "proc", "processing step"), (100, "ver", "verification"), (134, "ai", "learned step")]:
+    box(ax, x, ly - 2.6, 13, 5.2, "", None, kind); ax.text(x + 15.5, ly, lab, va="center", fontsize=6.4)
+ax.plot([164, 170], [ly, ly], color=RED, lw=1.0); ax.text(172, ly, "field data used", va="center", fontsize=6.4)
 for e in ("pdf", "eps", "png", "svg"):
     fig.savefig(f"{OUT}/SCS_Fig_pipeline.{e}", bbox_inches="tight", pad_inches=0.03)
 plt.close(fig)
