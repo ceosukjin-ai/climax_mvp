@@ -50,56 +50,36 @@ def elbow(ax, p0, p1, ymid, color=INK, ls="-", lw=0.8):
 
 
 # ============================================================ Fig: pipeline
-# The 09-20 flowchart kept (four imagery/geometry columns, wide stack below), corrected: no field data enter the
-# energy balance; the field imagery columns end in the analysis, and only sun/shade (+ Ta, wind) enter the residual layer.
-W, H = 190, 176
+# Two columns: everything measured in the field (left, one column) and the imagery-free service chain (right).
+# Field data never enter the energy balance; only sun/shade, Ta and wind (on-site) enter the residual layer.
+W, H = 190, 154
 fig = plt.figure(figsize=(W * MM, H * MM)); ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off")
-cw, bh, gap = 42, 15, 6; step = bh + gap
-xs = [4, 51, 98, 145]; xc = [x + cw / 2 for x in xs]
-y0 = H - 4 - bh; ys = [y0 - i * step for i in range(8)]; y0, y1, y2, y3, y4, y5, y6, y7 = ys
-F, T = 5.8, 7.0
-# ---- inputs
-box(ax, xs[0], y0, cw, bh, "360° panoramas", "one per site at 80 sites,\npole-mounted at 1.5 m", "data", fs=F, tfs=T)
-box(ax, xs[1], y0, cw, bh, "Thermal images", "323 radiometric images,\nwall and pavement at the sites", "data", fs=F, tfs=T)
-box(ax, xs[2], y0, cw, bh, "360° panoramas", "the same panoramas,\nread for the direct beam", "data", fs=F, tfs=T)
-box(ax, xs[3], y0, cw, bh, "Buildings and canopy", "national register polygons and floors;\nMeta/WRI canopy height (30 m)", "data", fs=F, tfs=T)
-# ---- processing
-box(ax, xs[0], y1, cw, bh, "Semantic segmentation", "SegFormer-B0 (ADE20K): sky, tree, building;\nSteyn (1980) sin 2θ integration, 1° grid", "proc", fs=F, tfs=T)
-box(ax, xs[1], y1, cw, bh, "Temperature retrieval", "radiometric values read from the\nimage record; wall and pavement separated", "proc", fs=F, tfs=T)
-box(ax, xs[2], y1, cw, bh, "Sun or shade reading", "two readers, all 80 sites;\ncloud-diffuse counted as no beam", "proc", fs=F, tfs=T)
-box(ax, xs[3], y1, cw, bh, "Geometric view factors", "ray casting in 5° steps to the building\nskyline; canopy as a transmissive layer", "proc", fs=F, tfs=T)
-# ---- verification
-box(ax, xs[0], y2, cw, bh, "Verification", "one pose failure → 79 sites;\nresidual class median 0.02", "ver", fs=F, tfs=T)
-box(ax, xs[1], y2, cw, bh, "Verification", "pavement 35.3–66.4 °C at the 80 sites,\nordered with the globe reading", "ver", fs=F, tfs=T)
-box(ax, xs[2], y2, cw, bh, "Verification", "76 of 80 agreed; globe-temperature rise\n21.7 K sunlit vs 9.4 K shaded, $p$ < 0.001", "ver", fs=F, tfs=T)
-box(ax, xs[3], y2, cw, bh, "Verification", "geometric vs. panorama SVF at the 79\nfield sites: MAE 0.112, bias +0.046, $r$ 0.70", "ver", fs=F, tfs=T)
-# ---- outputs
-box(ax, xs[0], y3, cw, bh, "View factors", "sky, tree and building (79 sites)", "data", fs=F, tfs=T)
-box(ax, xs[1], y3, cw, bh, "Surface temperature", "pavement and wall, at the reading time", "data", fs=F, tfs=T)
-box(ax, xs[2], y3, cw, bh, "Sun or shade", "62 sunlit, 18 shaded", "data", fs=F, tfs=T)
-box(ax, xs[3], y3, cw, bh, "View factors", "without street view — any point", "data", fs=F, tfs=T)
-for x in xc:
-    arrow(ax, (x, y0), (x, y1 + bh)); arrow(ax, (x, y1), (x, y2 + bh)); arrow(ax, (x, y2), (x, y3 + bh))
-# ---- field imagery → analysis only (merge bar under columns 1–2)
-yb = y3 - 3.5
-ax.plot([xc[0], xc[0], xc[1], xc[1]], [y3, yb, yb, y3], color=INK, lw=0.8, zorder=4)
-amx = (xc[0] + xc[1]) / 2
-arrow(ax, (amx, yb), (amx, y4 + bh))
-box(ax, xs[0] + 8, y4, cw * 2 + 5 - 16, bh, "Field analysis only", "reference view factors and surface temperatures are compared with the\nservice (Sections 4–5); they are not inputs to it", "data", fs=F, tfs=T)
-# ---- service chain under column 4, fed only by the geometric view factors
-box(ax, xs[3], y4, cw, bh, "Energy balance model", "deterministic solution at the pedestrian\nlocation; coefficients fixed as deployed", "proc", fs=F, tfs=T)
-box(ax, xs[3], y5, cw, bh, "$T_{mrt}$ and PET, physics", "ISO 7726 → Höppe MEMI (1.37 met, 0.5 clo)\nMAE 6.6 °C against the field reference", "data", fs=F, tfs=T)
-arrow(ax, (xc[3], y3), (xc[3], y4 + bh)); arrow(ax, (xc[3], y4), (xc[3], y5 + bh))
-# ---- residual layer (columns 3–4) and result; sun or shade comes straight down column 3
-rx0, rx1 = xs[2], xs[3] + cw
-box(ax, rx0, y6, rx1 - rx0, bh + 3, "Residual correction layer — the only learned step", "ridge regression, α = 20; five standardised predictors: sun or shade, geometric SVF, $T_a$, pedestrian wind,\nPET$_{phys}$; no coordinates;  PET = PET$_{phys}$ + Δ;  trained and tested leave-one-neighbourhood-out", "ai", fs=F, tfs=T)
-arrow(ax, (xc[3], y5), (xc[3], y6 + bh + 3))
-arrow(ax, (xc[2], y3), (xc[2], y6 + bh + 3), color=RED, lw=1.0)
-ax.text(xc[2] + 1.5, (y3 + y6 + bh + 3) / 2, "sun or shade, with $T_a$ and\nwind from the weather meter", ha="left", va="center", fontsize=5.4, style="italic", color=RED, linespacing=1.15)
-box(ax, xs[2] + 12, y7, cw * 2 + 5 - 24, bh, "Reported PET", "MAE 1.8 °C, bias −0.0 °C, $r$ 0.82 against the field reference\n(leave-one-neighbourhood-out); all 63 extreme-heat sites (PET ≥ 41 °C) detected", "data", fs=F, tfs=T)
-arrow(ax, ((rx0 + rx1) / 2, y6), ((rx0 + rx1) / 2, y7 + bh))
+bh, gap = 18, 6; step = bh + gap
+lx, rx, cw = 4, 98, 88; lc, rc = lx + cw / 2, rx + cw / 2
+y0 = H - 4 - bh; ys = [y0 - i * step for i in range(7)]; y0, y1, y2, y3, y4, y5, y6 = ys
+F, T = 5.9, 7.2
+# ---- left: field measurement
+box(ax, lx, y0, cw, bh, "Field measurement — 80 sites, same site, same minute", "360° panoramas (one per site, pole-mounted at 1.5 m) · thermal images (323, wall and pavement)\nglobe thermometer and weather meter ($T_g$, $T_a$, RH, wind at the reading minute)", "data", fs=F, tfs=T)
+box(ax, lx, y1, cw, bh, "Reading the field record", "semantic segmentation — SegFormer-B0 (ADE20K): sky, tree, building; Steyn (1980) sin 2θ on a 1° grid\nsun or shade — two readers, all 80 sites; cloud-diffuse counted as no beam\nsurface temperature — radiometric values, wall and pavement; $T_{mrt}$ (ISO 7726) → PET (Höppe MEMI)", "proc", fs=5.6, tfs=T)
+box(ax, lx, y2, cw, bh, "Verification", "segmentation: one pose failure → 79 sites; residual class median 0.02\nsun or shade: 76 of 80 agreed; globe-temperature rise 21.7 K sunlit vs 9.4 K shaded, $p$ < 0.001\nsurface temperature: pavement 35.3–66.4 °C, ordered with the globe reading", "ver", fs=5.6, tfs=T)
+box(ax, lx, y3, cw, bh, "Field reference", "view factors (sky, tree, building; 79 sites) · sun or shade (62 sunlit, 18 shaded)\nsurface temperature · reference PET 35.9–53.8 °C\nthe reference for every comparison (Sections 4–5) — not an input to the service", "data", fs=5.6, tfs=T)
+for y_a, y_b in ((y0, y1), (y1, y2), (y2, y3)):
+    arrow(ax, (lc, y_a), (lc, y_b + bh))
+# ---- right: imagery-free service chain
+box(ax, rx, y0, cw, bh, "Buildings and canopy", "national building register: polygons and floors (height = floors × 3.018 m + 0.902 m)\nMeta/WRI canopy height (30 m); gridded $T_a$, RH, wind", "data", fs=F, tfs=T)
+box(ax, rx, y1, cw, bh, "Geometric view factors", "ray casting in 5° steps to the building skyline; canopy as a transmissive layer\nSVF and BVF at any point — no imagery needed", "proc", fs=F, tfs=T)
+box(ax, rx, y2, cw, bh, "Verification", "geometric against the panorama SVF at the 79 field sites:\nMAE 0.112, bias +0.046, $r$ 0.70", "ver", fs=F, tfs=T)
+box(ax, rx, y3, cw, bh, "Energy balance model → $T_{mrt}$ → PET, physics", "deterministic solution at the pedestrian location; coefficients fixed as deployed\nISO 7726 → Höppe MEMI (1.37 met, 0.5 clo) · MAE 6.6 °C against the field reference", "proc", fs=F, tfs=T)
+box(ax, rx, y4, cw, bh, "Residual correction layer — the only learned step", "ridge regression, α = 20; five standardised predictors: sun or shade, geometric SVF, $T_a$,\npedestrian wind, PET$_{phys}$; no coordinates;  PET = PET$_{phys}$ + Δ;  leave-one-neighbourhood-out", "ai", fs=F, tfs=T)
+box(ax, rx, y5, cw, bh, "Reported PET", "MAE 1.8 °C, bias −0.0 °C, $r$ 0.82 against the field reference (leave-one-neighbourhood-out)\nall 63 extreme-heat sites (PET ≥ 41 °C) detected", "data", fs=F, tfs=T)
+for y_a, y_b in ((y0, y1), (y1, y2), (y2, y3), (y3, y4), (y4, y5)):
+    arrow(ax, (rc, y_a), (rc, y_b + bh))
+# ---- the one place field data enter the service: on-site sun/shade, Ta, wind → residual layer
+ym = y4 + bh / 2
+ax.plot([lc, lc], [y3, ym], color=RED, lw=1.0, zorder=4); arrow(ax, (lc, ym), (rx, ym), color=RED, lw=1.0)
+ax.text(lc + 2, (y3 + ym) / 2 + 1, "sun or shade (from the panorama),\n$T_a$ and wind (from the weather meter)\n— read at the site, not from imagery or a grid", ha="left", va="center", fontsize=5.6, style="italic", color=RED, linespacing=1.2)
 # ---- legend
-ly = 5
+ly = y5 - 7
 for x, kind, lab in [(20, "data", "input or output data"), (62, "proc", "processing step"), (100, "ver", "verification"), (134, "ai", "learned step")]:
     box(ax, x, ly - 2.6, 13, 5.2, "", None, kind); ax.text(x + 15.5, ly, lab, va="center", fontsize=6.4)
 ax.plot([164, 170], [ly, ly], color=RED, lw=1.0); ax.text(172, ly, "field data used", va="center", fontsize=6.4)
