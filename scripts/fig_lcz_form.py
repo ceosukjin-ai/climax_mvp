@@ -4,8 +4,11 @@
 Bar = the range that defines the assigned LCZ class (Stewart & Oke, 2012, Table 3); dot = median over the
 neighbourhood's measurement sites, whisker = interquartile range; red = median outside the class range.
 (a) building height, (b) height-to-width ratio, (c) sky view factor.
-Sources: scs_master_80.csv — H = width_m × hw_ratio (building footprints + road centreline; 7 sites without a
-centreline are absent from (a)(b)), SVF = 360° panorama, 2026-09-21 consistent set (one site without pose, n 79).
+Sources: site_form_80.csv (2026-09-26, server DB with building-register floors) — H = mean height of the two buildings
+flanking the narrowest cross-section, H/W = H / street width; 7 sites without two flanking buildings are absent from
+(a)(b), and at 11 sites one flanking building has no floor record (default 2 floors). SVF from scs_master_80.csv:
+360° panorama, 2026-09-21 consistent set (one site without pose, n 79).
+Replaces tier3_width_80.csv (2026-09-09, V-World polygons without floors: 32 of 73 sites at the default 5.6 m).
 """
 import sys, numpy as np, pandas as pd, matplotlib as mpl, matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -28,8 +31,10 @@ LCZ = [("부암제1동", "LCZ 1  compact high-rise", "Buam 1",     (25, None), (
        ("용호제1동", "LCZ 4  open high-rise",    "Yongho 1",   (25, None), (0.75, 1.25), (0.5, 0.7)),
        ("명장동",   "LCZ 5  open mid-rise",     "Myeongjang", (10, 25),   (0.3, 0.75), (0.5, 0.8))]
 
-d = pd.read_csv(f"{DATA}/scs_master_80.csv", encoding="utf-8-sig")
-d["H"] = d.width_m * d.hw_ratio
+d = pd.read_csv(f"{DATA}/scs_master_80.csv", encoding="utf-8-sig")[["측정ID", "권역", "SVF"]]
+f = pd.read_csv(f"{DATA}/site_form_80.csv", encoding="utf-8-sig")[["측정ID", "width_m", "hw_ratio", "H_m", "H_default"]]
+d = d.merge(f, on="측정ID")            # 2026-09-26 server run: heights from GIS건물통합정보 + 건축물대장 (floors known)
+d["H"] = d.H_m
 panels = [("(a)  Building height (m)", "H", 0, (0, 36), [0, 10, 20, 30], "{:.1f}"),
           ("(b)  Height-to-width ratio", "hw_ratio", 1, (0, 2.6), [0, 0.5, 1.0, 1.5, 2.0, 2.5], "{:.2f}"),
           ("(c)  Sky view factor", "SVF", 2, (0, 1.0), [0, 0.2, 0.4, 0.6, 0.8, 1.0], "{:.2f}")]
