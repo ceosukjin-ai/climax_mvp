@@ -25,8 +25,8 @@ mpl.rcParams.update({
     "figure.dpi": 200, "savefig.dpi": 1200, "pdf.fonttype": 42, "ps.fonttype": 42})
 INK, MUTED, SURF, RED = "#1A1A1A", "#5E5E5E", "#CFCFCD", "#C0504D"
 FAB1, FAB2, FAB3 = "#EDEDEB", "#E4E4E2", "#CFCFCD"                 # all buildings: full range / 5–95 %
-W_GREY = ["#6E6E6E", "#9A9A9A", "#C4C4C4", "#EDEDEB"]   # alley → open
-M_GREY = {"concrete": "#8C8C8C", "brick": "#D3D3D1"}
+W_GREY = ["#3F5F7F", "#7C9CBF", "#C6D4E2", "#EFEFEF"]   # alley → open (blue ramp, as in the 09-20 figure)
+M_GREY = {"concrete": "#9AA5AE", "brick": "#B5714F"}
 MM = 1 / 25.4
 
 LCZ = [("부암제1동", "LCZ 1  compact high-rise", "Buam 1",     (25, None), (0.2, 0.4)),
@@ -91,7 +91,7 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
         if m[k] == 0: continue
         pct = 100 * m[k] / tot
         ax_m.barh(y, pct, left=left, height=0.6, color=M_GREY[k], edgecolor="white", lw=0.4)
-        ax_m.text(left + pct / 2, y, str(m[k]), ha="center", va="center", fontsize=6.6, color="white" if k == "concrete" else INK)
+        ax_m.text(left + pct / 2, y, str(m[k]), ha="center", va="center", fontsize=6.6, color="white")
         left += pct
     print(f"{dong:6s} width {cnt}  H {hm:.1f} ({h1:.1f}-{h3:.1f}) {'in' if inside else 'OUT'}  SVF {sm:.2f}  mat {m}")
 
