@@ -59,26 +59,26 @@ bw, bh, gap = 27, 17, 6; step = bh + gap
 xs = [3, 33, 63]; xc = [x + bw / 2 for x in xs]
 y0 = H - 12 - bh; y1 = y0 - step; y2 = y1 - step; y3 = y2 - step; y4 = y3 - step; y5 = y4 - step; y6 = y5 - step
 F = 5.7
-box(ax, xs[0], y0, bw, bh, "360° panoramas", "one per site, 1.5 m;\ntwo fisheye images stitched", "data", fs=F)
-box(ax, xs[1], y0, bw, bh, "Thermal images", "328 radiometric frames;\nemissivity 0.95", "data", fs=F)
+# inputs
+box(ax, xs[0], y0, 57, bh, "360° panoramas", "one per site at 1.5 m; two fisheye images stitched\nwith a per-image attitude correction", "data", fs=F)
 box(ax, xs[2], y0, bw, bh, "Globe + weather meter", "$T_g$ (Ø 0.05 m), $T_a$, RH,\nwind at the reading minute", "data", fs=F)
+# processing
 box(ax, xs[0], y1, bw, bh, "Semantic segmentation", "SegFormer-B0 (ADE20K);\n1° grid, cosine weighting;\nsky + tree + building + rest = 1", "proc", fs=F)
-box(ax, xs[1], y1, bw, bh, "Temperature retrieval", "raw radiance + on-screen\nanchors (OCR); 90th pct of\nsunlit pavement", "proc", fs=F)
-box(ax, xs[2], y1, bw, bh, "Sun / shade reading", "two readers, 76/80 agreed;\nobserver's shadow settles the\nrest; cloud-diffuse = shade", "proc", fs=F)
+box(ax, xs[1], y1, bw, bh, "Sun / shade reading", "two readers, 76/80 agreed;\nobserver's shadow settles the\nrest; cloud-diffuse = shade", "proc", fs=F)
+box(ax, xs[2], y1, bw, bh, "$T_{mrt}$ from the globe", "ISO 7726; D = 0.05 m,\nε = 0.95; forced convection", "proc", fs=F)
+# verification
 box(ax, xs[0], y2, bw, bh, "Verification", "one pose failure → 79 sites;\nresidual class median 0.02", "ver", fs=F)
-box(ax, xs[1], y2, bw, bh, "Verification", "radiance linear in $T^4$;\n324 of 328 frames pass\n(median error 0.14 °C)", "ver", fs=F)
-box(ax, xs[2], y2, bw, bh, "Verification", "globe rise 21.7 K sunlit\nvs 9.4 K shaded, $p$ < 0.001", "ver", fs=F)
+box(ax, xs[1], y2, bw, bh, "Verification", "globe rise 21.7 K sunlit\nvs 9.4 K shaded, $p$ < 0.001", "ver", fs=F)
+box(ax, xs[2], y2, bw, bh, "PET (Höppe MEMI)", "VDI 3787 Part 2;\n35.9–53.8 °C at the 80 sites", "proc", fs=F)
+# outputs
 box(ax, xs[0], y3, bw, bh, "View factors", "SVF, TVF, BVF\n(79 sites)", "data", fs=F)
-box(ax, xs[1], y3, bw, bh, "Surface temperature", "pavement $T_s$\n(80 sites)", "data", fs=F)
-box(ax, xs[2], y3, bw, bh, "Sun or shade", "62 sunlit, 18 shaded", "data", fs=F)
+box(ax, xs[1], y3, bw, bh, "Sun or shade", "62 sunlit, 18 shaded", "data", fs=F)
+box(ax, xs[2], y3, bw, bh, "Reference PET", "the reference for every\ncomparison in the paper", "data", fs=F)
 for x in xc:
     arrow(ax, (x, y0), (x, y1 + bh)); arrow(ax, (x, y1), (x, y2 + bh)); arrow(ax, (x, y2), (x, y3 + bh))
-# reference Tmrt / PET: from globe + weather (down the right margin) and sun/shade
-rx0 = 33; rw0 = 57
-box(ax, rx0, y5, rw0, bh + 3, "Reference $T_{mrt}$ and PET", "$T_{mrt}$: ISO 7726 from the globe;  PET: Höppe MEMI (VDI 3787)\nthe reference for every comparison in the paper", "data", fs=F)
-ax.plot([90, 93, 93], [y0 + bh / 2, y0 + bh / 2, y5 + bh + 3 + 4], color=INK, lw=0.8, zorder=1)
-ax.add_patch(FancyArrowPatch((93, y5 + bh + 3 + 4), (85, y5 + bh + 3), arrowstyle="-|>", mutation_scale=7, color=INK, lw=0.8, zorder=4, shrinkA=0, shrinkB=0, connectionstyle="angle,angleA=90,angleB=0"))
-ax.text(93, (y1 + y3) / 2 + bh / 2, "$T_a$, RH, wind, $T_g$", rotation=90, ha="center", va="center", fontsize=5.6, color=MUTED, bbox=dict(facecolor="white", edgecolor="none", pad=0.3), zorder=5)
+# on-site inputs to the residual layer (row y5)
+box(ax, xs[1], y5, 57, bh + 3, "On-site inputs to the residual layer", "sun or shade (from the panorama),\n$T_a$ and wind (from the weather meter);\nread at the site, not from imagery or a grid", "data", fs=F)
+elbow(ax, (xc[1], y3), (xc[1] + 8, y5 + bh + 3), y3 - 3.5)
 
 # ---- right column
 rx = 101; rw = 86
@@ -95,13 +95,9 @@ box(ax, rx + 45, y4, 41, bh, "PET, physics", "Höppe MEMI; 1.37 met, 0.5 clo\nMA
 arrow(ax, (rx + 20.5, y3), (rx + 20.5, y4 + bh)); arrow(ax, (rx + 41, y4 + bh / 2), (rx + 45, y4 + bh / 2))
 box(ax, rx, y5, rw, bh + 3, "AI residual layer — the only learned step", "ridge regression, α = 20; five standardised predictors: sun/shade, geometric SVF,\n$T_a$, wind, PET$_{phys}$; no coordinates;  PET = PET$_{phys}$ + Δ;  leave-one-neighbourhood-out", "ai", fs=F)
 arrow(ax, (rx + 65.5, y4), (rx + 65.5, y5 + bh + 3))
-box(ax, rx + 13, y6, 60, bh, "Reported PET", "against the reference: MAE 1.8 °C, bias −0.0 °C, $r$ 0.82\n(leave-one-neighbourhood-out); all 63 extreme sites detected", "data", fs=F)
+arrow(ax, (90, y5 + (bh + 3) / 2), (rx, y5 + (bh + 3) / 2), color=RED, lw=0.9)
+box(ax, rx + 13, y6, 60, bh, "Reported PET", "MAE 1.8 °C, bias −0.0 °C, $r$ 0.82 against the reference\n(leave-one-neighbourhood-out); all 63 extreme sites detected", "data", fs=F)
 arrow(ax, (rx + rw / 2, y5), (rx + rw / 2, y6 + bh))
-# on-site inputs to the residual layer: from Sun or shade, down the divider
-ax.plot([90, 97, 97], [y3 + bh / 2, y3 + bh / 2, y5 + (bh + 3) / 2], color=RED, lw=0.8, ls=(0, (3, 2)), zorder=4)
-ax.add_patch(FancyArrowPatch((97, y5 + (bh + 3) / 2), (rx, y5 + (bh + 3) / 2), arrowstyle="-|>", mutation_scale=7, color=RED, lw=0.8, linestyle=(0, (3, 2)), zorder=4, shrinkA=0, shrinkB=0))
-ax.text(97, (y3 + y5) / 2 + 6, "on-site sun/shade, $T_a$, wind → residual layer", rotation=90, ha="center", va="center", fontsize=5.4, color=RED, bbox=dict(facecolor="white", edgecolor="none", pad=0.3), zorder=5)
-
 ly = 5
 box(ax, 20, ly - 3, 16, 6, "", None, "data"); ax.text(38, ly, "input or output data", va="center", fontsize=6.4)
 box(ax, 66, ly - 3, 16, 6, "", None, "proc"); ax.text(84, ly, "processing step", va="center", fontsize=6.4)
