@@ -250,9 +250,15 @@ class MRTConfig:
     # 6.0 → 12.0 으로 편향 +6.3°C → −0.2°C, RMSE 13.0 → 8.5. 도시 보행로 노면의
     # 강한 대류냉각(차량·주변 난류)을 반영. ⚠️ 재질을 아스팔트 대표값으로 고정한 1차값 —
     # 실측 축적 후 재질별 재교정 예정. 되돌리려면 6.0.
-    hc_a: float = 12.0    # 무풍 대류 열전달계수 [W/m²K] (McAdams/Jürges + 실측 보정)
-    hc_b: float = 4.0     # 풍속 민감도 [W/m²K per m/s] → 바람에 의한 표면 냉각
-    ground_storage_fraction: float = 0.25  # 흡수일사 중 지중 전도(저장) 비율 (Oke 도시 주간 근사, ⚠️ 근사)
+    # 2026-09-26 재교정: hc_a 12→28, hc_b 4→2, f_stor 0.25→0.1.
+    #   근거 — 노면온도를 "4방향 열화상 중앙값(발밑 반구 평균)"으로 정의를 통일하자
+    #   8월 80곳으로 맞춘 값이 처음 보는 3월 부산대(MAE 9.5→5.8)에서도 좋아졌고,
+    #   ASOS(잔디) 새벽 재학습 후보(hc 28/6 f 0.1)와도 일치. 9/5 의 hc 12 는 볕 든 방향 노면(시트 Ts)에 맞춘 값이었다.
+    #   체감 LONO(80곳): 물리 단독 4.96→3.78, 물리+AI 1.79→1.75, bias −0.06, 극심 63/63.
+    #   scripts/fit_ground_2season.py --def=med · run_loso_official.py (MRT_OVERRIDE)
+    hc_a: float = 28.0    # 무풍 대류 열전달계수 [W/m²K] (McAdams/Jürges + 실측 보정)
+    hc_b: float = 2.0     # 풍속 민감도 [W/m²K per m/s] → 바람에 의한 표면 냉각
+    ground_storage_fraction: float = 0.1   # 흡수일사 중 지중 전도(저장) 비율 (두 계절 열화상 교정, 2026-09-26)
     env_emissivity: float = 0.90           # 주변(건물·식생) 장파 방사율 (지면이 하늘 대신 보는 부분, ≈기온)
 
 
