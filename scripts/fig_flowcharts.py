@@ -100,7 +100,7 @@ def sbox(x, y, w, h, title, body, f, e, fs=6.1):
 
 sec(H - 5, "1", "Equity-stratified sampling design")
 sbox(4, H - 24, 88, 16, "Busan, 206 administrative dong", "local climate zone 1–5 × ageing vulnerability\n(older density, living alone, welfare rate) → five neighbourhoods", DATA_F, DATA_E)
-sbox(98, H - 24, 88, 16, "Field survey, 80 sites on older adults' routes", "market streets, clinics, senior-centre approaches\nfour clear afternoons, 20–26 August 2026, 11:19–15:06", DATA_F, DATA_E)
+sbox(98, H - 24, 88, 16, "Field survey, 82 visits on older adults' routes", "market streets, clinics, senior-centre approaches; four clear afternoons, 20–26 Aug 2026, 11:19–15:06\n80 sites enter the analysis (one panorama and one globe reading missing)", DATA_F, DATA_E, fs=5.8)
 arrow(ax, (92, H - 16), (98, H - 16))
 sec(H - 32, "2", "Field measurement — reference"); ax.text(104, H - 32, "3", fontsize=9, fontweight="bold", color=SEC, va="center"); ax.text(110, H - 32, "Three information tiers — estimates", fontsize=8.5, fontweight="bold", color=INK, va="center", zorder=6, bbox=dict(facecolor="white", edgecolor="none", pad=1.0))
 sbox(4, H - 58, 88, 22, "Same site, same minute (three instruments)", "globe thermometer → $T_a$, $T_g$, RH, wind → $T_{mrt}$ (ISO 7726) → PET (Höppe MEMI)\n360° camera → SVF, TVF, BVF (79 sites); sun/shade read by two readers (76/80 agreed)\nthermal camera → pavement and wall $T_s$ (323 images)", GREEN_F, GREEN_E)
@@ -116,7 +116,7 @@ sbox(tx, H - 92, tw, 16, "Tier 3   imagery-free pathway (physics)", "gridded wea
 sbox(tx, H - 112, tw, 16, "Diagnostic runs (same engine, inputs swapped)", "+ on-site weather → MAE 6.4 °C;  + observed sun/shade → 5.1 °C\nisolates what each input is worth; the observed sun/shade is not a deployable input", VER_F, VER_E, fs=5.9)
 ax.add_patch(FancyBboxPatch((tx, H - 134), tw, 18, boxstyle="round,pad=0,rounding_size=0.6", facecolor=AI_F, edgecolor=RED, lw=1.6, zorder=2))
 ax.text(tx + 2.5, H - 119.2, "Residual correction layer — the only learned step", fontsize=7.0, fontweight="bold", color=RED, va="center", zorder=3)
-ax.text(tx + 2.5, H - 122.5, "ridge, α = 20 · five predictors: sun/shade, geometric SVF, $T_a$, wind, PET$_{phys}$ · no coordinates\nleave-one-neighbourhood-out: MAE 1.8 °C (1.8 with imagery, 1.9 without) · 63 of 63 extreme sites detected", fontsize=5.9, color="#3A3A3A", va="top", linespacing=1.35, zorder=3)
+ax.text(tx + 2.5, H - 122.5, "ridge, α = 20 · five predictors: sun/shade, geometric SVF, $T_a$, wind, PET$_{phys}$; no coordinates\nleave-one-neighbourhood-out: MAE 1.8 °C (1.8 with imagery, 1.9 without) · all 63 extreme detected", fontsize=5.9, color="#3A3A3A", va="top", linespacing=1.35, zorder=3)
 for ya, yb in ((H - 52, H - 56), (H - 72, H - 76), (H - 92, H - 96), (H - 112, H - 116)):
     arrow(ax, (tx + tw / 2, ya), (tx + tw / 2, yb))
 arrow(ax, (142, H - 24), (142, H - 36))
