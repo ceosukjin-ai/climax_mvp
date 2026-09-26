@@ -28,22 +28,21 @@ panels = [("Air temperature (°C)", "Ta", "Weather meter", 1), ("Relative humidi
           ("Globe temperature (°C)", "Tg", "Globe thermometer", 1), ("Mean radiant temperature (°C)", "Tmrt", "Globe thermometer", 1), ("PET (°C)", "PET", "Globe thermometer", 1),
           ("Sky view factor", "SVF", "360° camera", 2), ("Tree view factor", "TVF", "360° camera", 2), ("Pavement surface temperature (°C)", "Ts", "Thermal camera", 1)]
 
-fig, axes = plt.subplots(3, 3, figsize=(190 * MM, 105 * MM))
-fig.subplots_adjust(left=0.04, right=0.99, top=0.93, bottom=0.08, wspace=0.18, hspace=0.95)
+fig, axes = plt.subplots(3, 3, figsize=(190 * MM, 110 * MM))
+fig.subplots_adjust(left=0.05, right=0.99, top=0.96, bottom=0.07, wspace=0.16, hspace=0.75)
 rng = np.random.default_rng(7)
 for ax, (title, col, inst, dec) in zip(axes.ravel(), panels):
     x = d[col].dropna().values; n = len(x)
     q1, med, q3 = np.percentile(x, [25, 50, 75])
     ax.axvspan(q1, q3, color=C[inst], alpha=0.16, lw=0, zorder=0)
-    ax.axvline(med, color=INK, lw=1.4, zorder=3)
+    ax.axvline(med, color=C[inst], lw=0.9, zorder=3)
     ax.scatter(x, rng.uniform(-0.55, 0.55, n), s=9, color=C[inst], edgecolor="white", lw=0.3, zorder=2, alpha=0.9)
-    ax.set_ylim(-1, 1); ax.set_yticks([])
+    ax.set_ylim(-1, 1); ax.set_yticks([]); ax.set_ylabel("sites", fontsize=7, color=MUTED); ax.set_xlabel(title, fontsize=7.5)
     lo, hi = x.min(), x.max(); pad = (hi - lo) * 0.06
     ax.set_xlim(lo - pad, hi + pad)
-    ax.text(0.0, 1.30, title, transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="bold", color=INK)
-    ax.text(0.0, 1.06, inst, transform=ax.transAxes, ha="left", va="bottom", fontsize=6.8, color=C[inst], fontweight="bold")
+    ax.text(0.0, 1.04, inst, transform=ax.transAxes, ha="left", va="bottom", fontsize=7, color=C[inst], fontweight="bold")
     extra = f" · n = {n}" if n < 80 else ""
-    ax.text(1.0, 1.06, f"median {med:.{dec}f} · {lo:.{dec}f}–{hi:.{dec}f}{extra}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=MUTED)
+    ax.text(1.0, 1.04, f"median {med:.{dec}f} · {lo:.{dec}f}–{hi:.{dec}f}{extra}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=MUTED)
     print(f"{col:5s} n {n:2d} median {med:.{dec}f} IQR {q1:.{dec}f}-{q3:.{dec}f} range {lo:.{dec}f}-{hi:.{dec}f}")
 print("TVF < 0.005:", int((d.TVF < 0.005).sum()), "/", int(d.TVF.notna().sum()))
 for e in ("pdf", "eps", "png"):
