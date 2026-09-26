@@ -48,9 +48,9 @@ def wcls(w):
     return 0 if w < 6 else (1 if w < 12 else 2)
 d["wc"] = d.width_m.map(wcls)
 
-fig, axes = plt.subplots(1, 4, figsize=(190 * MM, 66 * MM), sharey=True, gridspec_kw={"width_ratios": [1.0, 1.25, 1.1, 1.0]})
-fig.subplots_adjust(left=0.165, right=0.99, top=0.85, bottom=0.36, wspace=0.10)
-ys = np.arange(5)[::-1]
+fig, axes = plt.subplots(1, 4, figsize=(190 * MM, 78 * MM), sharey=True, gridspec_kw={"width_ratios": [1.0, 1.25, 1.1, 1.0]})
+fig.subplots_adjust(left=0.165, right=0.99, top=0.87, bottom=0.33, wspace=0.10)
+ys = np.arange(5)[::-1] * 1.45
 ax_w, ax_h, ax_s, ax_m = axes
 
 for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
@@ -69,7 +69,9 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.add_patch(Rectangle((q05, y - 0.30), q95 - q05, 0.60, facecolor=FAB3, edgecolor="none", zorder=1))
     ax_h.text(mx * 1.10, y - 0.02, f"{mx:.0f}", ha="left", va="center", fontsize=6.2, color=MUTED, zorder=7, bbox=dict(facecolor="white", edgecolor="none", pad=0.6))
     lo, hi = hr; hi_d = 200 if hi is None else hi
-    ax_h.add_patch(Rectangle((lo, y - 0.30), hi_d - lo, 0.60, facecolor="none", edgecolor=INK, lw=0.7, zorder=2))
+    ax_h.plot([lo, hi_d], [y - 0.40, y - 0.40], color=INK, lw=0.9, zorder=2, solid_capstyle="butt")
+    ax_h.plot([lo, lo], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
+    if hi is not None: ax_h.plot([hi, hi], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
     H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.min(), H.max()
     inside = hm >= lo and (hi is None or hm <= hi)
     ax_h.plot([h1, h3], [y, y], color=RED, lw=3.2, zorder=4, solid_capstyle="butt")
@@ -77,7 +79,8 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.text(np.sqrt(h1 * h3), y + 0.34, f"{h1:.1f}–{h3:.0f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
     # (c) SVF
     lo, hi = sr
-    ax_s.add_patch(Rectangle((lo, y - 0.30), hi - lo, 0.60, facecolor="none", edgecolor=INK, lw=0.7, zorder=0))
+    ax_s.plot([lo, hi], [y - 0.40, y - 0.40], color=INK, lw=0.9, zorder=2, solid_capstyle="butt")
+    for xx in (lo, hi): ax_s.plot([xx, xx], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
     S = q.SVF.dropna(); sm, s1, s3 = S.median(), S.min(), S.max()
     ax_s.plot([s1, s3], [y, y], color=RED, lw=3.2, zorder=3, solid_capstyle="butt")
     ax_s.scatter([sm], [y], s=30, facecolor="white", edgecolor=RED, lw=1.2, zorder=4)
@@ -98,14 +101,14 @@ ax_h.xaxis.set_minor_locator(mpl.ticker.NullLocator())
 ax_s.set_xlim(0, 1.0); ax_s.set_xticks([0, 0.2, 0.4, 0.6, 0.8, 1.0]); ax_s.set_xlabel("sky view factor")
 ax_m.set_xlim(0, 100); ax_m.set_xticks([0, 25, 50, 75, 100]); ax_m.set_xlabel("share of sites (%)")
 for ax, t in zip(axes, ["(a)  Street width", "(b)  Building height", "(c)  Sky view factor", "(d)  Facade material"]):
-    ax.set_ylim(-0.6, 4.75)
+    ax.set_ylim(-0.75, 4 * 1.45 + 0.85)
     ax.text(0.0, 1.03, t, transform=ax.transAxes, ha="left", va="bottom", fontsize=8.2, fontweight="bold", color=INK)
 ax_w.set_yticks(ys); ax_w.set_yticklabels([f"{lab}\n{en}" for _, lab, en, *_ in LCZ], fontsize=7, linespacing=1.15)
 ax_w.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
 h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: range and median (b: canyon height; c: sky view factor)"),
-       Rectangle((0, 0), 1, 1, facecolor="none", edgecolor=INK, lw=0.7, label="range defining the assigned LCZ class (Stewart and Oke, 2012); open-ended for high-rise"),
+       Line2D([], [], color=INK, lw=0.9, marker="|", markersize=5, markeredgewidth=0.9, label="range defining the assigned LCZ class (Stewart and Oke, 2012); open-ended for high-rise"),
        Rectangle((0, 0), 1, 1, facecolor=FAB3, edgecolor="none", label="all buildings within 60 m of the sites, 5–95 %"),
        Rectangle((0, 0), 1, 1, facecolor=FAB1, edgecolor="none", label="all buildings, full range")]
 h_m = [Rectangle((0, 0), 1, 1, facecolor=M_GREY[k], edgecolor="none", label=k) for k in ("concrete", "brick")]
