@@ -80,7 +80,7 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.quantile(.25), H.quantile(.75)
     inside = hm >= lo and (hi is None or hm <= hi)
     ax_h.plot([h1, h3], [y, y], color=RED, lw=3.2, zorder=4, solid_capstyle="butt")
-    ax_h.scatter([hm], [y], s=30, facecolor=RED if not inside else "white", edgecolor=RED, lw=1.2, zorder=5)
+    ax_h.scatter([hm], [y], s=30, facecolor="white", edgecolor=RED, lw=1.2, zorder=5)
     ax_h.text(hm, y - 0.36, f"{hm:.1f}", ha="center", va="top", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
     # (c) SVF
     lo, hi = sr
@@ -90,7 +90,7 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_s.plot([lo, hi], [yb, yb], color=LCZC, lw=1.1, zorder=6, solid_capstyle="butt")
     for xx in (lo, hi): ax_s.plot([xx, xx], [yb - 0.09, yb + 0.09], color=LCZC, lw=1.1, zorder=6)
     ax_s.plot([s1, s3], [y, y], color=RED, lw=3.2, zorder=3, solid_capstyle="butt")
-    ax_s.scatter([sm], [y], s=30, facecolor=RED if not s_in else "white", edgecolor=RED, lw=1.2, zorder=4)
+    ax_s.scatter([sm], [y], s=30, facecolor="white", edgecolor=RED, lw=1.2, zorder=4)
     ax_s.text(sm, y - 0.36, f"{sm:.2f}", ha="center", va="top", fontsize=6.8, color=RED, fontweight="bold", zorder=5)
     # (d) material
     m = MAT[dong]; tot = sum(m.values()); left = 0
@@ -115,7 +115,7 @@ for ax in axes: ax.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
 h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: median and interquartile range (b: canyon height; c: sky view factor)"),
-       Line2D([], [], color=LCZC, lw=1.1, marker="|", markersize=5, markeredgewidth=1.1, label="range defining the assigned LCZ class (Stewart and Oke, 2012); arrow: open-ended — filled circle: median outside"),
+       Line2D([], [], color=LCZC, lw=1.1, marker="|", markersize=5, markeredgewidth=1.1, label="range defining the assigned LCZ class (Stewart and Oke, 2012); arrow: open-ended"),
        Rectangle((0, 0), 1, 1, facecolor=FAB3, edgecolor="none", label="all buildings within 60 m of the sites, 5–95 %"),
        Rectangle((0, 0), 1, 1, facecolor=FAB1, edgecolor="none", label="all buildings, full range")]
 h_m = [Rectangle((0, 0), 1, 1, facecolor=M_GREY[k], edgecolor="none", label=k) for k in ("concrete", "brick")]
