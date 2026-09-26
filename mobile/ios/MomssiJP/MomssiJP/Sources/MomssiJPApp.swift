@@ -23,12 +23,16 @@ enum Config {
     static let webURL = URL(string: "https://api.climaxapp.kr/jp/home.html")!
     /// 앱에서 열렸음을 웹에 알린다 — 웹은 이 값으로 「홈 화면에 추가」 안내를 감춘다.
     static let appFlag = "?app=ios"
+    /// 배경 알림이 서버에 직접 물을 때 쓴다(웹 화면 없이).
+    static let apiBase = "https://api.climaxapp.kr"
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ app: UIApplication,
                      didFinishLaunchingWithOptions opts: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         PushBridge.shared.configure()
+        // 걷는 동안 알림이 켜져 있으면 다시 건다 — 위치 이벤트로 앱이 깨어난 경우도 여기로 온다.
+        LocationBridge.shared.resumeIfEnabled()
         return true
     }
 

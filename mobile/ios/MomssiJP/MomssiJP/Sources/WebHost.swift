@@ -56,8 +56,9 @@ struct WebHostView: UIViewRepresentable {
                 LocationBridge.shared.requestWhenInUse()
             case "stopLocation":                    // 웹: 화면 숨김·추적 끄기
                 LocationBridge.shared.stopWhenInUse()
-            case "startBackground":                 // 웹: 보호/추적 켜기
-                LocationBridge.shared.startSignificant()
+            case "startBackground":                 // 웹: 걷는 동안 알림 켜기 (나이·질환·언어 동봉)
+                PushBridge.shared.requestAuthorization()
+                LocationBridge.shared.startSignificant(body)
             case "stopBackground":
                 LocationBridge.shared.stopSignificant()
             case "requestPush":
