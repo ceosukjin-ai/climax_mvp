@@ -72,16 +72,16 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.plot([lo, hi_d], [y - 0.40, y - 0.40], color=INK, lw=0.9, zorder=2, solid_capstyle="butt")
     ax_h.plot([lo, lo], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
     if hi is not None: ax_h.plot([hi, hi], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
-    H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.min(), H.max()
+    H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.quantile(.25), H.quantile(.75)
     inside = hm >= lo and (hi is None or hm <= hi)
     ax_h.plot([h1, h3], [y, y], color=RED, lw=3.2, zorder=4, solid_capstyle="butt")
     ax_h.scatter([hm], [y], s=30, facecolor="white", edgecolor=RED, lw=1.2, zorder=5)
-    ax_h.text(np.sqrt(h1 * h3), y + 0.34, f"{h1:.1f}–{h3:.0f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
+    ax_h.text(np.sqrt(h1 * h3), y + 0.34, f"{hm:.1f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=6)
     # (c) SVF
     lo, hi = sr
     ax_s.plot([lo, hi], [y - 0.40, y - 0.40], color=INK, lw=0.9, zorder=2, solid_capstyle="butt")
     for xx in (lo, hi): ax_s.plot([xx, xx], [y - 0.47, y - 0.33], color=INK, lw=0.9, zorder=2)
-    S = q.SVF.dropna(); sm, s1, s3 = S.median(), S.min(), S.max()
+    S = q.SVF.dropna(); sm, s1, s3 = S.median(), S.quantile(.25), S.quantile(.75)
     ax_s.plot([s1, s3], [y, y], color=RED, lw=3.2, zorder=3, solid_capstyle="butt")
     ax_s.scatter([sm], [y], s=30, facecolor="white", edgecolor=RED, lw=1.2, zorder=4)
     ax_s.text(sm, y + 0.34, f"{sm:.2f}", ha="center", va="bottom", fontsize=6.8, color=RED, fontweight="bold", zorder=5)
@@ -107,7 +107,7 @@ ax_w.set_yticks(ys); ax_w.set_yticklabels([f"{lab}\n{en}" for _, lab, en, *_ in 
 for ax in axes: ax.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
-h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: range and median (b: canyon height; c: sky view factor)"),
+h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: median and interquartile range (b: canyon height; c: sky view factor)"),
        Line2D([], [], color=INK, lw=0.9, marker="|", markersize=5, markeredgewidth=0.9, label="range defining the assigned LCZ class (Stewart and Oke, 2012); open-ended for high-rise"),
        Rectangle((0, 0), 1, 1, facecolor=FAB3, edgecolor="none", label="all buildings within 60 m of the sites, 5–95 %"),
        Rectangle((0, 0), 1, 1, facecolor=FAB1, edgecolor="none", label="all buildings, full range")]
