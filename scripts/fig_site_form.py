@@ -23,11 +23,11 @@ mpl.rcParams.update({
     "axes.linewidth": 0.6, "xtick.major.width": 0.6, "ytick.major.width": 0.6, "xtick.major.size": 2.5, "ytick.major.size": 2.5,
     "axes.spines.top": True, "axes.spines.right": True, "xtick.direction": "in", "ytick.direction": "in",
     "figure.dpi": 200, "savefig.dpi": 1200, "pdf.fonttype": 42, "ps.fonttype": 42})
-INK, MUTED, SURF, RED = "#1A1A1A", "#5E5E5E", "#CFCFCD", "#C0504D"
-FAB1, FAB2, FAB3 = "#EDEDEB", "#E4E4E2", "#CFCFCD"
+INK, MUTED, SURF, RED = "#1A1A1A", "#5E5E5E", "#CFCFCD", "#D9827A"   # pastel red for the sites
+FAB1, FAB2, FAB3 = "#F1F1EF", "#E8E8E6", "#D6D6D4"
 LCZC = "#FBEFCF"                                  # LCZ class range: pale amber background                 # all buildings: full range / 5–95 %
-W_GREY = ["#3F5F7F", "#7C9CBF", "#C6D4E2", "#EFEFEF"]   # alley → open (blue ramp, as in the 09-20 figure)
-M_GREY = {"concrete": "#9AA5AE", "brick": "#B5714F"}
+W_GREY = ["#7D9BBD", "#A9C0D9", "#D3DEEA", "#F1F1EF"]   # alley → open (blue ramp, as in the 09-20 figure)
+M_GREY = {"concrete": "#B4BEC7", "brick": "#D19A7C"}
 MM = 1 / 25.4
 
 LCZ = [("부암제1동", "LCZ 1  compact high-rise", "Buam 1",     (25, None), (0.2, 0.4)),
@@ -62,7 +62,7 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
         if c == 0: continue
         pct = 100 * c / len(q)
         ax_w.barh(y, pct, left=left, height=0.6, color=W_GREY[k], edgecolor="white", lw=0.4)
-        ax_w.text(left + pct / 2, y, str(c), ha="center", va="center", fontsize=6.6, color="white" if k < 2 else INK)
+        ax_w.text(left + pct / 2, y, str(c), ha="center", va="center", fontsize=6.6, color="white" if k < 1 else INK)
         left += pct
     # (b) height (log axis)
     n, mn, q05, med, q95, mx = NEIGH_H[dong]
@@ -71,12 +71,12 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     ax_h.text(mx * 1.10, y - 0.02, f"{mx:.0f}", ha="left", va="center", fontsize=6.2, color=MUTED, zorder=7, bbox=dict(facecolor="white", edgecolor="none", pad=0.6))
     lo, hi = hr; hi_d = 200 if hi is None else hi
     yb = y + 0.42
-    ax_h.plot([lo, hi_d], [yb, yb], color=INK, lw=0.9, zorder=6, solid_capstyle="butt", clip_on=True)
-    ax_h.plot([lo, lo], [yb - 0.08, yb + 0.08], color=INK, lw=0.9, zorder=6)
+    ax_h.plot([lo, hi_d], [yb, yb], color=MUTED, lw=0.9, zorder=6, solid_capstyle="butt", clip_on=True)
+    ax_h.plot([lo, lo], [yb - 0.08, yb + 0.08], color=MUTED, lw=0.9, zorder=6)
     if hi is None:
-        ax_h.annotate("", xy=(160, yb), xytext=(120, yb), arrowprops=dict(arrowstyle="-|>", color=INK, lw=0.9, mutation_scale=6), zorder=6)
+        ax_h.annotate("", xy=(160, yb), xytext=(120, yb), arrowprops=dict(arrowstyle="-|>", color=MUTED, lw=0.9, mutation_scale=6), zorder=6)
     else:
-        ax_h.plot([hi, hi], [yb - 0.08, yb + 0.08], color=INK, lw=0.9, zorder=6)
+        ax_h.plot([hi, hi], [yb - 0.08, yb + 0.08], color=MUTED, lw=0.9, zorder=6)
     H = q.H_m.dropna(); hm, h1, h3 = H.median(), H.quantile(.25), H.quantile(.75)
     inside = hm >= lo and (hi is None or hm <= hi)
     ax_h.plot([h1, h3], [y, y], color=RED, lw=3.2, zorder=4, solid_capstyle="butt")
@@ -87,8 +87,8 @@ for y, (dong, lab, en, hr, sr) in zip(ys, LCZ):
     S = q.SVF.dropna(); sm, s1, s3 = S.median(), S.quantile(.25), S.quantile(.75)
     s_in = lo <= sm <= hi
     yb = y + 0.42
-    ax_s.plot([lo, hi], [yb, yb], color=INK, lw=0.9, zorder=6, solid_capstyle="butt")
-    for xx in (lo, hi): ax_s.plot([xx, xx], [yb - 0.08, yb + 0.08], color=INK, lw=0.9, zorder=6)
+    ax_s.plot([lo, hi], [yb, yb], color=MUTED, lw=0.9, zorder=6, solid_capstyle="butt")
+    for xx in (lo, hi): ax_s.plot([xx, xx], [yb - 0.08, yb + 0.08], color=MUTED, lw=0.9, zorder=6)
     ax_s.plot([s1, s3], [y, y], color=RED, lw=3.2, zorder=3, solid_capstyle="butt")
     ax_s.scatter([sm], [y], s=30, facecolor=RED if not s_in else "white", edgecolor=RED, lw=1.2, zorder=4)
     ax_s.text(sm, y - 0.36, f"{sm:.2f}", ha="center", va="top", fontsize=6.8, color=RED, fontweight="bold", zorder=5)
@@ -115,7 +115,7 @@ for ax in axes: ax.tick_params(axis="y", length=0)
 
 h_w = [Rectangle((0, 0), 1, 1, facecolor=W_GREY[k], edgecolor="none", label=WNAME[k]) for k in range(4)]
 h_h = [Line2D([], [], marker="o", color=RED, lw=3.2, markerfacecolor="white", markersize=5, markeredgecolor=RED, markeredgewidth=1.2, label="at the sites: median and interquartile range (b: canyon height; c: sky view factor)"),
-       Line2D([], [], color=INK, lw=0.9, marker="|", markersize=5, markeredgewidth=0.9, label="range defining the assigned LCZ class (Stewart and Oke, 2012); arrow: open-ended — filled circle: median outside"),
+       Line2D([], [], color=MUTED, lw=0.9, marker="|", markersize=5, markeredgewidth=0.9, label="range defining the assigned LCZ class (Stewart and Oke, 2012); arrow: open-ended — filled circle: median outside"),
        Rectangle((0, 0), 1, 1, facecolor=FAB3, edgecolor="none", label="all buildings within 60 m of the sites, 5–95 %"),
        Rectangle((0, 0), 1, 1, facecolor=FAB1, edgecolor="none", label="all buildings, full range")]
 h_m = [Rectangle((0, 0), 1, 1, facecolor=M_GREY[k], edgecolor="none", label=k) for k in ("concrete", "brick")]
