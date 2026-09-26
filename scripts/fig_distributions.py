@@ -17,7 +17,7 @@ mpl.rcParams.update({
     "axes.spines.top": True, "axes.spines.right": True, "xtick.direction": "in", "ytick.direction": "in",
     "figure.dpi": 200, "savefig.dpi": 1200, "pdf.fonttype": 42, "ps.fonttype": 42})
 INK, MUTED = "#1A1A1A", "#5E5E5E"
-C = {"Weather meter": "#2E75B6", "Globe thermometer": "#C0504D", "360° camera": "#2A9D8F", "Thermal camera": "#7B4FB5"}
+C = {"Weather meter": "#2E75B6", "Globe thermometer": "#C0504D", "360° camera": "#2A9D8F", "Thermal camera": "#E08A2E"}
 MM = 1 / 25.4
 
 d = pd.read_csv(f"{DATA}/scs_master_80.csv", encoding="utf-8-sig")
@@ -40,6 +40,10 @@ for ax, (title, col, inst, dec) in zip(axes.ravel(), panels):
     ax.set_ylim(-1, 1); ax.set_yticks([]); ax.set_ylabel("sites", fontsize=7, color=MUTED); ax.set_xlabel(title, fontsize=7.5)
     lo, hi = x.min(), x.max(); pad = (hi - lo) * 0.06
     ax.set_xlim(lo - pad, hi + pad)
+    loc = mpl.ticker.MaxNLocator(nbins=6, steps=[1, 2, 2.5, 5, 10]); ax.xaxis.set_major_locator(loc)
+    t = loc.tick_values(lo - pad, hi + pad); t = t[(t >= lo - pad - 1e-9)]
+    if t[-1] < hi + pad: t = np.append(t, t[-1] + (t[1] - t[0]))
+    ax.set_xticks(t); ax.set_xlim(t[0] if t[0] < lo else lo - pad, t[-1])
     ax.text(0.0, 1.04, inst, transform=ax.transAxes, ha="left", va="bottom", fontsize=7, color=C[inst], fontweight="bold")
     extra = f" · n = {n}" if n < 80 else ""
     ax.text(1.0, 1.04, f"median {med:.{dec}f} · {lo:.{dec}f}–{hi:.{dec}f}{extra}", transform=ax.transAxes, ha="right", va="bottom", fontsize=6.8, color=MUTED)
