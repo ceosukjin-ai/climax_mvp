@@ -173,6 +173,15 @@ async def main() -> None:
             lono[i] = phys[i] + d
             confs[i] = c
 
+    # --- 2b. 전체 80점 적합 = 배포할 잔차 계수 (2026-09-26). 물리를 바꾸면 이 값으로 pet_residual.py 를 갱신한다.
+    m, s, coef, b0 = ridge_fit(X, y)
+    print("=== 배포용 잔차 계수 (80점 전체 적합) — pet_residual.py 에 그대로 붙일 것 ===")
+    print(f"_COEF = [{', '.join(f'{c:.6f}' for c in coef)}]")
+    print(f"_INTERCEPT = {b0:.6f}")
+    print(f"_MEAN = [{', '.join(f'{c:.6f}' for c in m)}]")
+    print(f"_STD = [{', '.join(f'{c:.6f}' for c in s)}]")
+    print()
+
     # --- 3. 배포 계수를 그대로 쓴 경우 (표본 내 — 참고용)
     ship = []
     for i, r in enumerate(rows):
