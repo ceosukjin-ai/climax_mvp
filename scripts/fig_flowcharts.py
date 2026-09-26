@@ -49,60 +49,70 @@ def elbow(ax, p0, p1, ymid, color=INK, ls="-", lw=0.8):
 
 
 # ============================================================ Fig: pipeline
-W, H = 190, 178
+W, H = 190, 176
 fig = plt.figure(figsize=(W * MM, H * MM)); ax = fig.add_axes([0, 0, 1, 1]); ax.set_xlim(0, W); ax.set_ylim(0, H); ax.axis("off")
-ax.text(47, H - 5, "Field reference  —  80 sites, same site, same minute", ha="center", va="center", fontsize=8.5, fontweight="bold", color=INK)
-ax.text(143, H - 5, "Imagery-free service  —  no street view anywhere in the chain", ha="center", va="center", fontsize=8.5, fontweight="bold", color=INK)
-ax.plot([97, 97], [12, H - 10], color="#C8C8C6", lw=0.6, ls=(0, (3, 3)))
+bh, gap = 16, 6; step = bh + gap
+top = H - 3; hb = 7                                   # lane header bar
+rows = [top - hb - 4 - bh - i * step for i in range(7)]     # y of row i (bottom of box)
+y0, y1, y2, y3, y4, y5, y6 = rows
+F, T = 5.8, 7.2; TN = 6.7
 
-bw, bh, gap = 27, 17, 6; step = bh + gap
-xs = [3, 33, 63]; xc = [x + bw / 2 for x in xs]
-y0 = H - 12 - bh; y1 = y0 - step; y2 = y1 - step; y3 = y2 - step; y4 = y3 - step; y5 = y4 - step; y6 = y5 - step
-F = 5.7
-# inputs
-box(ax, xs[0], y0, 57, bh, "360° panoramas", "one per site at 1.5 m; two fisheye images stitched\nwith a per-image attitude correction", "data", fs=F)
-box(ax, xs[2], y0, bw, bh, "Globe + weather meter", "$T_g$ (Ø 0.05 m), $T_a$, RH,\nwind at the reading minute", "data", fs=F)
-# processing
-box(ax, xs[0], y1, bw, bh, "Semantic segmentation", "SegFormer-B0 (ADE20K);\n1° grid, cosine weighting;\nsky + tree + building + rest = 1", "proc", fs=F)
-box(ax, xs[1], y1, bw, bh, "Sun / shade reading", "two readers, 76/80 agreed;\nobserver's shadow settles the\nrest; cloud-diffuse = shade", "proc", fs=F)
-box(ax, xs[2], y1, bw, bh, "$T_{mrt}$ from the globe", "ISO 7726; D = 0.05 m,\nε = 0.95; forced convection", "proc", fs=F)
-# verification
-box(ax, xs[0], y2, bw, bh, "Verification", "one pose failure → 79 sites;\nresidual class median 0.02", "ver", fs=F)
-box(ax, xs[1], y2, bw, bh, "Verification", "globe rise 21.7 K sunlit\nvs 9.4 K shaded, $p$ < 0.001", "ver", fs=F)
-box(ax, xs[2], y2, bw, bh, "PET (Höppe MEMI)", "VDI 3787 Part 2;\n35.9–53.8 °C at the 80 sites", "proc", fs=F)
-# outputs
-box(ax, xs[0], y3, bw, bh, "View factors", "SVF, TVF, BVF\n(79 sites)", "data", fs=F)
-box(ax, xs[1], y3, bw, bh, "Sun or shade", "62 sunlit, 18 shaded", "data", fs=F)
-box(ax, xs[2], y3, bw, bh, "Reference PET", "the reference for every\ncomparison in the paper", "data", fs=F)
+def lane(x0, x1, ybot, title, sub, col):
+    ax.add_patch(FancyBboxPatch((x0, ybot), x1 - x0, top - ybot, boxstyle="round,pad=0,rounding_size=1.2", facecolor="#F5F6F8", edgecolor="none", zorder=0))
+    ax.add_patch(FancyBboxPatch((x0, top - hb), x1 - x0, hb, boxstyle="round,pad=0,rounding_size=1.2", facecolor=col, edgecolor="none", zorder=1))
+    ax.add_patch(plt.Rectangle((x0, top - hb), x1 - x0, hb / 2, facecolor=col, edgecolor="none", zorder=1))
+    ax.text(x0 + 3, top - hb / 2, title, ha="left", va="center", fontsize=8.2, fontweight="bold", color="white", zorder=3)
+    ax.text(x1 - 3, top - hb / 2, sub, ha="right", va="center", fontsize=6.4, color="white", zorder=3)
+
+L0, L1, R0, R1 = 3, 95, 99, 187
+lane(L0, L1, y4 - 3, "A   Field reference", "80 sites · same site, same minute", BLUE)
+lane(R0, R1, y6 - 2.5, "B   Imagery-free service", "no street view anywhere in the chain", "#3D3D3D")
+
+# ---- lane A
+xs = [6, 35.5, 65]; bw = 27; xc = [x + bw / 2 for x in xs]
+box(ax, xs[0], y0, 56, bh, "360° panoramas", "one per site at 1.5 m; two fisheye images\nstitched with a per-image attitude correction", "data", fs=F, tfs=T)
+box(ax, xs[2], y0, bw, bh, "Globe + weather meter", "$T_g$ (Ø 0.05 m), $T_a$, RH, wind\nat the reading minute", "data", fs=F, tfs=TN)
+box(ax, xs[0], y1, bw, bh, "Semantic segmentation", "SegFormer-B0 (ADE20K);\n1° grid, cosine weighting;\nsky + tree + building + rest = 1", "proc", fs=F, tfs=TN)
+box(ax, xs[1], y1, bw, bh, "Sun / shade reading", "two readers, $\\bf{76/80}$ agreed;\nobserver's shadow settles the\nrest; cloud-diffuse = shade", "proc", fs=F, tfs=TN)
+box(ax, xs[2], y1, bw, bh, "$T_{mrt}$ from the globe", "ISO 7726; D = 0.05 m,\nε = 0.95; forced convection", "proc", fs=F, tfs=TN)
+box(ax, xs[0], y2, bw, bh, "Verification", "one pose failure → 79 sites;\nresidual class median $\\bf{0.02}$", "ver", fs=F, tfs=T)
+box(ax, xs[1], y2, bw, bh, "Verification", "globe rise $\\bf{21.7}$ K sunlit vs\n$\\bf{9.4}$ K shaded, $p$ < 0.001", "ver", fs=F, tfs=T)
+box(ax, xs[2], y2, bw, bh, "PET (Höppe MEMI)", "VDI 3787 Part 2;\n35.9–53.8 °C at the 80 sites", "proc", fs=F, tfs=TN)
+box(ax, xs[0], y3, bw, bh, "View factors", "SVF, TVF, BVF\n(79 sites)", "data", fs=F, tfs=TN)
+box(ax, xs[1], y3, bw, bh, "Sun or shade", "$\\bf{62}$ sunlit, $\\bf{18}$ shaded", "data", fs=F, tfs=TN)
+box(ax, xs[2], y3, bw, bh, "Reference PET", "the reference for every\ncomparison in the paper", "data", fs=F, tfs=TN)
 for x in xc:
     arrow(ax, (x, y0), (x, y1 + bh)); arrow(ax, (x, y1), (x, y2 + bh)); arrow(ax, (x, y2), (x, y3 + bh))
-# on-site inputs to the residual layer (row y5)
-box(ax, xs[1], y5, 57, bh + 3, "On-site inputs to the residual layer", "sun or shade (from the panorama),\n$T_a$ and wind (from the weather meter);\nread at the site, not from imagery or a grid", "data", fs=F)
-elbow(ax, (xc[1], y3), (xc[1] + 8, y5 + bh + 3), y3 - 3.5)
+box(ax, xs[1], y4, 56, bh, "On-site inputs to the residual layer", "sun or shade (panorama), $T_a$ and wind (weather meter)\n— read at the site, not from imagery or a grid", "data", fs=F, tfs=T)
+arrow(ax, (xc[1], y3), (xc[1], y4 + bh))
+# link A → B: the only place field data enters the service chain
+gx = (L1 + R0) / 2
+ax.plot([xs[1] + 56, gx, gx], [y4 + bh / 2, y4 + bh / 2, y5 + bh / 2], color=RED, lw=1.0, zorder=4, solid_capstyle="butt")
+arrow(ax, (gx, y5 + bh / 2), (R0 + 3, y5 + bh / 2), color=RED, lw=1.0)
 
-# ---- right column
-rx = 101; rw = 86
-box(ax, rx, y0, 41, bh, "Building polygons", "national register; heights\nfloors × 3.018 m + 0.902 m", "data", fs=F)
-box(ax, rx + 45, y0, 41, bh, "Satellite canopy + weather", "Meta/WRI canopy height (30 m);\ngridded $T_a$, RH, wind", "data", fs=F)
-box(ax, rx, y1, rw, bh, "Geometric view factors", "ray casting in 5° steps to the building skyline; tree canopy as a\ntransmissive layer; SVF and BVF at any point — no imagery needed", "proc", fs=F)
-arrow(ax, (rx + 20.5, y0), (rx + 20.5, y1 + bh)); arrow(ax, (rx + 65.5, y0), (rx + 65.5, y1 + bh))
-box(ax, rx, y2, rw, bh, "Verification", "geometric against the panorama SVF at the 79 field sites:\nMAE 0.112, bias +0.046, $r$ 0.70", "ver", fs=F)
+# ---- lane B
+rx, rw = R0 + 3, R1 - R0 - 6; hw = (rw - 4) / 2
+box(ax, rx, y0, hw, bh, "Building polygons", "national register; heights\nfloors × 3.018 m + 0.902 m", "data", fs=F, tfs=T)
+box(ax, rx + hw + 4, y0, hw, bh, "Satellite canopy + weather", "Meta/WRI canopy height (30 m);\ngridded $T_a$, RH, wind", "data", fs=F, tfs=T)
+box(ax, rx, y1, rw, bh, "Geometric view factors", "ray casting in 5° steps to the building skyline; tree canopy as a transmissive\nlayer; SVF and BVF at any point — no imagery needed", "proc", fs=F, tfs=T)
+arrow(ax, (rx + hw / 2, y0), (rx + hw / 2, y1 + bh)); arrow(ax, (rx + hw * 1.5 + 4, y0), (rx + hw * 1.5 + 4, y1 + bh))
+box(ax, rx, y2, rw, bh, "Verification", "geometric against the panorama SVF at the 79 field sites:\nMAE $\\bf{0.112}$, bias +0.046, $r$ 0.70", "ver", fs=F, tfs=T)
 arrow(ax, (rx + rw / 2, y1), (rx + rw / 2, y2 + bh))
-box(ax, rx, y3, rw, bh, "Energy balance model", "deterministic solution at the pedestrian location; short-wave and\nlong-wave terms; coefficients fixed at the deployed state", "proc", fs=F)
+box(ax, rx, y3, rw, bh, "Energy balance model", "deterministic solution at the pedestrian location; short-wave and long-wave\nterms; coefficients fixed at the deployed state", "proc", fs=F, tfs=T)
 arrow(ax, (rx + rw / 2, y2), (rx + rw / 2, y3 + bh))
-box(ax, rx, y4, 41, bh, "$T_{mrt}$, physics", "same ISO 7726 definition", "data", fs=F)
-box(ax, rx + 45, y4, 41, bh, "PET, physics", "Höppe MEMI; 1.37 met, 0.5 clo\nMAE 6.6 °C against the reference", "data", fs=F)
-arrow(ax, (rx + 20.5, y3), (rx + 20.5, y4 + bh)); arrow(ax, (rx + 41, y4 + bh / 2), (rx + 45, y4 + bh / 2))
-box(ax, rx, y5, rw, bh + 3, "AI residual layer — the only learned step", "ridge regression, α = 20; five standardised predictors: sun/shade, geometric SVF,\n$T_a$, wind, PET$_{phys}$; no coordinates;  PET = PET$_{phys}$ + Δ;  leave-one-neighbourhood-out", "ai", fs=F)
-arrow(ax, (rx + 65.5, y4), (rx + 65.5, y5 + bh + 3))
-arrow(ax, (90, y5 + (bh + 3) / 2), (rx, y5 + (bh + 3) / 2), color=RED, lw=0.9)
-box(ax, rx + 13, y6, 60, bh, "Reported PET", "MAE 1.8 °C, bias −0.0 °C, $r$ 0.82 against the reference\n(leave-one-neighbourhood-out); all 63 extreme sites detected", "data", fs=F)
+box(ax, rx, y4, hw, bh, "$T_{mrt}$, physics", "same ISO 7726 definition", "data", fs=F, tfs=T)
+box(ax, rx + hw + 4, y4, hw, bh, "PET, physics", "Höppe MEMI; 1.37 met, 0.5 clo\nMAE $\\bf{6.6}$ °C against the reference", "data", fs=F, tfs=T)
+arrow(ax, (rx + hw / 2, y3), (rx + hw / 2, y4 + bh)); arrow(ax, (rx + hw, y4 + bh / 2), (rx + hw + 4, y4 + bh / 2))
+box(ax, rx, y5, rw, bh, "AI residual layer — the only learned step", "ridge regression, α = 20; five standardised predictors: sun/shade, geometric SVF,\n$T_a$, wind, PET$_{phys}$; no coordinates;  PET = PET$_{phys}$ + Δ;  leave-one-neighbourhood-out", "ai", fs=F, tfs=T)
+arrow(ax, (rx + hw * 1.5 + 4, y4), (rx + hw * 1.5 + 4, y5 + bh))
+box(ax, rx + 10, y6, rw - 20, bh, "Reported PET", "MAE $\\bf{1.8}$ °C, bias −0.0 °C, $r$ $\\bf{0.82}$ against the reference\n(leave-one-neighbourhood-out); all $\\bf{63}$ extreme sites detected", "data", fs=F, tfs=T)
 arrow(ax, (rx + rw / 2, y5), (rx + rw / 2, y6 + bh))
-ly = 5
-box(ax, 20, ly - 3, 16, 6, "", None, "data"); ax.text(38, ly, "input or output data", va="center", fontsize=6.4)
-box(ax, 66, ly - 3, 16, 6, "", None, "proc"); ax.text(84, ly, "processing step", va="center", fontsize=6.4)
-box(ax, 106, ly - 3, 16, 6, "", None, "ver"); ax.text(124, ly, "verification", va="center", fontsize=6.4)
-box(ax, 140, ly - 3, 16, 6, "", None, "ai"); ax.text(158, ly, "learned step", va="center", fontsize=6.4)
+
+# ---- legend
+ly = 4.2
+for x, kind, lab in [(14, "data", "input or output data"), (58, "proc", "processing step"), (98, "ver", "verification"), (132, "ai", "learned step")]:
+    box(ax, x, ly - 2.6, 13, 5.2, "", None, kind); ax.text(x + 15.5, ly, lab, va="center", fontsize=6.4)
+ax.plot([164, 170], [ly, ly], color=RED, lw=1.0); ax.text(172, ly, "field data into the service chain", va="center", fontsize=6.4)
 for e in ("pdf", "eps", "png", "svg"):
     fig.savefig(f"{OUT}/SCS_Fig_pipeline.{e}", bbox_inches="tight", pad_inches=0.03)
 plt.close(fig)
