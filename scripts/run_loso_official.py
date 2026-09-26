@@ -46,6 +46,13 @@ from vpti_core import pet_residual as PR                  # noqa: E402
 from app.config import get_settings                       # noqa: E402
 from app.services.geo import dominant_wall_material       # noqa: E402
 
+# 2026-09-26: 노면 계수 후보 시험용 — MRT_OVERRIDE="hc_a=28,hc_b=2,ground_storage_fraction=0.1"
+#   비우면 배포 설정 그대로. 엔진 파일은 안 바꾼다.
+import os as _os
+from dataclasses import replace as _replace
+_OV = {k: float(v) for k, v in (kv.split("=") for kv in _os.environ.get("MRT_OVERRIDE", "").split(",") if "=" in kv)}
+CFG = _replace(DEFAULT_CONFIG, mrt=_replace(DEFAULT_CONFIG.mrt, **_OV)) if _OV else DEFAULT_CONFIG
+
 IN = sys.argv[1] if len(sys.argv) > 1 else "/tmp/tier3_engine_output_80_v6.csv"
 OUT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/loso_official.json"
 MATS = [MaterialFraction(material="asphalt", fraction=0.7),
@@ -120,6 +127,7 @@ async def main() -> None:
           f"GEO_WALL_STAGE={st.geo_wall_stage}")
     print(f"           GEO_TREE_SHADE(KR)={getattr(st, 'geo_tree_shade', 'n/a')}  "
           f"JP={getattr(st, 'geo_tree_shade_jp', 'n/a')}")
+    print(f"MRT 덮어쓰기  {_OV or '없음(배포 설정)'}")
     print(f"잔차층 배포 계수  alpha=20  {PR.FEATURES}")
     print(f"           {PR.TRAINED_ON}\n")
 
@@ -142,7 +150,7 @@ async def main() -> None:
                                    direct_shade=sun[i],      # 실측 볕/그늘
                                    wall_temp_c=None,         # 벽온도 스테이지 OFF
                                    wall_albedo=alb,
-                                   wind_is_pedestrian=True)
+                                   wind_is_pedestrian=True, config=CFG)
         tg = float(res.mrt.tmrt_globe)                        # 흑구 기준 — 실측과 같은 정의
         pet = float(compute_pet(tdb=ta, tr=tg, v=res.pedestrian_wind_ms, rh=rh,
                                 season=res.season,
