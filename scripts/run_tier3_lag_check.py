@@ -32,6 +32,10 @@ CANDS = {
     "후보F tau2.5 q60 f0.25": dict(ground_lag_tau_h=2.5, ground_release_wm2=60.0),
     "tau2만": dict(ground_lag_tau_h=2.0),
     "q60만": dict(ground_release_wm2=60.0),
+    # 2026-09-26: 새벽 재학습이 9/18~9/25 매일 낸 ASOS(잔디) 최적해 — 아스팔트 80점에서 버티는지 확인용
+    "8월4방향중앙 fit hc28/2 f0.1": dict(hc_a=28.0, hc_b=2.0, ground_storage_fraction=0.1),
+    "ASOS후보 hc28/6 f0.1 q60 tau2": dict(hc_a=28.0, hc_b=6.0, ground_storage_fraction=0.1,
+                                          ground_lag_tau_h=2.0, ground_release_wm2=60.0),
 }
 
 

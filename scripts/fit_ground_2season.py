@@ -30,13 +30,23 @@ BASE = DEFAULT_CONFIG.mrt
 TAU = BASE.ground_lag_tau_h
 
 
+DEF = next((a.split("=")[1] for a in sys.argv if a.startswith("--def=")), "sheet")
+
+
 def load_aug():
+    t4 = {r["측정ID"]: r for r in csv.DictReader(open(D("aug80_ts4_2026-09-26.csv"), encoding="utf-8-sig"))}
     cloud = {r["측정ID"]: float(r["cloud"]) for r in csv.DictReader(open(D("tier3_cloud_80.csv"), encoding="utf-8-sig"))}
     out = []
     for r in csv.DictReader(open(D("scs_master_80.csv"), encoding="utf-8-sig")):
         if not (r["SVF"].strip() or r["geo_SVF"].strip()) or not r["Ts"].strip():
             continue
         r["SVF"] = r["SVF"].strip() or r["geo_SVF"]          # 360 SVF 없으면 기하 SVF
+        if DEF != "sheet":
+            x = t4.get(r["측정ID"], {})
+            v = x.get("Ts4" if DEF == "med" else "Ts_max", "")
+            if not v:
+                continue
+            r["Ts"] = v
         out.append(dict(id=r["측정ID"], set="8월", t=datetime.strptime(r["시각"][:16], "%Y-%m-%d %H:%M").replace(tzinfo=KST),
                         lat=float(r["위도"]), lon=float(r["경도"]), ta=float(r["Ta"]), rh=float(r["RH"]), v=float(r["v"]),
                         svf=float(r["SVF"]), sun=r["sun"].strip() == "1", ts=float(r["Ts"]), cf=cloud.get(r["측정ID"], 0.0),
@@ -50,7 +60,7 @@ def load_mar(cf_assume):
     for r in csv.DictReader(open(D("pnu_mar_ts_2026-09-26.csv"), encoding="utf-8-sig")):
         if not r["Ts"]:
             continue
-        m = meta[r["측정ID"]]; ta = float(m["Ta"]); ts = float(r["Ts"])
+        m = meta[r["측정ID"]]; ta = float(m["Ta"]); ts = float(r["Ts_max"] if DEF == "max" else r["Ts"])
         if ts < ta - 3:
             continue
         out.append(dict(id=r["측정ID"], set="3월", t=datetime.strptime(m["촬영일"] + " " + m["시각"][:5], "%Y-%m-%d %H:%M").replace(tzinfo=KST),
@@ -114,7 +124,7 @@ def main():
     for cf in (0.0, 0.3):
         mall = prep(load_mar(cf))
         mar = [r for r in mall if not r["green"]]
-        print(f"\n=== 3월 운량 가정 {cf} · τ {TAU} · q_rel {BASE.ground_release_wm2} 고정 ===")
+        print(f"\n=== 노면온도 정의 {DEF} · 3월 운량 가정 {cf} · τ {TAU} · q_rel {BASE.ground_release_wm2} 고정 ===")
         print(f"  8월 {len(aug)}곳(볕 {sum(r['sun'] for r in aug)}) · 3월 포장 {len(mar)}곳(볕 {sum(r['sun'] for r in mar)}) · 3월 잔디포함 {len(mall)}곳")
         line("현재 엔진", None, aug, mar, mall)
         line("ASOS 새벽후보", dict(hc_a=28, hc_b=6, f_stor=0.1), aug, mar, mall)
